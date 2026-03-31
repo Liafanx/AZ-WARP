@@ -171,7 +171,7 @@ WantedBy=multi-user.target
 Перезагружаем демоны и запускаем службу:
 ```bash
 systemctl daemon-reload
-systemctl status sing-box
+systemctl start sing-box
 systemctl status sing-box
 ```
 *(Статус должен гореть зеленым `active (running)`).*
