@@ -162,14 +162,13 @@ After=network.target nss-lookup.target network-online.target
 
 [Service]
 # Запускаем от root, чтобы не было проблем с доступом, 
-# либо оставьте sing-box, если пользователь создан
-User=sing-box
+User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
-# Ждем 2 секунды, пока интерфейс появится
+# Ждем 2 секунды, пока интерфейс resolved появится
 ExecStartPost=/bin/sleep 2
-# Полностью стираем DNS-сервер (10.255.0.2) с этого интерфейса чтобы наш сервер не шел на него
+# Полностью стираем DNS-сервер (10.255.0.2) с этого интерфейса resolved.conf чтобы наш сервер не шел на него
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
-# Полностью стираем тот DOMAINS=~.
+# Полностью стираем DOMAINS=~. из правил resolved
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
 Restart=on-failure
 RestartSec=10s
@@ -201,7 +200,7 @@ echo "10.255.0.0/24" >> /root/antizapret/config/include-ips.txt
 ```
 
 **2. Направляем домены в WARP**
-Открываем конфиг локального DNS-резолвера:
+Открываем конфиг локального DNS-резолвера (Внимание! После обновления AZ даную манипуляцию нужно повторить так как kresd затрётся):
 ```bash
 nano /etc/knot-resolver/kresd.conf
 ```
