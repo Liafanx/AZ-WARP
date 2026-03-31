@@ -204,8 +204,7 @@ nano /etc/knot-resolver/kresd.conf
 	policy.add(
    		 policy.suffix(
         		policy.STUB('127.0.0.1@40000'), 
-       			policy.todnames({'gemini.google.com.', 'proactivebackend-pa.googleapis.com.', 'assistant-s3-pa.googleapis.com.', 'gemini.google.',
-    			'alkaliminer-pa.googleapis.com.', 'robinfrontend-pa.googleapis.com.'})
+       			policy.todnames({'gemini.google.com.', 'proactivebackend-pa.googleapis.com.', 'assistant-s3-pa.googleapis.com.', 'gemini.google.', 'alkaliminer-pa.googleapis.com.', 'robinfrontend-pa.googleapis.com.'})
     		)
 	)
 ```
