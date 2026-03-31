@@ -11,6 +11,8 @@
 ### Шаг 1. Установка sing-box
 Подключаемся к вашему серверу по SSH и выполняем команду для установки актуальной версии `sing-box`:
 
+P.S. все было сделано на версии sing-box version 1.13.5
+
 ```bash
 curl -fsSL https://sing-box.app/install.sh | bash
 ```
