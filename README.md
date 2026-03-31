@@ -61,7 +61,7 @@ nano /etc/sing-box/config.json
       {
         "tag": "fakeip-dns",
         "type": "fakeip",
-        "inet4_range": "10.255.0.0/16"
+        "inet4_range": "10.255.0.0/24"
       }
     ],
     "rules": [
@@ -110,7 +110,7 @@ nano /etc/sing-box/config.json
       "tag": "tun-in",
       "interface_name": "singbox-tun",
       "address": [
-        "10.255.0.1/16"
+        "10.255.0.1/24"
       ],
       "auto_route": false,
       "strict_route": false,
@@ -185,7 +185,7 @@ systemctl status sing-box
 **1. Добавляем фейковую подсеть в маршруты VPN**
 Ваши устройства должны знать, что трафик к виртуальным IP-адресам нужно отправлять в VPN.
 ```bash
-echo "10.255.0.0/16" >> /root/antizapret/config/include-ips.txt
+echo "10.255.0.0/24" >> /root/antizapret/config/include-ips.txt
 ```
 делаем doall
 ```bash
