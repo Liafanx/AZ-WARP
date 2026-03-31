@@ -182,6 +182,9 @@ systemctl status sing-box
 Ваши устройства должны знать, что трафик к виртуальным IP-адресам нужно отправлять в VPN.
 ```bash
 echo "10.255.0.0/16" >> /root/antizapret/config/include-ips.txt
+```
+делаем doall
+```bash
 /root/antizapret/doall.sh
 ```
 
