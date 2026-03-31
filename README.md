@@ -161,8 +161,16 @@ Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target network-online.target
 
 [Service]
-User=root
+# Запускаем от root, чтобы не было проблем с доступом, 
+# либо оставьте sing-box, если пользователь создан
+User=sing-box
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
+# Ждем 2 секунды, пока интерфейс появится
+ExecStartPost=/bin/sleep 2
+# Полностью стираем DNS-сервер (10.255.0.2) с этого интерфейса чтобы наш сервер не шел на него
+ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
+# Полностью стираем тот DOMAINS=~.
+ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
