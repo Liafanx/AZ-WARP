@@ -1,4 +1,4 @@
-# 🚀 Как точечно пустить сервисы (Gemini, ChatGPT) через Cloudflare WARP на сервере с AntiZapret
+# 🚀 Как точечно пустить сервисы (Gemini) через Cloudflare WARP на сервере с AntiZapret
 
 **Проблема:** У вас установлен свой сервер с AntiZapret. Всё работает отлично, заблокированные сайты открываются. Но при попытке зайти на Gemini или ChatGPT вы получаете ошибку (сервис недоступен или пишет, что ваш IP заблокирован). Это происходит потому, что нейросети часто блокируют IP-адреса дата-центров (хостингов).
 
@@ -193,20 +193,16 @@ nano /etc/knot-resolver/kresd.conf
 Находим блок `if string.match(systemd_instance, '^1') then` и листаем чуть ниже. Перед блоком `-- Resolve non-blocked domains` вставляем это правило:
 
 ```lua
-	-- Unlock Gemini & ChatGPT via WARP
+	-- Unlock Gemini
 	policy.add(
    		 policy.suffix(
         		policy.STUB('127.0.0.1@40000'), 
-       			policy.todnames({
-					'gemini.google.com.', 
-					'proactivebackend-pa.googleapis.com.', 
-					'chatgpt.com.', 
-					'openai.com.'
-				})
+       			policy.todnames({'gemini.google.com.', 'proactivebackend-pa.googleapis.com.', 'assistant-s3-pa.googleapis.com.', 'gemini.google.',
+    			'alkaliminer-pa.googleapis.com.'})
     		)
 	)
 ```
-⚠️ **Внимание:** Файл разделен на две части (для инстанса `kresd@1` и `kresd@2`). Пролистайте файл ниже до `elseif string.match(systemd_instance, '^2') then` и вставьте **этот же блок** туда тоже!
+⚠️ **Внимание:** Файл разделен на две части (для инстанса `kresd@1` и `kresd@2`). Пролистайте файл ниже до `elseif string.match(systemd_instance, '^2') then` и вставьте **этот же блок** туда тоже перед блоком `-- Resolve blocked domains`!
 *Сохраняем: `Ctrl+O`, `Enter`, `Ctrl+X`.*
 
 ### Шаг 6. Финал
