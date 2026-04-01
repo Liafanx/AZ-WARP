@@ -38,27 +38,19 @@ prompt_confirm() {
     if [[ "$conf_choice" == "y" || "$conf_choice" == "Y" ]]; then return 0; else return 1; fi
 }
 
-# === ФУНКЦИЯ ПРОСМОТРА ЛОГОВ ===
 show_logs() {
     echo -e "\n${CYAN}==========================================${NC}"
     echo -e "${YELLOW}Чтение логов sing-box...${NC}"
     echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER${NC}"
     echo -e "${CYAN}==========================================${NC}\n"
     
-    # Отключаем системные уведомления о фоновых процессах
     set +m 
-    
-    # Запускаем логи в фоне (-n 20 показывает последние 20 строк)
     journalctl -u sing-box -n 20 -f &
     LOG_PID=$!
     
-    # Перехватываем Ctrl+C, чтобы скрипт не закрывался
     trap 'kill $LOG_PID 2>/dev/null' SIGINT
-    
-    # Ждем пока пользователь нажмет Enter
     read -r -s
     
-    # Убиваем процесс логов и возвращаем стандартное поведение Ctrl+C
     kill $LOG_PID 2>/dev/null
     trap - SIGINT
     set -m
@@ -100,14 +92,17 @@ unpatch_kresd() {
 
 toggle_warper() {
     local action="ВКЛЮЧИТЬ"
-    local action_ru="включить"
     if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF"; then
         action="ВЫКЛЮЧИТЬ"
-        action_ru="выключить"
     fi
     
-    echo -e "\n${YELLOW}Внимание: Вы собираетесь ${action_ru} WARPER.${NC}"
-    read -p "Вы уверены? (y/N): " conf
+    if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
+        echo -e "\n${YELLOW}Вы уверены что хотите выключить warper? (y/N)${NC}"
+    else
+        echo -e "\n${YELLOW}Вы уверены что хотите включить warper? (y/N)${NC}"
+    fi
+    
+    read -p "Выбор: " conf
     if [[ ! "$conf" =~ ^[Yy]$ ]]; then return; fi
 
     if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
@@ -247,7 +242,7 @@ while true; do
         7) show_logs ;;
         8) toggle_warper ;;
         9) update_warper ;;
-        [Uu]) 
+        u|U) 
             if [ -f "/root/warper/uninstaller.sh" ]; then
                 bash /root/warper/uninstaller.sh
             else
