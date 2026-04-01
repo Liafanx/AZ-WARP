@@ -22,7 +22,8 @@ sync_domains() {
 
 prompt_apply() {
     echo -e "\n${YELLOW}Применить изменения и перезапустить DNS?${NC}"
-    read -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
+    # Флаг -e включает поддержку стирания (Backspace) и стрелочек
+    read -e -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
     if [[ -z "$apply_choice" || "$apply_choice" == "Y" || "$apply_choice" == "y" ]]; then
         sync_domains
         systemctl restart kresd@1 kresd@2
@@ -34,26 +35,32 @@ prompt_apply() {
 }
 
 prompt_confirm() {
-    read -p "Вы уверены? [y/N] (по умолчанию N): " conf_choice
+    read -e -p "Вы уверены? [y/N] (по умолчанию N): " conf_choice
     if [[ "$conf_choice" == "y" || "$conf_choice" == "Y" ]]; then return 0; else return 1; fi
 }
 
 show_logs() {
     echo -e "\n${CYAN}==========================================${NC}"
     echo -e "${YELLOW}Чтение логов sing-box...${NC}"
-    echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER${NC}"
+    echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER или Ctrl+C${NC}"
     echo -e "${CYAN}==========================================${NC}\n"
     
-    set +m 
+    # Запускаем в фоне
     journalctl -u sing-box -n 20 -f &
     LOG_PID=$!
     
-    trap 'kill $LOG_PID 2>/dev/null' SIGINT
+    # "Отвязываем" процесс от терминала, чтобы скрыть системное сообщение [1]+ Terminated
+    disown $LOG_PID 2>/dev/null
+    
+    # Перехватываем Ctrl+C
+    trap 'kill -9 $LOG_PID 2>/dev/null' SIGINT
+    
+    # Ждем нажатия Enter
     read -r -s
     
-    kill $LOG_PID 2>/dev/null
+    # Убиваем процесс
+    kill -9 $LOG_PID 2>/dev/null
     trap - SIGINT
-    set -m
 }
 
 patch_kresd() {
@@ -102,7 +109,7 @@ toggle_warper() {
         echo -e "\n${YELLOW}Вы уверены что хотите включить warper? (y/N)${NC}"
     fi
     
-    read -p "Выбор: " conf
+    read -e -p "Выбор: " conf
     if [[ ! "$conf" =~ ^[Yy]$ ]]; then return; fi
 
     if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
@@ -151,8 +158,7 @@ singbox_menu() {
         echo -e " ${YELLOW}5.${NC} Посмотреть логи"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
-        echo -n -e "Выбор [0-5]: "
-        read sb_choice
+        read -e -p "Выбор [0-5]: " sb_choice
         case $sb_choice in
             1) if prompt_confirm; then systemctl start sing-box; echo -e "${GREEN}Запущено.${NC}"; sleep 1; fi ;;
             2) if prompt_confirm; then systemctl stop sing-box; echo -e "${YELLOW}Остановлено.${NC}"; sleep 1; fi ;;
@@ -173,16 +179,11 @@ show_main_menu() {
     echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     
-    # 1. Версия
     if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then VER_STR="${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
-    # 2. Sing-box
     if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}запущен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена автозагрузка${NC}"; else SB_EN="${RED}отключена автозагрузка${NC}"; fi
-    # 3. Kresd.conf
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
-    # 4. Домены
     if diff -q "$MASTER_FILE" "$ACTIVE_FILE" >/dev/null 2>&1; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
-    # 5. Fake подсеть
     if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}добавлена${NC}"; else AZ_STAT="${RED}не добавлена${NC}"; fi
 
     echo -e " - Версия: $VER_STR"
@@ -210,23 +211,22 @@ show_main_menu() {
     echo -e " ${RED}U. Удалить warper полностью${NC}"
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
-    echo -n -e "Выбор: "
 }
 
 while true; do
     show_main_menu
-    read choice
+    read -e -p "Выбор: " choice
     case $choice in
         1)
-            echo -e "\n${CYAN}Введите домен (напр. openai.com):${NC}"
-            read new_domain
+            echo -e "\n${CYAN}Введите домен (например, openai.com):${NC}"
+            read -e -p "> " new_domain
             if [ -z "$new_domain" ]; then echo -e "${RED}Пустой ввод!${NC}"; sleep 1
             elif grep -q "^$new_domain$" "$MASTER_FILE"; then echo -e "${YELLOW}Домен уже есть!${NC}"; sleep 1
             else echo "$new_domain" >> "$MASTER_FILE"; echo -e "${GREEN}Добавлено!${NC}"; prompt_apply; fi
             ;;
         2)
             echo -e "\n${CYAN}Введите домен для удаления:${NC}"
-            read del_domain
+            read -e -p "> " del_domain
             if grep -q "^$del_domain$" "$MASTER_FILE"; then sed -i "/^$del_domain$/d" "$MASTER_FILE"; echo -e "${GREEN}Удалено!${NC}"; prompt_apply
             else echo -e "${RED}Домен не найден!${NC}"; sleep 1; fi
             ;;
@@ -248,7 +248,7 @@ while true; do
             else
                 curl -fsSL "$REPO_URL/uninstaller.sh" | bash
             fi
-            if [ ! -f "/usr/local/bin/warper" ]; then exit 0; fi # Если удаление успешно, скрипт завершится
+            if [ ! -f "/usr/local/bin/warper" ]; then exit 0; fi
             ;;
         0) clear; exit 0 ;;
         *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
