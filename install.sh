@@ -2,7 +2,6 @@
 
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 
-# Цвета
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -18,7 +17,6 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 1. Интеллектуальная установка sing-box
 echo -e "\n${YELLOW}[1/7] Проверка sing-box...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
@@ -35,13 +33,11 @@ else
     curl -fsSL https://sing-box.app/install.sh | bash
 fi
 
-# 2. Интеллектуальная настройка WARP
 echo -e "\n${YELLOW}[2/7] Настройка Cloudflare WARP...${NC}"
 mkdir -p /root/warper/wgcf
 cd /root/warper/wgcf
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
-    echo "Скачиваем утилиту wgcf..."
     wget -qO wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64
     chmod +x wgcf
     mv wgcf /usr/local/bin/wgcf
@@ -56,7 +52,6 @@ if [ -f "wgcf-profile.conf" ]; then
 fi
 
 if [ "$GENERATE_WARP" = true ]; then
-    echo "Регистрируем новый аккаунт WARP и генерируем профиль..."
     wgcf register --accept-tos > /dev/null 2>&1
     wgcf generate > /dev/null 2>&1
 fi
@@ -68,9 +63,7 @@ if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
     echo -e "${RED}Ошибка: Не удалось получить ключи WARP. Проверьте wgcf-profile.conf${NC}"
     exit 1
 fi
-echo -e "${GREEN}Ключи WARP успешно получены (IP: $WARP_ADDRESS)${NC}"
 
-# 3. Настройка config.json (С ФЕЙКОВЫМ IPv6 ДЛЯ ЗАЩИТЫ ОТ УТЕЧЕК)
 echo -e "\n${YELLOW}[3/7] Создание конфигурации sing-box...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > /etc/sing-box/config.json
@@ -126,7 +119,6 @@ cat << EOF > /etc/sing-box/config.json
 }
 EOF
 
-# 4. Скачивание и настройка Systemd
 echo -e "\n${YELLOW}[4/7] Загрузка и настройка службы sing-box...${NC}"
 curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
 systemctl daemon-reload
@@ -134,29 +126,16 @@ systemctl enable sing-box > /dev/null 2>&1
 systemctl restart sing-box
 sleep 2
 
-if systemctl is-active --quiet sing-box; then
-    echo -e "${GREEN}Служба sing-box успешно запущена!${NC}"
-else
-    echo -e "${RED}Ошибка: Служба sing-box не запустилась. Проверьте логи: journalctl -u sing-box${NC}"
-fi
-
-# 5. Маршруты AntiZapret
 echo -e "\n${YELLOW}[5/7] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
     sed -i '/10.255.0.0\/24/d' "$AZ_INC"
     if ! grep -q "198.18.0.0/24" "$AZ_INC"; then
         echo "198.18.0.0/24" >> "$AZ_INC"
-        echo "Обновляем конфигурацию AntiZapret (doall.sh)..."
         /root/antizapret/doall.sh > /dev/null 2>&1
-    else
-        echo -e "${GREEN}Подсеть 198.18.0.0/24 уже есть в маршрутах.${NC}"
     fi
-else
-    echo -e "${RED}Файл маршрутов AZ не найден.${NC}"
 fi
 
-# 6. Скачивание утилиты WARPER
 echo -e "\n${YELLOW}[6/7] Скачивание утилиты WARPER с GitHub...${NC}"
 mkdir -p /root/warper
 MASTER_FILE="/root/warper/domains.txt"
@@ -177,9 +156,12 @@ curl -s -o /root/warper/version "$REPO_URL/version"
 chmod +x /root/warper/warper.sh
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
 
-# 7. Финальный патч
-echo -e "\n${YELLOW}[7/7] Применение правил DNS...${NC}"
+echo -e "\n${YELLOW}[7/7] Применение правил DNS и Firewall...${NC}"
 /usr/local/bin/warper patch > /dev/null 2>&1
+
+# Форсированное применение правил для серверов с Docker
+iptables -I FORWARD -o singbox-tun -j ACCEPT 2>/dev/null
+iptables -I FORWARD -i singbox-tun -j ACCEPT 2>/dev/null
 
 echo -e "\n${GREEN}================================================${NC}"
 echo -e " 🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!"
