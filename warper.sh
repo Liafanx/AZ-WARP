@@ -122,36 +122,31 @@ singbox_menu() {
 # === ГЛАВНОЕ МЕНЮ ===
 show_main_menu() {
     clear
-    # Быстрая проверка версии (таймаут 1 сек, чтобы не тормозить меню)
     REMOTE_VER=$(curl -s --max-time 1 "$REPO_URL/version" || echo "$LOCAL_VER")
     
     echo -e "${CYAN}==========================================${NC}"
     echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     
-    # Статус версии
     if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then
         echo -e "Версия: ${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"
     else
         echo -e "Версия: ${GREEN}$LOCAL_VER (Актуальная)${NC}"
     fi
 
-    # Путь к доменам
     echo -e "📁 Домены: ${GREEN}${MASTER_FILE}${NC}"
     
-    # Статус sing-box
     if [ -f "/etc/sing-box/config.json" ]; then echo -n -e "📦 WARP (sing-box): ${GREEN}[УСТАНОВЛЕН]${NC} "; else echo -n -e "📦 WARP (sing-box): ${RED}[НЕ УСТАНОВЛЕН]${NC} "; fi
     if systemctl is-active --quiet sing-box; then echo -e "🟢 Статус: ${GREEN}[ЗАПУЩЕН]${NC}"; else echo -e "🔴 Статус: ${RED}[ОСТАНОВЛЕН]${NC}"; fi
 
-    # Статус DNS патча
     local status_text="[ERR] Конфиг НЕ пропатчен"
     local status_color=$RED
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then status_text="[OK] Конфиг пропатчен"; status_color=$GREEN; fi
     echo -n -e "🔧 Интеграция DNS: ${status_color}${status_text}${NC} "
     if ! diff -q "$MASTER_FILE" "$ACTIVE_FILE" > /dev/null 2>&1; then echo -e "${YELLOW}(Есть рассинхрон)${NC}"; else echo ""; fi
 
-    # Статус подсети AZ
-    if grep -q "10.255.0.0/24" "$AZ_INC" 2>/dev/null; then
+    # ИСПРАВЛЕНИЕ: Проверяем новую эталонную подсеть 198.18.0.0/24
+    if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then
         echo -e "🌐 Фейковая подсеть AZ: ${GREEN}[ДОБАВЛЕНА]${NC}"
     else
         echo -e "🌐 Фейковая подсеть AZ: ${RED}[ОТСУТСТВУЕТ]${NC} (Проверьте include-ips.txt)"
