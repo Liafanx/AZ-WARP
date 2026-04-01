@@ -5,7 +5,7 @@ ACTIVE_FILE="/etc/knot-resolver/warper-domains.txt"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
-LOCAL_VER=$(cat /root/warper/version 2>/dev/null || echo "0.0.0")
+LOCAL_VER=$(cat /root/warper/version 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,23 +44,15 @@ show_logs() {
     echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER или Ctrl+C${NC}"
     echo -e "${CYAN}==========================================${NC}\n"
     
-    # Отключаем системные уведомления о фоновых процессах
     set +m 
-    
-    # Запускаем логи в фоне
     journalctl -u sing-box -n 20 -f &
     LOG_PID=$!
     
-    # Отвязываем процесс от терминала
     disown $LOG_PID 2>/dev/null
-    
-    # Перехватываем Ctrl+C: убиваем логи, снимаем перехват и ВЫХОДИМ из функции обратно в меню
     trap 'kill -9 $LOG_PID 2>/dev/null; trap - SIGINT; set -m; return' SIGINT
     
-    # Ждем нажатия Enter
     read -r -s
     
-    # Если нажали Enter: убиваем процесс и снимаем перехват
     kill -9 $LOG_PID 2>/dev/null
     trap - SIGINT
     set -m
@@ -135,14 +127,18 @@ if [ "$1" == "patch" ]; then patch_kresd; exit 0; fi
 
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
-    curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
-    curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh"
-    curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
-    curl -s -o /root/warper/version "$REPO_URL/version"
+    curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh?t=$(date +%s)"
+    curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh?t=$(date +%s)"
+    curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
+    curl -s -o /root/warper/version "$REPO_URL/version?t=$(date +%s)"
     chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
     systemctl daemon-reload
-    echo -e "${GREEN}Утилита успешно обновлена! Перезапустите warper.${NC}"
-    exit 0
+    
+    echo -e "${GREEN}Утилита успешно обновлена!${NC}"
+    read -p "Нажмите Enter для перезапуска WARPER..."
+    
+    # Команда exec заменяет текущий процесс на новый, плавно перезагружая меню
+    exec /usr/local/bin/warper
 }
 
 singbox_menu() {
@@ -176,13 +172,14 @@ singbox_menu() {
 
 show_main_menu() {
     clear
-    REMOTE_VER=$(curl -s --max-time 1 "$REPO_URL/version" || echo "$LOCAL_VER")
+    REMOTE_VER=$(curl -s --max-time 2 "$REPO_URL/version?t=$(date +%s)" | tr -d '\r\n')
+    if [ -z "$REMOTE_VER" ]; then REMOTE_VER="$LOCAL_VER"; fi
     
     echo -e "${CYAN}==========================================${NC}"
     echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then VER_STR="${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then VER_STR="${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
     if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}запущен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена автозагрузка${NC}"; else SB_EN="${RED}отключена автозагрузка${NC}"; fi
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
@@ -249,7 +246,7 @@ while true; do
             if [ -f "/root/warper/uninstaller.sh" ]; then
                 bash /root/warper/uninstaller.sh
             else
-                curl -fsSL "$REPO_URL/uninstaller.sh" | bash
+                curl -fsSL "$REPO_URL/uninstaller.sh?t=$(date +%s)" | bash
             fi
             if [ ! -f "/usr/local/bin/warper" ]; then exit 0; fi
             ;;
