@@ -6,12 +6,20 @@ After=network.target nss-lookup.target network-online.target
 [Service]
 User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
-# Ждем 2 секунды, пока интерфейс resolved появится
 ExecStartPost=/bin/sleep 2
-# Полностью стираем DNS-сервер (10.255.0.2) с этого интерфейса
+
+# Стираем локальные DNS от sing box
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
-# Полностью стираем DOMAINS=~. из правил resolved
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
+
+# Разрешаем маршрутизацию FORWARD (Фикс для серверов с Docker)
+ExecStartPost=-/sbin/iptables -I FORWARD -o singbox-tun -j ACCEPT
+ExecStartPost=-/sbin/iptables -I FORWARD -i singbox-tun -j ACCEPT
+
+# Убираем правила при остановке службы
+ExecStopPost=-/sbin/iptables -D FORWARD -o singbox-tun -j ACCEPT
+ExecStopPost=-/sbin/iptables -D FORWARD -i singbox-tun -j ACCEPT
+
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
