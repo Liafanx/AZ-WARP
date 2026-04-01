@@ -70,7 +70,7 @@ if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
 fi
 echo -e "${GREEN}Ключи WARP успешно получены (IP: $WARP_ADDRESS)${NC}"
 
-# 3. Настройка config.json (С ЗАЩИТОЙ ОТ IPv6 И QUIC)
+# 3. Настройка config.json (С ФЕЙКОВЫМ IPv6 ДЛЯ ЗАЩИТЫ ОТ УТЕЧЕК)
 echo -e "\n${YELLOW}[3/7] Создание конфигурации sing-box...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > /etc/sing-box/config.json
@@ -79,12 +79,10 @@ cat << EOF > /etc/sing-box/config.json
   "dns": {
     "servers": [
       { "tag": "real-dns", "type": "udp", "server": "8.8.8.8", "detour": "warp" },
-      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/24" },
-      { "tag": "block-dns", "type": "rcode", "rcode": "success" }
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/24", "inet6_range": "fc00::/18" }
     ],
     "rules": [
-      { "query_type": ["AAAA"], "server": "block-dns" },
-      { "query_type": ["A"], "server": "fakeip-dns" }
+      { "query_type": ["A", "AAAA"], "server": "fakeip-dns" }
     ],
     "independent_cache": true
   },
@@ -113,14 +111,12 @@ cat << EOF > /etc/sing-box/config.json
     { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["198.18.0.1/24"], "auto_route": false, "strict_route": false, "stack": "system" }
   ],
   "outbounds": [
-    { "type": "direct", "tag": "direct" },
-    { "type": "block", "tag": "block" }
+    { "type": "direct", "tag": "direct" }
   ],
   "route": {
     "rules": [
       { "inbound": "dns-in", "action": "hijack-dns" },
       { "protocol": "dns", "action": "hijack-dns" },
-      { "network": "udp", "port": 443, "outbound": "block" },
       { "inbound": "tun-in", "outbound": "warp" }
     ],
     "default_domain_resolver": "real-dns",
