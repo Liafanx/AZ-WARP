@@ -1,6 +1,7 @@
 #!/bin/bash
 
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+SB_VERSION="1.13.5"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -17,20 +18,18 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-echo -e "\n${YELLOW}[1/7] Проверка sing-box...${NC}"
+echo -e "\n${YELLOW}[1/7] Проверка sing-box (версия $SB_VERSION)...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
-    LATEST_SB=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name": "v\K(.*)(?=")')
-    
-    if [ "$CURRENT_SB" == "$LATEST_SB" ] && [ -n "$CURRENT_SB" ]; then
+    if [ "$CURRENT_SB" == "$SB_VERSION" ]; then
         echo -e "${GREEN}sing-box актуальной версии ($CURRENT_SB), пропускаем скачивание.${NC}"
     else
-        echo -e "${YELLOW}Доступно обновление ($CURRENT_SB -> $LATEST_SB). Обновляем...${NC}"
-        curl -fsSL https://sing-box.app/install.sh | bash
+        echo -e "${YELLOW}Установлена другая версия ($CURRENT_SB). Устанавливаем $SB_VERSION...${NC}"
+        curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION
     fi
 else
-    echo "Устанавливаем sing-box..."
-    curl -fsSL https://sing-box.app/install.sh | bash
+    echo "Устанавливаем sing-box $SB_VERSION..."
+    curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION
 fi
 
 echo -e "\n${YELLOW}[2/7] Настройка Cloudflare WARP...${NC}"
@@ -136,7 +135,7 @@ if [ -f "$AZ_INC" ]; then
     fi
 fi
 
-echo -e "\n${YELLOW}[6/7] Скачивание утилиты WARPER с GitHub...${NC}"
+echo -e "\n${YELLOW}[6/7] Скачивание утилиты WARPER...${NC}"
 mkdir -p /root/warper
 MASTER_FILE="/root/warper/domains.txt"
 
@@ -152,14 +151,14 @@ EOF
 fi
 
 curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
+curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh"
 curl -s -o /root/warper/version "$REPO_URL/version"
-chmod +x /root/warper/warper.sh
+chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
 
 echo -e "\n${YELLOW}[7/7] Применение правил DNS и Firewall...${NC}"
 /usr/local/bin/warper patch > /dev/null 2>&1
 
-# Форсированное применение правил для серверов с Docker
 iptables -I FORWARD -o singbox-tun -j ACCEPT 2>/dev/null
 iptables -I FORWARD -i singbox-tun -j ACCEPT 2>/dev/null
 
