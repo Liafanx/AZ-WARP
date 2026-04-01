@@ -11,13 +11,13 @@ echo -e " 🗑️ УДАЛЕНИЕ WARPER И SING-BOX"
 echo -e "${RED}================================================${NC}"
 echo -e "Эта команда полностью удалит службу туннеля, очистит настройки DNS и маршруты."
 
-read -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
+read -e -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
 if [[ ! "$conf" =~ ^[Yy]$ ]]; then
     echo -e "${GREEN}Отмена. Ничего не изменено.${NC}"
     exit 0
 fi
 
-read -p "Оставить список доменов в папке /root/warper? (Y/n): " keep_dom < /dev/tty
+read -e -p "Оставить список доменов в папке /root/warper? (Y/n): " keep_dom < /dev/tty
 if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
     KEEP_DOMAINS=true
 else
@@ -56,10 +56,9 @@ if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then
     echo -e " - ${CYAN}Удаление подсети 198.18.0.0/24 из $AZ_INC...${NC}"
     sed -i '/198.18.0.0\/24/d' "$AZ_INC"
     
-    echo -e " - ${CYAN}Запуск doall.sh (компиляция списков AntiZapret)...${NC}"
+    echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
     echo -e " - ${YELLOW}⏳ ВНИМАНИЕ: Это может занять от 1 до 5 минут. Пожалуйста, подождите!${NC}"
     
-    # ЖЕСТКОЕ ИСПРАВЛЕНИЕ: Блокируем любые всплывающие окна и прерывания
     export DEBIAN_FRONTEND=noninteractive
     export SYSTEMD_PAGER=""
     bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
