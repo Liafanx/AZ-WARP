@@ -18,34 +18,59 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 1. Установка sing-box
-echo -e "\n${YELLOW}[1/7] Проверка и установка sing-box...${NC}"
-curl -fsSL https://sing-box.app/install.sh | bash
+# 1. Интеллектуальная установка sing-box
+echo -e "\n${YELLOW}[1/7] Проверка sing-box...${NC}"
+if command -v sing-box >/dev/null 2>&1; then
+    CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
+    # Получаем последнюю версию с GitHub
+    LATEST_SB=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name": "v\K(.*)(?=")')
+    
+    if [ "$CURRENT_SB" == "$LATEST_SB" ] && [ -n "$CURRENT_SB" ]; then
+        echo -e "${GREEN}sing-box актуальной версии ($CURRENT_SB), пропускаем скачивание.${NC}"
+    else
+        echo -e "${YELLOW}Доступно обновление ($CURRENT_SB -> $LATEST_SB). Обновляем...${NC}"
+        curl -fsSL https://sing-box.app/install.sh | bash
+    fi
+else
+    echo "Устанавливаем sing-box..."
+    curl -fsSL https://sing-box.app/install.sh | bash
+fi
 
-# 2. Настройка WARP
-echo -e "\n${YELLOW}[2/7] Настройка Cloudflare WARP (генерация профиля)...${NC}"
+# 2. Интеллектуальная настройка WARP
+echo -e "\n${YELLOW}[2/7] Настройка Cloudflare WARP...${NC}"
 mkdir -p /root/warper/wgcf
 cd /root/warper/wgcf
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
+    echo "Скачиваем утилиту wgcf..."
     wget -qO wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64
     chmod +x wgcf
     mv wgcf /usr/local/bin/wgcf
 fi
 
-if [ ! -f "wgcf-profile.conf" ]; then
+GENERATE_WARP=true
+if [ -f "wgcf-profile.conf" ]; then
+    if grep -q "PrivateKey" wgcf-profile.conf && grep -q "Address" wgcf-profile.conf; then
+        echo -e "${GREEN}Профиль WARP уже существует и настроен. Пропускаем регистрацию.${NC}"
+        GENERATE_WARP=false
+    fi
+fi
+
+if [ "$GENERATE_WARP" = true ]; then
+    echo "Регистрируем новый аккаунт WARP и генерируем профиль..."
     wgcf register --accept-tos > /dev/null 2>&1
     wgcf generate > /dev/null 2>&1
 fi
 
-WARP_ADDRESS=$(grep -oP '(?<=^Address = ).*' wgcf-profile.conf)
-WARP_PRIVATE_KEY=$(grep -oP '(?<=^PrivateKey = ).*' wgcf-profile.conf)
+# ИСПРАВЛЕНИЕ: Берем только первую строку с Address (IPv4) и отсекаем весь мусор
+WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
+WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 
 if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
-    echo -e "${RED}Ошибка: Не удалось получить ключи WARP.${NC}"
+    echo -e "${RED}Ошибка: Не удалось получить ключи WARP. Проверьте wgcf-profile.conf${NC}"
     exit 1
 fi
-echo -e "${GREEN}Ключи WARP успешно получены!${NC}"
+echo -e "${GREEN}Ключи WARP успешно получены (IP: $WARP_ADDRESS)${NC}"
 
 # 3. Настройка config.json
 echo -e "\n${YELLOW}[3/7] Создание конфигурации sing-box...${NC}"
@@ -109,6 +134,13 @@ curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
 systemctl daemon-reload
 systemctl enable sing-box > /dev/null 2>&1
 systemctl restart sing-box
+sleep 2
+
+if systemctl is-active --quiet sing-box; then
+    echo -e "${GREEN}Служба sing-box успешно запущена!${NC}"
+else
+    echo -e "${RED}Ошибка: Служба sing-box не запустилась. Проверьте логи: journalctl -u sing-box${NC}"
+fi
 
 # 5. Маршруты AntiZapret
 echo -e "\n${YELLOW}[5/7] Интеграция с маршрутами AntiZapret...${NC}"
@@ -118,6 +150,8 @@ if [ -f "$AZ_INC" ]; then
         echo "10.255.0.0/24" >> "$AZ_INC"
         echo "Обновляем конфигурацию AntiZapret (doall.sh)..."
         /root/antizapret/doall.sh > /dev/null 2>&1
+    else
+        echo -e "${GREEN}Подсеть 10.255.0.0/24 уже есть в маршрутах.${NC}"
     fi
 else
     echo -e "${RED}Файл маршрутов AZ не найден.${NC}"
