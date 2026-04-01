@@ -135,21 +135,51 @@ if [ -f "$AZ_INC" ]; then
     fi
 fi
 
-echo -e "\n${YELLOW}[6/7] Скачивание утилиты WARPER...${NC}"
+echo -e "\n${YELLOW}[6/7] Настройка списка доменов и утилиты WARPER...${NC}"
 mkdir -p /root/warper
 MASTER_FILE="/root/warper/domains.txt"
+touch "$MASTER_FILE" # Создает файл, если его нет (не затирает существующий)
 
-if [ ! -f "$MASTER_FILE" ]; then
-cat << 'EOF' > "$MASTER_FILE"
-gemini.google.com
-proactivebackend-pa.googleapis.com
-assistant-s3-pa.googleapis.com
-gemini.google
-alkaliminer-pa.googleapis.com
-robinfrontend-pa.googleapis.com
-EOF
-fi
+# Функция проверки и добавления доменов
+check_and_add_domains() {
+    local name="$1"
+    shift
+    local domains=("$@")
+    local all_exist=true
 
+    for d in "${domains[@]}"; do
+        if ! grep -q "^${d}$" "$MASTER_FILE"; then
+            all_exist=false
+            break
+        fi
+    done
+
+    if [ "$all_exist" = true ]; then
+        echo -e "${GREEN}Домены $name уже есть в списке, изменения не требуются.${NC}"
+    else
+        read -p "Добавить $name в список доменов, которые пойдут через WARP? (Y/n): " add_choice
+        if [[ -z "$add_choice" || "$add_choice" =~ ^[Yy]$ ]]; then
+            for d in "${domains[@]}"; do
+                if ! grep -q "^${d}$" "$MASTER_FILE"; then
+                    echo "$d" >> "$MASTER_FILE"
+                fi
+            done
+            echo -e "${GREEN}$name успешно добавлен!${NC}"
+        else
+            echo -e "${YELLOW}Пропущено.${NC}"
+        fi
+    fi
+}
+
+echo ""
+GEMINI_DOMAINS=("gemini.google.com" "proactivebackend-pa.googleapis.com" "assistant-s3-pa.googleapis.com" "gemini.google" "alkaliminer-pa.googleapis.com" "robinfrontend-pa.googleapis.com")
+check_and_add_domains "Gemini" "${GEMINI_DOMAINS[@]}"
+
+echo ""
+CHATGPT_DOMAINS=("chatgpt.com" "openai.com" "oaistatic.com" "oaiusercontent.com")
+check_and_add_domains "ChatGPT" "${CHATGPT_DOMAINS[@]}"
+
+echo -e "\nСкачивание скриптов утилиты..."
 curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
 curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh"
 curl -s -o /root/warper/version "$REPO_URL/version"
