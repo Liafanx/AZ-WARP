@@ -8,18 +8,22 @@
 
 ---
 
-Проверено и работает у меня на Ubuntu 24.04
+*Проверено и работает на Ubuntu 24.04*
 
-
-### Шаг 0. Установка в 1 команду
-
+### ⚡ Шаг 0. Установка в 1 команду (Рекомендуется)
+Подключитесь к вашему серверу по SSH от имени `root` и выполните команду:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install.sh | bash
 ```
-## Ручная Установка
+*После завершения установки просто введите команду `warper`.*
+
+---
+
+## 🛠 Ручная Установка (Для продвинутых пользователей)
+
 ### Шаг 1. Установка sing-box
-Подключаемся к вашему серверу по SSH и выполняем команду для установки актуальной версии `sing-box` *(проверено на версии 1.13.5)*:
+Выполняем команду для установки актуальной версии `sing-box`:
 
 ```bash
 curl -fsSL https://sing-box.app/install.sh | bash
@@ -47,7 +51,7 @@ cat wgcf-profile.conf
 * `Address` (ваш IPv4, обычно это `172.16.0.2/32`)
 
 ### Шаг 3. Настройка конфига sing-box
-Создаем/открываем конфигурационный файл:
+Создаем конфигурационный файл:
 ```bash
 nano /etc/sing-box/config.json
 ```
@@ -69,7 +73,7 @@ nano /etc/sing-box/config.json
       {
         "tag": "fakeip-dns",
         "type": "fakeip",
-        "inet4_range": "10.255.0.0/24"
+        "inet4_range": "198.18.0.0/24"
       }
     ],
     "rules": [
@@ -118,7 +122,7 @@ nano /etc/sing-box/config.json
       "tag": "tun-in",
       "interface_name": "singbox-tun",
       "address": [
-        "10.255.0.1/24"
+        "198.18.0.1/24"
       ],
       "auto_route": false,
       "strict_route": false,
@@ -173,7 +177,7 @@ User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
 # Ждем 2 секунды, пока интерфейс resolved появится
 ExecStartPost=/bin/sleep 2
-# Полностью стираем DNS-сервер (10.255.0.2) с этого интерфейса
+# Полностью стираем DNS-сервер с этого интерфейса
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
 # Полностью стираем DOMAINS=~. из правил resolved
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
@@ -195,9 +199,9 @@ systemctl start sing-box
 
 ### Шаг 5. Интеграция с маршрутами AntiZapret
 Устройства должны знать, что трафик к виртуальным IP-адресам `sing-box` нужно отправлять в VPN.
-Добавляем фейковую подсеть в конфиг маршрутов и применяем:
+Добавляем безопасную фейковую подсеть в конфиг маршрутов и применяем:
 ```bash
-echo "10.255.0.0/24" >> /root/antizapret/config/include-ips.txt
+echo "198.18.0.0/24" >> /root/antizapret/config/include-ips.txt
 /root/antizapret/doall.sh
 ```
 
@@ -206,7 +210,7 @@ echo "10.255.0.0/24" >> /root/antizapret/config/include-ips.txt
 ### Шаг 6. Создание умной утилиты WARPER
 Мы создадим мощный инструмент, который защитит ваши настройки от перезаписи при обновлениях AntiZapret и позволит легко управлять туннелем прямо из консоли.
 
-**1. Создаем папку и мастер-файл с доменами(домены гугла добавлены как пример для первого тестирования, если они будут не нужны или нужно будет добавить другие это можно будет сделать после установки):**
+**1. Создаем папку и мастер-файл с доменами (домены добавлены как пример для первого тестирования, их можно удалить позже):**
 ```bash
 mkdir -p /root/warper
 
@@ -228,10 +232,15 @@ nano /root/warper/warper.sh
 ```bash
 #!/bin/bash
 
+# --- НАСТРОЙКИ ПУТЕЙ ---
 MASTER_FILE="/root/warper/domains.txt"
 ACTIVE_FILE="/etc/knot-resolver/warper-domains.txt"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
+AZ_INC="/root/antizapret/config/include-ips.txt"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+LOCAL_VER=$(cat /root/warper/version 2>/dev/null || echo "0.0.0")
 
+# --- ЦВЕТА ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -266,14 +275,9 @@ prompt_confirm() {
 
 patch_kresd() {
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
-        if [ ! -f "$ACTIVE_FILE" ]; then
-            echo -e "${YELLOW}Патч есть, но файл доменов пропал! Восстанавливаю...${NC}"
-            sync_domains
-            systemctl restart kresd@1 kresd@2
-        fi
+        if [ ! -f "$ACTIVE_FILE" ]; then sync_domains; systemctl restart kresd@1 kresd@2; fi
         return 0
     fi
-    echo -e "${CYAN}Внедряем правила в kresd.conf...${NC}"
     sync_domains
     awk '
     /-- Resolve non-blocked domains/ || /-- Resolve blocked domains/ {
@@ -296,7 +300,19 @@ patch_kresd() {
     }
     {print}' "$KRESD_CONF" > /tmp/kresd.conf.tmp && mv /tmp/kresd.conf.tmp "$KRESD_CONF"
     systemctl restart kresd@1 kresd@2
-    echo -e "${GREEN}Готово! kresd.conf обновлен, службы перезапущены.${NC}"
+}
+
+if [ "$1" == "patch" ]; then patch_kresd; exit 0; fi
+
+update_warper() {
+    echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
+    curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
+    curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
+    curl -s -o /root/warper/version "$REPO_URL/version"
+    chmod +x /root/warper/warper.sh
+    systemctl daemon-reload
+    echo -e "${GREEN}Утилита успешно обновлена! Перезапустите warper.${NC}"
+    exit 0
 }
 
 # === МЕНЮ SING-BOX ===
@@ -306,22 +322,14 @@ singbox_menu() {
         echo -e "${CYAN}==========================================${NC}"
         echo -e "       ⚙️  ${YELLOW}УПРАВЛЕНИЕ SING-BOX${NC} ⚙️"
         echo -e "${CYAN}==========================================${NC}"
-        if systemctl is-active --quiet sing-box; then
-            echo -e "Текущий статус: ${GREEN}ЗАПУЩЕН 🟢${NC}"
-        else
-            echo -e "Текущий статус: ${RED}ОСТАНОВЛЕН 🔴${NC}"
-        fi
-        if systemctl is-enabled --quiet sing-box 2>/dev/null; then
-            echo -e "Автозагрузка: ${GREEN}ВКЛЮЧЕНА${NC}"
-        else
-            echo -e "Автозагрузка: ${RED}ВЫКЛЮЧЕНА${NC}"
-        fi
+        if systemctl is-active --quiet sing-box; then echo -e "Текущий статус: ${GREEN}ЗАПУЩЕН 🟢${NC}"; else echo -e "Текущий статус: ${RED}ОСТАНОВЛЕН 🔴${NC}"; fi
+        if systemctl is-enabled --quiet sing-box 2>/dev/null; then echo -e "Автозагрузка: ${GREEN}ВКЛЮЧЕНА${NC}"; else echo -e "Автозагрузка: ${RED}ВЫКЛЮЧЕНА${NC}"; fi
         echo -e "${CYAN}------------------------------------------${NC}"
         echo -e " ${GREEN}1.${NC} Запустить службу"
         echo -e " ${RED}2.${NC} Остановить службу"
         echo -e " ${GREEN}3.${NC} Включить в автозагрузку"
         echo -e " ${RED}4.${NC} Выключить из автозагрузки"
-        echo -e " ${YELLOW}5.${NC} Посмотреть логи"
+        echo -e " ${YELLOW}5.${NC} Посмотреть логи (Ctrl+C для выхода)"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
         echo -n -e "Выбор [0-5]: "
@@ -331,7 +339,7 @@ singbox_menu() {
             2) if prompt_confirm; then systemctl stop sing-box; echo -e "${YELLOW}Остановлено.${NC}"; sleep 1; fi ;;
             3) if prompt_confirm; then systemctl enable sing-box; echo -e "${GREEN}Добавлено в автозапуск.${NC}"; sleep 1; fi ;;
             4) if prompt_confirm; then systemctl disable sing-box; echo -e "${YELLOW}Убрано из автозапуска.${NC}"; sleep 1; fi ;;
-            5) echo -e "\n${CYAN}Открываю логи... (Для выхода нажмите Ctrl+C)${NC}"; sleep 1; journalctl -u sing-box -f ;;
+            5) echo -e "\n${CYAN}Открываю логи...${NC}"; sleep 1; journalctl -u sing-box -f ;;
             0) return ;;
             *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
         esac
@@ -341,26 +349,24 @@ singbox_menu() {
 # === ГЛАВНОЕ МЕНЮ ===
 show_main_menu() {
     clear
+    REMOTE_VER=$(curl -s --max-time 1 "$REPO_URL/version" || echo "$LOCAL_VER")
+    
     echo -e "${CYAN}==========================================${NC}"
     echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
+    
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then echo -e "Версия: ${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else echo -e "Версия: ${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
     echo -e "📁 Домены: ${GREEN}${MASTER_FILE}${NC}"
-    if [ -f "/etc/sing-box/config.json" ]; then
-        echo -n -e "📦 WARP (sing-box): ${GREEN}[УСТАНОВЛЕН]${NC} "
-    else
-        echo -n -e "📦 WARP (sing-box): ${RED}[НЕ УСТАНОВЛЕН]${NC} "
-    fi
-    if systemctl is-active --quiet sing-box; then
-        echo -e "🟢 Статус: ${GREEN}[ЗАПУЩЕН]${NC}"
-    else
-        echo -e "🔴 Статус: ${RED}[ОСТАНОВЛЕН]${NC}"
-    fi
+    if [ -f "/etc/sing-box/config.json" ]; then echo -n -e "📦 WARP (sing-box): ${GREEN}[УСТАНОВЛЕН]${NC} "; else echo -n -e "📦 WARP (sing-box): ${RED}[НЕ УСТАНОВЛЕН]${NC} "; fi
+    if systemctl is-active --quiet sing-box; then echo -e "🟢 Статус: ${GREEN}[ЗАПУЩЕН]${NC}"; else echo -e "🔴 Статус: ${RED}[ОСТАНОВЛЕН]${NC}"; fi
 
     local status_text="[ERR] Конфиг НЕ пропатчен"
     local status_color=$RED
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then status_text="[OK] Конфиг пропатчен"; status_color=$GREEN; fi
     echo -n -e "🔧 Интеграция DNS: ${status_color}${status_text}${NC} "
     if ! diff -q "$MASTER_FILE" "$ACTIVE_FILE" > /dev/null 2>&1; then echo -e "${YELLOW}(Есть рассинхрон)${NC}"; else echo ""; fi
+
+    if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then echo -e "🌐 Фейковая подсеть AZ: ${GREEN}[ДОБАВЛЕНА]${NC}"; else echo -e "🌐 Фейковая подсеть AZ: ${RED}[ОТСУТСТВУЕТ]${NC} (Проверьте include-ips.txt)"; fi
 
     echo -e "${CYAN}------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} Добавить домен в WARP"
@@ -370,9 +376,10 @@ show_main_menu() {
     echo -e " ${CYAN}5.${NC} 🔧 Восстановить / Пропатчить DNS"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} Справка / FAQ"
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then echo -e " ${YELLOW}8. ⚡ Обновить WARPER до $REMOTE_VER${NC}"; fi
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
-    echo -n -e "Выбор [0-7]: "
+    echo -n -e "Выбор: "
 }
 
 while true; do
@@ -382,26 +389,15 @@ while true; do
         1)
             echo -e "\n${CYAN}Введите домен (напр. openai.com):${NC}"
             read new_domain
-            if [ -z "$new_domain" ]; then
-                echo -e "${RED}Пустой ввод!${NC}"; sleep 1
-            elif grep -q "^$new_domain$" "$MASTER_FILE"; then
-                echo -e "${YELLOW}Домен уже есть!${NC}"; sleep 1
-            else
-                echo "$new_domain" >> "$MASTER_FILE"
-                echo -e "${GREEN}Добавлено!${NC}"
-                prompt_apply
-            fi
+            if [ -z "$new_domain" ]; then echo -e "${RED}Пустой ввод!${NC}"; sleep 1
+            elif grep -q "^$new_domain$" "$MASTER_FILE"; then echo -e "${YELLOW}Домен уже есть!${NC}"; sleep 1
+            else echo "$new_domain" >> "$MASTER_FILE"; echo -e "${GREEN}Добавлено!${NC}"; prompt_apply; fi
             ;;
         2)
             echo -e "\n${CYAN}Введите домен для удаления:${NC}"
             read del_domain
-            if grep -q "^$del_domain$" "$MASTER_FILE"; then
-                sed -i "/^$del_domain$/d" "$MASTER_FILE"
-                echo -e "${GREEN}Удалено!${NC}"
-                prompt_apply
-            else
-                echo -e "${RED}Домен не найден!${NC}"; sleep 1
-            fi
+            if grep -q "^$del_domain$" "$MASTER_FILE"; then sed -i "/^$del_domain$/d" "$MASTER_FILE"; echo -e "${GREEN}Удалено!${NC}"; prompt_apply
+            else echo -e "${RED}Домен не найден!${NC}"; sleep 1; fi
             ;;
         3)
             echo -e "\n${CYAN}--- Домены в WARP ---${NC}"
@@ -409,24 +405,11 @@ while true; do
             echo -e "${CYAN}---------------------${NC}"
             read -p "Нажмите Enter..."
             ;;
-        4)
-            nano "$MASTER_FILE"
-            prompt_apply
-            ;;
-        5)
-            echo -e "\n${YELLOW}Запуск полного восстановления...${NC}"
-            patch_kresd
-            read -p "Нажмите Enter..."
-            ;;
-        6)
-            singbox_menu
-            ;;
-        7)
-            echo -e "\n${YELLOW}--- FAQ ---${NC}"
-            echo -e "1. ${CYAN}Что делать после обновления AntiZapret?${NC} Запустите утилиту и нажмите ${CYAN}[5]${NC}."
-            echo -e "2. ${CYAN}Нужна ли точка в конце домена?${NC} Нет, вводите как обычно (chatgpt.com)."
-            read -p "Нажмите Enter..."
-            ;;
+        4) nano "$MASTER_FILE"; prompt_apply ;;
+        5) echo -e "\n${YELLOW}Запуск полного восстановления...${NC}"; patch_kresd; echo -e "${GREEN}Готово!${NC}"; sleep 1 ;;
+        6) singbox_menu ;;
+        7) echo -e "\n${YELLOW}--- FAQ ---${NC}"; echo -e "1. ${CYAN}Обновили AntiZapret?${NC} Зайдите сюда и нажмите ${CYAN}[5]${NC}."; read -p "Нажмите Enter..." ;;
+        8) update_warper ;;
         0) clear; exit 0 ;;
         *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
     esac
@@ -454,3 +437,4 @@ warper
 
 **Готово! 🎉**
 У вас настроен идеальный гибридный VPN. AntiZapret обрабатывает стандартные блокировки, а `sing-box` (через WARP) берет на себя самые капризные нейросети. Если сервис перестал работать — просто введите `warper`, добавьте его домен в список, нажмите `Enter` (для авто-перезагрузки DNS) и пользуйтесь!
+```
