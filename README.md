@@ -306,14 +306,25 @@ unpatch_kresd() {
 }
 
 toggle_warper() {
+    local action="ВКЛЮЧИТЬ"
+    local action_ru="включить"
     if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF"; then
-        echo -e "\n${YELLOW}Отключение WARPER...${NC}"
+        action="ВЫКЛЮЧИТЬ"
+        action_ru="выключить"
+    fi
+    
+    echo -e "\n${YELLOW}Внимание: Вы собираетесь ${action_ru} WARPER.${NC}"
+    read -p "Вы уверены? (y/N): " conf
+    if [[ ! "$conf" =~ ^[Yy]$ ]]; then return; fi
+
+    if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
+        echo -e "${YELLOW}Отключение WARPER...${NC}"
         systemctl stop sing-box
         systemctl disable sing-box 2>/dev/null
         unpatch_kresd
         echo -e "${GREEN}WARPER успешно отключен! Трафик идет по умолчанию.${NC}"
     else
-        echo -e "\n${YELLOW}Включение WARPER...${NC}"
+        echo -e "${YELLOW}Включение WARPER...${NC}"
         systemctl enable sing-box 2>/dev/null
         systemctl start sing-box
         patch_kresd
@@ -327,9 +338,10 @@ if [ "$1" == "patch" ]; then patch_kresd; exit 0; fi
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
+    curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh"
     curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
     curl -s -o /root/warper/version "$REPO_URL/version"
-    chmod +x /root/warper/warper.sh
+    chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
     systemctl daemon-reload
     echo -e "${GREEN}Утилита успешно обновлена! Перезапустите warper.${NC}"
     exit 0
@@ -358,7 +370,7 @@ singbox_menu() {
             2) if prompt_confirm; then systemctl stop sing-box; echo -e "${YELLOW}Остановлено.${NC}"; sleep 1; fi ;;
             3) if prompt_confirm; then systemctl enable sing-box; echo -e "${GREEN}Добавлено в автозапуск.${NC}"; sleep 1; fi ;;
             4) if prompt_confirm; then systemctl disable sing-box; echo -e "${YELLOW}Убрано из автозапуска.${NC}"; sleep 1; fi ;;
-            5) echo -e "\n${CYAN}Открываю логи...${NC}"; sleep 1; journalctl -u sing-box -f ;;
+            5) echo -e "\n${CYAN}Открываю логи... (Для выхода нажмите Ctrl+C)${NC}"; sleep 1; journalctl -u sing-box -f ;;
             0) return ;;
             *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
         esac
@@ -373,20 +385,23 @@ show_main_menu() {
     echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then echo -e "Версия: ${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else echo -e "Версия: ${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
-    
-    # Определение глобального статуса WARPER
-    if systemctl is-active --quiet sing-box && grep -q "WARP-MOD-START" "$KRESD_CONF"; then
-        echo -e "Глобальный статус: ${GREEN}▶ Включен (Активен)${NC}"
-        local TOGGLE_TEXT="⏹ Отключить WARPER (Вернуть как было)"
-        local TOGGLE_COLOR=$RED
-    else
-        echo -e "Глобальный статус: ${RED}⏹ Отключен${NC}"
-        local TOGGLE_TEXT="▶ Включить WARPER"
-        local TOGGLE_COLOR=$GREEN
-    fi
+    # 1. Версия
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then VER_STR="${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
+    # 2. Sing-box
+    if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}запущен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
+    if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена автозагрузка${NC}"; else SB_EN="${RED}отключена автозагрузка${NC}"; fi
+    # 3. Kresd.conf
+    if grep -q "WARP-MOD-START" "$KRESD_CONF"; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
+    # 4. Домены
+    if diff -q "$MASTER_FILE" "$ACTIVE_FILE" >/dev/null 2>&1; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
+    # 5. Fake подсеть
+    if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}добавлена${NC}"; else AZ_STAT="${RED}не добавлена${NC}"; fi
 
-    echo -e "📁 Домены: ${GREEN}${MASTER_FILE}${NC}"
+    echo -e " - Версия: $VER_STR"
+    echo -e " - Sing-box ($SB_RUN, $SB_EN)"
+    echo -e " - Kresd.conf ($KR_STAT)"
+    echo -e " - 📁 Домены: /root/warper/domains.txt ($DOM_STAT)"
+    echo -e " - Fake подсеть 198.18.0.0/24 в include-ips ($AZ_STAT)"
     
     echo -e "${CYAN}------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} Добавить домен в WARP"
@@ -395,9 +410,16 @@ show_main_menu() {
     echo -e " ${CYAN}4.${NC} Отредактировать список (через nano)"
     echo -e " ${CYAN}5.${NC} 🔧 Восстановить / Пропатчить DNS"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
-    echo -e " ${CYAN}7.${NC} Справка / FAQ"
-    echo -e " ${TOGGLE_COLOR}8. ${TOGGLE_TEXT}${NC}"
+    echo -e " ${CYAN}7.${NC} 📄 Показать логи"
+    
+    if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF"; then
+        echo -e " ${RED}8. ⏹ Отключить WARPER${NC}"
+    else
+        echo -e " ${GREEN}8. ▶ Включить WARPER${NC}"
+    fi
+
     if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then echo -e " ${YELLOW}9. ⚡ Обновить WARPER до $REMOTE_VER${NC}"; fi
+    echo -e " ${RED}U. Удалить warper полностью${NC}"
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
     echo -n -e "Выбор: "
@@ -429,9 +451,17 @@ while true; do
         4) nano "$MASTER_FILE"; prompt_apply ;;
         5) echo -e "\n${YELLOW}Запуск полного восстановления...${NC}"; patch_kresd; echo -e "${GREEN}Готово!${NC}"; sleep 1 ;;
         6) singbox_menu ;;
-        7) echo -e "\n${YELLOW}--- FAQ ---${NC}"; echo -e "1. ${CYAN}Обновили AntiZapret?${NC} Зайдите сюда и нажмите ${CYAN}[5]${NC}."; read -p "Нажмите Enter..." ;;
+        7) echo -e "\n${CYAN}Открываю логи... (Для выхода нажмите Ctrl+C)${NC}"; sleep 1; journalctl -u sing-box -f ;;
         8) toggle_warper ;;
         9) update_warper ;;
+        [Uu]) 
+            if [ -f "/root/warper/uninstaller.sh" ]; then
+                bash /root/warper/uninstaller.sh
+            else
+                curl -fsSL "$REPO_URL/uninstaller.sh" | bash
+            fi
+            if [ ! -f "/usr/local/bin/warper" ]; then exit 0; fi # Если удаление успешно, скрипт завершится
+            ;;
         0) clear; exit 0 ;;
         *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
     esac
