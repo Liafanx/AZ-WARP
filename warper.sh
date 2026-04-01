@@ -41,21 +41,16 @@ prompt_confirm() {
 show_logs() {
     echo -e "\n${CYAN}==========================================${NC}"
     echo -e "${YELLOW}Чтение логов sing-box...${NC}"
-    echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER или Ctrl+C${NC}"
+    echo -e "${GREEN}Для выхода обратно в меню нажмите Ctrl+C${NC}"
     echo -e "${CYAN}==========================================${NC}\n"
     
-    set +m 
-    journalctl -u sing-box -n 20 -f &
-    LOG_PID=$!
+    # Нативный перехват Ctrl+C: позволяет закрыть логи, но не дает закрыть сам скрипт
+    trap 'echo -e "\n${CYAN}Возврат в меню...${NC}"' SIGINT
     
-    disown $LOG_PID 2>/dev/null
-    trap 'kill -9 $LOG_PID 2>/dev/null; trap - SIGINT; set -m; return' SIGINT
+    journalctl -u sing-box -n 20 -f
     
-    read -r -s
-    
-    kill -9 $LOG_PID 2>/dev/null
+    # Снимаем перехват
     trap - SIGINT
-    set -m
 }
 
 patch_kresd() {
@@ -135,9 +130,9 @@ update_warper() {
     systemctl daemon-reload
     
     echo -e "${GREEN}Утилита успешно обновлена!${NC}"
-    read -p "Нажмите Enter для перезапуска WARPER..."
+    read -e -p "Нажмите Enter для перезапуска WARPER..."
     
-    # Команда exec заменяет текущий процесс на новый, плавно перезагружая меню
+    # Полностью замещаем старый процесс новым
     exec /usr/local/bin/warper
 }
 
@@ -154,7 +149,7 @@ singbox_menu() {
         echo -e " ${RED}2.${NC} Остановить службу"
         echo -e " ${GREEN}3.${NC} Включить в автозагрузку"
         echo -e " ${RED}4.${NC} Выключить из автозагрузки"
-        echo -e " ${YELLOW}5.${NC} Посмотреть логи"
+        echo -e " ${YELLOW}5.${NC} Посмотреть логи (Ctrl+C для выхода)"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
         read -e -p "Выбор [0-5]: " sb_choice
