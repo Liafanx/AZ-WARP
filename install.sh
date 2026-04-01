@@ -190,9 +190,14 @@ if [ -f "$AZ_INC" ]; then
         echo -e " - ${CYAN}Добавление подсети 198.18.0.0/24 в конфигурацию маршрутов...${NC}"
         echo "198.18.0.0/24" >> "$AZ_INC"
         
-        echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
-        # ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Передаем пустой ввод, чтобы скрипт не ждал нажатия Enter
-        </dev/null /root/antizapret/doall.sh > /dev/null 2>&1
+        echo -e " - ${CYAN}Запуск doall.sh (компиляция списков AntiZapret)...${NC}"
+        echo -e " - ${YELLOW}⏳ ВНИМАНИЕ: Это может занять от 1 до 5 минут. Пожалуйста, подождите!${NC}"
+        
+        # ЖЕСТКОЕ ИСПРАВЛЕНИЕ: Блокируем любые всплывающие окна и прерывания
+        export DEBIAN_FRONTEND=noninteractive
+        export SYSTEMD_PAGER=""
+        bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
+        
         echo -e " - ${GREEN}Конфигурация маршрутов успешно обновлена!${NC}"
     else
         echo -e " - ${GREEN}Подсеть уже прописана в маршрутах.${NC}"
