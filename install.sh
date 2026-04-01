@@ -41,14 +41,14 @@ echo -e "\n${YELLOW}⚙️  Настройка маршрутизации дом
 if check_domains "${GEMINI_DOMAINS[@]}"; then
     echo -e "${GREEN}✔ Домены Gemini уже присутствуют в списке. Пропускаем.${NC}"
 else
-    read -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
+    read -e -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
     if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then ADD_GEMINI="y"; fi
 fi
 
 if check_domains "${CHATGPT_DOMAINS[@]}"; then
     echo -e "${GREEN}✔ Домены ChatGPT уже присутствуют в списке. Пропускаем.${NC}"
 else
-    read -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
+    read -e -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
     if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then ADD_CHATGPT="y"; fi
 fi
 
@@ -193,7 +193,6 @@ if [ -f "$AZ_INC" ]; then
         echo -e " - ${CYAN}Запуск doall.sh (компиляция списков AntiZapret)...${NC}"
         echo -e " - ${YELLOW}⏳ ВНИМАНИЕ: Это может занять от 1 до 5 минут. Пожалуйста, подождите!${NC}"
         
-        # ЖЕСТКОЕ ИСПРАВЛЕНИЕ: Блокируем любые всплывающие окна и прерывания
         export DEBIAN_FRONTEND=noninteractive
         export SYSTEMD_PAGER=""
         bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
