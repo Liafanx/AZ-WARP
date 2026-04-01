@@ -22,7 +22,6 @@ sync_domains() {
 
 prompt_apply() {
     echo -e "\n${YELLOW}Применить изменения и перезапустить DNS?${NC}"
-    # Флаг -e включает поддержку стирания (Backspace) и стрелочек
     read -e -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
     if [[ -z "$apply_choice" || "$apply_choice" == "Y" || "$apply_choice" == "y" ]]; then
         sync_domains
@@ -45,22 +44,26 @@ show_logs() {
     echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER или Ctrl+C${NC}"
     echo -e "${CYAN}==========================================${NC}\n"
     
-    # Запускаем в фоне
+    # Отключаем системные уведомления о фоновых процессах
+    set +m 
+    
+    # Запускаем логи в фоне
     journalctl -u sing-box -n 20 -f &
     LOG_PID=$!
     
-    # "Отвязываем" процесс от терминала, чтобы скрыть системное сообщение [1]+ Terminated
+    # Отвязываем процесс от терминала
     disown $LOG_PID 2>/dev/null
     
-    # Перехватываем Ctrl+C
-    trap 'kill -9 $LOG_PID 2>/dev/null' SIGINT
+    # Перехватываем Ctrl+C: убиваем логи, снимаем перехват и ВЫХОДИМ из функции обратно в меню
+    trap 'kill -9 $LOG_PID 2>/dev/null; trap - SIGINT; set -m; return' SIGINT
     
     # Ждем нажатия Enter
     read -r -s
     
-    # Убиваем процесс
+    # Если нажали Enter: убиваем процесс и снимаем перехват
     kill -9 $LOG_PID 2>/dev/null
     trap - SIGINT
+    set -m
 }
 
 patch_kresd() {
