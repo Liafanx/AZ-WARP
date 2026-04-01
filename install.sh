@@ -54,55 +54,67 @@ fi
 
 echo -e "\n${CYAN}Начинаем процесс установки...${NC}"
 
-# 1. Интеллектуальная установка sing-box
-echo -e "\n${YELLOW}[1/7] Проверка sing-box (версия $SB_VERSION)...${NC}"
+# ==============================================================================
+
+echo -e "\n${YELLOW}[1/7] Установка ядра sing-box...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
     if [ "$CURRENT_SB" == "$SB_VERSION" ]; then
-        echo -e "${GREEN}sing-box актуальной версии ($CURRENT_SB), пропускаем скачивание.${NC}"
+        echo -e " - ${GREEN}sing-box актуальной версии ($CURRENT_SB) уже установлен. Пропускаем.${NC}"
     else
-        echo -e "${YELLOW}Установлена другая версия ($CURRENT_SB). Устанавливаем $SB_VERSION...${NC}"
-        curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION
+        echo -e " - ${YELLOW}Установлена версия ($CURRENT_SB). Обновляем до $SB_VERSION...${NC}"
+        curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION >/dev/null 2>&1
     fi
 else
-    echo "Устанавливаем sing-box $SB_VERSION..."
-    curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION
+    echo -e " - ${CYAN}Скачивание и установка пакета sing-box версии $SB_VERSION...${NC}"
+    curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION >/dev/null 2>&1
 fi
 
-# 2. Интеллектуальная настройка WARP
-echo -e "\n${YELLOW}[2/7] Настройка Cloudflare WARP...${NC}"
+# ==============================================================================
+
+echo -e "\n${YELLOW}[2/7] Получение ключей Cloudflare WARP...${NC}"
 mkdir -p /root/warper/wgcf
 cd /root/warper/wgcf
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
+    echo -e " - ${CYAN}Скачивание утилиты wgcf для регистрации...${NC}"
     wget -qO wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64
     chmod +x wgcf
     mv wgcf /usr/local/bin/wgcf
+else
+    echo -e " - ${GREEN}Утилита wgcf уже установлена.${NC}"
 fi
 
 GENERATE_WARP=true
 if [ -f "wgcf-profile.conf" ]; then
     if grep -q "PrivateKey" wgcf-profile.conf && grep -q "Address" wgcf-profile.conf; then
-        echo -e "${GREEN}Профиль WARP уже существует и настроен. Пропускаем регистрацию.${NC}"
+        echo -e " - ${GREEN}Профиль WARP уже существует. Используем старые ключи.${NC}"
         GENERATE_WARP=false
     fi
 fi
 
 if [ "$GENERATE_WARP" = true ]; then
+    echo -e " - ${CYAN}Регистрация бесплатного аккаунта Cloudflare WARP...${NC}"
     wgcf register --accept-tos > /dev/null 2>&1
+    echo -e " - ${CYAN}Генерация конфигурации WireGuard...${NC}"
     wgcf generate > /dev/null 2>&1
 fi
 
+echo -e " - ${CYAN}Извлечение IPv4 и приватного ключа из профиля...${NC}"
 WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 
 if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
-    echo -e "${RED}Ошибка: Не удалось получить ключи WARP. Проверьте wgcf-profile.conf${NC}"
+    echo -e " - ${RED}Ошибка: Не удалось получить ключи WARP. Проверьте wgcf-profile.conf${NC}"
     exit 1
 fi
+echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
 
-# 3. Настройка config.json
+# ==============================================================================
+
 echo -e "\n${YELLOW}[3/7] Создание конфигурации sing-box...${NC}"
+echo -e " - ${CYAN}Генерация файла /etc/sing-box/config.json...${NC}"
+echo -e " - ${CYAN}Подстановка фейковой подсети 198.18.0.0/24 и ключей WARP...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > /etc/sing-box/config.json
 {
@@ -157,48 +169,70 @@ cat << EOF > /etc/sing-box/config.json
 }
 EOF
 
-# 4. Скачивание и настройка Systemd
-echo -e "\n${YELLOW}[4/7] Загрузка и настройка службы sing-box...${NC}"
+# ==============================================================================
+
+echo -e "\n${YELLOW}[4/7] Загрузка и настройка службы systemd...${NC}"
+echo -e " - ${CYAN}Скачивание sing-box.service с GitHub...${NC}"
 curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
+echo -e " - ${CYAN}Применение настроек демонов и включение автозагрузки...${NC}"
 systemctl daemon-reload
 systemctl enable sing-box > /dev/null 2>&1
+echo -e " - ${CYAN}Запуск службы sing-box...${NC}"
 systemctl restart sing-box
 sleep 2
 
-# 5. Маршруты AntiZapret
+# ==============================================================================
+
 echo -e "\n${YELLOW}[5/7] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
-    sed -i '/10.255.0.0\/24/d' "$AZ_INC"
     if ! grep -q "198.18.0.0/24" "$AZ_INC"; then
+        echo -e " - ${CYAN}Добавление подсети 198.18.0.0/24 в конфигурацию маршрутов...${NC}"
         echo "198.18.0.0/24" >> "$AZ_INC"
-        /root/antizapret/doall.sh > /dev/null 2>&1
+        
+        echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
+        # ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Передаем пустой ввод, чтобы скрипт не ждал нажатия Enter
+        </dev/null /root/antizapret/doall.sh > /dev/null 2>&1
+        echo -e " - ${GREEN}Конфигурация маршрутов успешно обновлена!${NC}"
+    else
+        echo -e " - ${GREEN}Подсеть уже прописана в маршрутах.${NC}"
     fi
+else
+    echo -e " - ${RED}Файл include-ips.txt не найден. Пропуск этапа.${NC}"
 fi
 
-# 6. Скачивание утилиты WARPER и применение доменов
+# ==============================================================================
+
 echo -e "\n${YELLOW}[6/7] Настройка списка доменов и утилиты WARPER...${NC}"
+mkdir -p /root/warper
+MASTER_FILE="/root/warper/domains.txt"
 
 if [ "$ADD_GEMINI" == "y" ]; then
+    echo -e " - ${CYAN}Внесение доменов Gemini в список...${NC}"
     for d in "${GEMINI_DOMAINS[@]}"; do grep -q "^${d}$" "$MASTER_FILE" || echo "$d" >> "$MASTER_FILE"; done
-    echo -e "${GREEN}Домены Gemini добавлены.${NC}"
 fi
 
 if [ "$ADD_CHATGPT" == "y" ]; then
+    echo -e " - ${CYAN}Внесение доменов ChatGPT в список...${NC}"
     for d in "${CHATGPT_DOMAINS[@]}"; do grep -q "^${d}$" "$MASTER_FILE" || echo "$d" >> "$MASTER_FILE"; done
-    echo -e "${GREEN}Домены ChatGPT добавлены.${NC}"
 fi
 
+echo -e " - ${CYAN}Скачивание скриптов warper.sh и uninstaller.sh с GitHub...${NC}"
 curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
 curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh"
 curl -s -o /root/warper/version "$REPO_URL/version"
+
+echo -e " - ${CYAN}Выдача прав на исполнение...${NC}"
 chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
 
-# 7. Финальный патч
+# ==============================================================================
+
 echo -e "\n${YELLOW}[7/7] Применение правил DNS и Firewall...${NC}"
+echo -e " - ${CYAN}Внедрение lua-кода WARPER в конфиг kresd.conf...${NC}"
 /usr/local/bin/warper patch > /dev/null 2>&1
 
+echo -e " - ${CYAN}Прописывание правил iptables для совместимости с Docker...${NC}"
 iptables -I FORWARD -o singbox-tun -j ACCEPT 2>/dev/null
 iptables -I FORWARD -i singbox-tun -j ACCEPT 2>/dev/null
 
