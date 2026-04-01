@@ -22,7 +22,6 @@ fi
 echo -e "\n${YELLOW}[1/7] Проверка sing-box...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
-    # Получаем последнюю версию с GitHub
     LATEST_SB=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name": "v\K(.*)(?=")')
     
     if [ "$CURRENT_SB" == "$LATEST_SB" ] && [ -n "$CURRENT_SB" ]; then
@@ -62,7 +61,6 @@ if [ "$GENERATE_WARP" = true ]; then
     wgcf generate > /dev/null 2>&1
 fi
 
-# ИСПРАВЛЕНИЕ: Берем только первую строку с Address (IPv4) и отсекаем весь мусор
 WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 
@@ -81,7 +79,7 @@ cat << EOF > /etc/sing-box/config.json
   "dns": {
     "servers": [
       { "tag": "real-dns", "type": "udp", "server": "8.8.8.8", "detour": "warp" },
-      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "10.255.0.0/24" }
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/24" }
     ],
     "rules": [
       { "query_type": ["A", "AAAA"], "server": "fakeip-dns" }
@@ -110,7 +108,7 @@ cat << EOF > /etc/sing-box/config.json
   ],
   "inbounds": [
     { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
-    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["10.255.0.1/24"], "auto_route": false, "strict_route": false, "stack": "system" }
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["198.18.0.1/24"], "auto_route": false, "strict_route": false, "stack": "system" }
   ],
   "outbounds": [
     { "type": "direct", "tag": "direct" }
@@ -146,12 +144,15 @@ fi
 echo -e "\n${YELLOW}[5/7] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
-    if ! grep -q "10.255.0.0/24" "$AZ_INC"; then
-        echo "10.255.0.0/24" >> "$AZ_INC"
+    # Удаляем старую конфликтную подсеть, если она была установлена ранее
+    sed -i '/10.255.0.0\/24/d' "$AZ_INC"
+    
+    if ! grep -q "198.18.0.0/24" "$AZ_INC"; then
+        echo "198.18.0.0/24" >> "$AZ_INC"
         echo "Обновляем конфигурацию AntiZapret (doall.sh)..."
         /root/antizapret/doall.sh > /dev/null 2>&1
     else
-        echo -e "${GREEN}Подсеть 10.255.0.0/24 уже есть в маршрутах.${NC}"
+        echo -e "${GREEN}Подсеть 198.18.0.0/24 уже есть в маршрутах.${NC}"
     fi
 else
     echo -e "${RED}Файл маршрутов AZ не найден.${NC}"
