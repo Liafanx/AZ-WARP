@@ -38,6 +38,32 @@ prompt_confirm() {
     if [[ "$conf_choice" == "y" || "$conf_choice" == "Y" ]]; then return 0; else return 1; fi
 }
 
+# === ФУНКЦИЯ ПРОСМОТРА ЛОГОВ ===
+show_logs() {
+    echo -e "\n${CYAN}==========================================${NC}"
+    echo -e "${YELLOW}Чтение логов sing-box...${NC}"
+    echo -e "${GREEN}Для выхода обратно в меню нажмите ENTER${NC}"
+    echo -e "${CYAN}==========================================${NC}\n"
+    
+    # Отключаем системные уведомления о фоновых процессах
+    set +m 
+    
+    # Запускаем логи в фоне (-n 20 показывает последние 20 строк)
+    journalctl -u sing-box -n 20 -f &
+    LOG_PID=$!
+    
+    # Перехватываем Ctrl+C, чтобы скрипт не закрывался
+    trap 'kill $LOG_PID 2>/dev/null' SIGINT
+    
+    # Ждем пока пользователь нажмет Enter
+    read -r -s
+    
+    # Убиваем процесс логов и возвращаем стандартное поведение Ctrl+C
+    kill $LOG_PID 2>/dev/null
+    trap - SIGINT
+    set -m
+}
+
 patch_kresd() {
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
         if [ ! -f "$ACTIVE_FILE" ]; then sync_domains; systemctl restart kresd@1 kresd@2; fi
@@ -127,7 +153,7 @@ singbox_menu() {
         echo -e " ${RED}2.${NC} Остановить службу"
         echo -e " ${GREEN}3.${NC} Включить в автозагрузку"
         echo -e " ${RED}4.${NC} Выключить из автозагрузки"
-        echo -e " ${YELLOW}5.${NC} Посмотреть логи (Ctrl+C для выхода)"
+        echo -e " ${YELLOW}5.${NC} Посмотреть логи"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
         echo -n -e "Выбор [0-5]: "
@@ -137,7 +163,7 @@ singbox_menu() {
             2) if prompt_confirm; then systemctl stop sing-box; echo -e "${YELLOW}Остановлено.${NC}"; sleep 1; fi ;;
             3) if prompt_confirm; then systemctl enable sing-box; echo -e "${GREEN}Добавлено в автозапуск.${NC}"; sleep 1; fi ;;
             4) if prompt_confirm; then systemctl disable sing-box; echo -e "${YELLOW}Убрано из автозапуска.${NC}"; sleep 1; fi ;;
-            5) echo -e "\n${CYAN}Открываю логи... (Для выхода нажмите Ctrl+C)${NC}"; sleep 1; journalctl -u sing-box -f ;;
+            5) show_logs ;;
             0) return ;;
             *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
         esac
@@ -218,7 +244,7 @@ while true; do
         4) nano "$MASTER_FILE"; prompt_apply ;;
         5) echo -e "\n${YELLOW}Запуск полного восстановления...${NC}"; patch_kresd; echo -e "${GREEN}Готово!${NC}"; sleep 1 ;;
         6) singbox_menu ;;
-        7) echo -e "\n${CYAN}Открываю логи... (Для выхода нажмите Ctrl+C)${NC}"; sleep 1; journalctl -u sing-box -f ;;
+        7) show_logs ;;
         8) toggle_warper ;;
         9) update_warper ;;
         [Uu]) 
