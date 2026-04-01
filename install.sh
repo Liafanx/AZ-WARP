@@ -70,7 +70,7 @@ if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
 fi
 echo -e "${GREEN}Ключи WARP успешно получены (IP: $WARP_ADDRESS)${NC}"
 
-# 3. Настройка config.json
+# 3. Настройка config.json (С ЗАЩИТОЙ ОТ IPv6 И QUIC)
 echo -e "\n${YELLOW}[3/7] Создание конфигурации sing-box...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > /etc/sing-box/config.json
@@ -79,10 +79,12 @@ cat << EOF > /etc/sing-box/config.json
   "dns": {
     "servers": [
       { "tag": "real-dns", "type": "udp", "server": "8.8.8.8", "detour": "warp" },
-      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/24" }
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/24" },
+      { "tag": "block-dns", "type": "rcode", "rcode": "success" }
     ],
     "rules": [
-      { "query_type": ["A", "AAAA"], "server": "fakeip-dns" }
+      { "query_type": ["AAAA"], "server": "block-dns" },
+      { "query_type": ["A"], "server": "fakeip-dns" }
     ],
     "independent_cache": true
   },
@@ -111,12 +113,14 @@ cat << EOF > /etc/sing-box/config.json
     { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["198.18.0.1/24"], "auto_route": false, "strict_route": false, "stack": "system" }
   ],
   "outbounds": [
-    { "type": "direct", "tag": "direct" }
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
   ],
   "route": {
     "rules": [
       { "inbound": "dns-in", "action": "hijack-dns" },
       { "protocol": "dns", "action": "hijack-dns" },
+      { "network": "udp", "port": 443, "outbound": "block" },
       { "inbound": "tun-in", "outbound": "warp" }
     ],
     "default_domain_resolver": "real-dns",
@@ -144,9 +148,7 @@ fi
 echo -e "\n${YELLOW}[5/7] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
-    # Удаляем старую конфликтную подсеть, если она была установлена ранее
     sed -i '/10.255.0.0\/24/d' "$AZ_INC"
-    
     if ! grep -q "198.18.0.0/24" "$AZ_INC"; then
         echo "198.18.0.0/24" >> "$AZ_INC"
         echo "Обновляем конфигурацию AntiZapret (doall.sh)..."
