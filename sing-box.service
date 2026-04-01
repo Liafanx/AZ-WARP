@@ -8,17 +8,17 @@ User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
 ExecStartPost=/bin/sleep 2
 
-# Стираем локальные DNS от sing box
+# Стираем локальные DNS
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
 
-# Разрешаем маршрутизацию FORWARD (Фикс для серверов с Docker)
-ExecStartPost=-/sbin/iptables -I FORWARD -o singbox-tun -j ACCEPT
-ExecStartPost=-/sbin/iptables -I FORWARD -i singbox-tun -j ACCEPT
+# Разрешаем маршрутизацию FORWARD (Фикс для Docker)
+ExecStartPost=-/usr/sbin/iptables -I FORWARD -o singbox-tun -j ACCEPT
+ExecStartPost=-/usr/sbin/iptables -I FORWARD -i singbox-tun -j ACCEPT
 
 # Убираем правила при остановке службы
-ExecStopPost=-/sbin/iptables -D FORWARD -o singbox-tun -j ACCEPT
-ExecStopPost=-/sbin/iptables -D FORWARD -i singbox-tun -j ACCEPT
+ExecStopPost=-/usr/sbin/iptables -D FORWARD -o singbox-tun -j ACCEPT
+ExecStopPost=-/usr/sbin/iptables -D FORWARD -i singbox-tun -j ACCEPT
 
 Restart=on-failure
 RestartSec=10s
