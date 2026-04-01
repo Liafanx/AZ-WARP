@@ -18,6 +18,43 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# === ПРЕДВАРИТЕЛЬНЫЙ ОПРОС ПОЛЬЗОВАТЕЛЯ ===
+mkdir -p /root/warper
+MASTER_FILE="/root/warper/domains.txt"
+touch "$MASTER_FILE"
+
+GEMINI_DOMAINS=("gemini.google.com" "proactivebackend-pa.googleapis.com" "assistant-s3-pa.googleapis.com" "gemini.google" "alkaliminer-pa.googleapis.com" "robinfrontend-pa.googleapis.com")
+CHATGPT_DOMAINS=("chatgpt.com" "openai.com" "oaistatic.com" "oaiusercontent.com")
+
+check_domains() {
+    for d in "$@"; do
+        if ! grep -q "^${d}$" "$MASTER_FILE"; then return 1; fi
+    done
+    return 0
+}
+
+ADD_GEMINI="n"
+ADD_CHATGPT="n"
+
+echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
+
+if check_domains "${GEMINI_DOMAINS[@]}"; then
+    echo -e "${GREEN}✔ Домены Gemini уже присутствуют в списке. Пропускаем.${NC}"
+else
+    read -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
+    if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then ADD_GEMINI="y"; fi
+fi
+
+if check_domains "${CHATGPT_DOMAINS[@]}"; then
+    echo -e "${GREEN}✔ Домены ChatGPT уже присутствуют в списке. Пропускаем.${NC}"
+else
+    read -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
+    if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then ADD_CHATGPT="y"; fi
+fi
+
+echo -e "\n${CYAN}Начинаем процесс установки...${NC}"
+
+# 1. Интеллектуальная установка sing-box
 echo -e "\n${YELLOW}[1/7] Проверка sing-box (версия $SB_VERSION)...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
@@ -32,6 +69,7 @@ else
     curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION
 fi
 
+# 2. Интеллектуальная настройка WARP
 echo -e "\n${YELLOW}[2/7] Настройка Cloudflare WARP...${NC}"
 mkdir -p /root/warper/wgcf
 cd /root/warper/wgcf
@@ -63,6 +101,7 @@ if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
     exit 1
 fi
 
+# 3. Настройка config.json
 echo -e "\n${YELLOW}[3/7] Создание конфигурации sing-box...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > /etc/sing-box/config.json
@@ -118,6 +157,7 @@ cat << EOF > /etc/sing-box/config.json
 }
 EOF
 
+# 4. Скачивание и настройка Systemd
 echo -e "\n${YELLOW}[4/7] Загрузка и настройка службы sing-box...${NC}"
 curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service"
 systemctl daemon-reload
@@ -125,6 +165,7 @@ systemctl enable sing-box > /dev/null 2>&1
 systemctl restart sing-box
 sleep 2
 
+# 5. Маршруты AntiZapret
 echo -e "\n${YELLOW}[5/7] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
@@ -135,57 +176,26 @@ if [ -f "$AZ_INC" ]; then
     fi
 fi
 
+# 6. Скачивание утилиты WARPER и применение доменов
 echo -e "\n${YELLOW}[6/7] Настройка списка доменов и утилиты WARPER...${NC}"
-mkdir -p /root/warper
-MASTER_FILE="/root/warper/domains.txt"
-touch "$MASTER_FILE" # Создает файл, если его нет (не затирает существующий)
 
-# Функция проверки и добавления доменов
-check_and_add_domains() {
-    local name="$1"
-    shift
-    local domains=("$@")
-    local all_exist=true
+if [ "$ADD_GEMINI" == "y" ]; then
+    for d in "${GEMINI_DOMAINS[@]}"; do grep -q "^${d}$" "$MASTER_FILE" || echo "$d" >> "$MASTER_FILE"; done
+    echo -e "${GREEN}Домены Gemini добавлены.${NC}"
+fi
 
-    for d in "${domains[@]}"; do
-        if ! grep -q "^${d}$" "$MASTER_FILE"; then
-            all_exist=false
-            break
-        fi
-    done
+if [ "$ADD_CHATGPT" == "y" ]; then
+    for d in "${CHATGPT_DOMAINS[@]}"; do grep -q "^${d}$" "$MASTER_FILE" || echo "$d" >> "$MASTER_FILE"; done
+    echo -e "${GREEN}Домены ChatGPT добавлены.${NC}"
+fi
 
-    if [ "$all_exist" = true ]; then
-        echo -e "${GREEN}Домены $name уже есть в списке, изменения не требуются.${NC}"
-    else
-        read -p "Добавить $name в список доменов, которые пойдут через WARP? (Y/n): " add_choice
-        if [[ -z "$add_choice" || "$add_choice" =~ ^[Yy]$ ]]; then
-            for d in "${domains[@]}"; do
-                if ! grep -q "^${d}$" "$MASTER_FILE"; then
-                    echo "$d" >> "$MASTER_FILE"
-                fi
-            done
-            echo -e "${GREEN}$name успешно добавлен!${NC}"
-        else
-            echo -e "${YELLOW}Пропущено.${NC}"
-        fi
-    fi
-}
-
-echo ""
-GEMINI_DOMAINS=("gemini.google.com" "proactivebackend-pa.googleapis.com" "assistant-s3-pa.googleapis.com" "gemini.google" "alkaliminer-pa.googleapis.com" "robinfrontend-pa.googleapis.com")
-check_and_add_domains "Gemini" "${GEMINI_DOMAINS[@]}"
-
-echo ""
-CHATGPT_DOMAINS=("chatgpt.com" "openai.com" "oaistatic.com" "oaiusercontent.com")
-check_and_add_domains "ChatGPT" "${CHATGPT_DOMAINS[@]}"
-
-echo -e "\nСкачивание скриптов утилиты..."
 curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
 curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh"
 curl -s -o /root/warper/version "$REPO_URL/version"
 chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
 
+# 7. Финальный патч
 echo -e "\n${YELLOW}[7/7] Применение правил DNS и Firewall...${NC}"
 /usr/local/bin/warper patch > /dev/null 2>&1
 
