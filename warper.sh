@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# --- НАСТРОЙКИ ПУТЕЙ ---
 MASTER_FILE="/root/warper/domains.txt"
 ACTIVE_FILE="/etc/knot-resolver/warper-domains.txt"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
@@ -8,7 +7,6 @@ AZ_INC="/root/antizapret/config/include-ips.txt"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 LOCAL_VER=$(cat /root/warper/version 2>/dev/null || echo "0.0.0")
 
-# --- ЦВЕТА ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -17,7 +15,6 @@ NC='\033[0m'
 
 touch "$MASTER_FILE"
 
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 sync_domains() {
     cp "$MASTER_FILE" "$ACTIVE_FILE"
     chmod 644 "$ACTIVE_FILE"
@@ -49,7 +46,6 @@ patch_kresd() {
     sync_domains
     awk '
     /-- Resolve non-blocked domains/ || /-- Resolve blocked domains/ {
-        print ""
         print "\t-- [WARP-MOD-START]"
         print "\tlocal warp_domains = {}"
         print "\tlocal wfile = io.open(\"/etc/knot-resolver/warper-domains.txt\", \"r\")"
@@ -64,19 +60,37 @@ patch_kresd() {
         print "\t\tend"
         print "\tend"
         print "\t-- [WARP-MOD-END]"
-        print ""
     }
     {print}' "$KRESD_CONF" > /tmp/kresd.conf.tmp && mv /tmp/kresd.conf.tmp "$KRESD_CONF"
     systemctl restart kresd@1 kresd@2
 }
 
-# Поддержка CLI-команды для автоустановщика
-if [ "$1" == "patch" ]; then
-    patch_kresd
-    exit 0
-fi
+unpatch_kresd() {
+    if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
+        sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
+        systemctl restart kresd@1 kresd@2
+    fi
+}
 
-# === ОБНОВЛЕНИЕ СКРИПТА ИЗ GITHUB ===
+toggle_warper() {
+    if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF"; then
+        echo -e "\n${YELLOW}Отключение WARPER...${NC}"
+        systemctl stop sing-box
+        systemctl disable sing-box 2>/dev/null
+        unpatch_kresd
+        echo -e "${GREEN}WARPER успешно отключен! Трафик идет по умолчанию.${NC}"
+    else
+        echo -e "\n${YELLOW}Включение WARPER...${NC}"
+        systemctl enable sing-box 2>/dev/null
+        systemctl start sing-box
+        patch_kresd
+        echo -e "${GREEN}WARPER успешно включен!${NC}"
+    fi
+    sleep 2
+}
+
+if [ "$1" == "patch" ]; then patch_kresd; exit 0; fi
+
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh"
@@ -88,7 +102,6 @@ update_warper() {
     exit 0
 }
 
-# === МЕНЮ SING-BOX ===
 singbox_menu() {
     while true; do
         clear
@@ -119,7 +132,6 @@ singbox_menu() {
     done
 }
 
-# === ГЛАВНОЕ МЕНЮ ===
 show_main_menu() {
     clear
     REMOTE_VER=$(curl -s --max-time 1 "$REPO_URL/version" || echo "$LOCAL_VER")
@@ -128,30 +140,21 @@ show_main_menu() {
     echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then
-        echo -e "Версия: ${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then echo -e "Версия: ${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else echo -e "Версия: ${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
+    
+    # Определение глобального статуса WARPER
+    if systemctl is-active --quiet sing-box && grep -q "WARP-MOD-START" "$KRESD_CONF"; then
+        echo -e "Глобальный статус: ${GREEN}▶ Включен (Активен)${NC}"
+        local TOGGLE_TEXT="⏹ Отключить WARPER (Вернуть как было)"
+        local TOGGLE_COLOR=$RED
     else
-        echo -e "Версия: ${GREEN}$LOCAL_VER (Актуальная)${NC}"
+        echo -e "Глобальный статус: ${RED}⏹ Отключен${NC}"
+        local TOGGLE_TEXT="▶ Включить WARPER"
+        local TOGGLE_COLOR=$GREEN
     fi
 
     echo -e "📁 Домены: ${GREEN}${MASTER_FILE}${NC}"
     
-    if [ -f "/etc/sing-box/config.json" ]; then echo -n -e "📦 WARP (sing-box): ${GREEN}[УСТАНОВЛЕН]${NC} "; else echo -n -e "📦 WARP (sing-box): ${RED}[НЕ УСТАНОВЛЕН]${NC} "; fi
-    if systemctl is-active --quiet sing-box; then echo -e "🟢 Статус: ${GREEN}[ЗАПУЩЕН]${NC}"; else echo -e "🔴 Статус: ${RED}[ОСТАНОВЛЕН]${NC}"; fi
-
-    local status_text="[ERR] Конфиг НЕ пропатчен"
-    local status_color=$RED
-    if grep -q "WARP-MOD-START" "$KRESD_CONF"; then status_text="[OK] Конфиг пропатчен"; status_color=$GREEN; fi
-    echo -n -e "🔧 Интеграция DNS: ${status_color}${status_text}${NC} "
-    if ! diff -q "$MASTER_FILE" "$ACTIVE_FILE" > /dev/null 2>&1; then echo -e "${YELLOW}(Есть рассинхрон)${NC}"; else echo ""; fi
-
-    # ИСПРАВЛЕНИЕ: Проверяем новую эталонную подсеть 198.18.0.0/24
-    if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then
-        echo -e "🌐 Фейковая подсеть AZ: ${GREEN}[ДОБАВЛЕНА]${NC}"
-    else
-        echo -e "🌐 Фейковая подсеть AZ: ${RED}[ОТСУТСТВУЕТ]${NC} (Проверьте include-ips.txt)"
-    fi
-
     echo -e "${CYAN}------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} Добавить домен в WARP"
     echo -e " ${RED}2.${NC} Удалить домен из WARP"
@@ -160,9 +163,8 @@ show_main_menu() {
     echo -e " ${CYAN}5.${NC} 🔧 Восстановить / Пропатчить DNS"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} Справка / FAQ"
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then
-        echo -e " ${YELLOW}8. ⚡ Обновить WARPER до $REMOTE_VER${NC}"
-    fi
+    echo -e " ${TOGGLE_COLOR}8. ${TOGGLE_TEXT}${NC}"
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then echo -e " ${YELLOW}9. ⚡ Обновить WARPER до $REMOTE_VER${NC}"; fi
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
     echo -n -e "Выбор: "
@@ -194,12 +196,9 @@ while true; do
         4) nano "$MASTER_FILE"; prompt_apply ;;
         5) echo -e "\n${YELLOW}Запуск полного восстановления...${NC}"; patch_kresd; echo -e "${GREEN}Готово!${NC}"; sleep 1 ;;
         6) singbox_menu ;;
-        7)
-            echo -e "\n${YELLOW}--- FAQ ---${NC}"
-            echo -e "1. ${CYAN}Обновили AntiZapret?${NC} Зайдите сюда и нажмите ${CYAN}[5]${NC}."
-            read -p "Нажмите Enter..."
-            ;;
-        8) update_warper ;;
+        7) echo -e "\n${YELLOW}--- FAQ ---${NC}"; echo -e "1. ${CYAN}Обновили AntiZapret?${NC} Зайдите сюда и нажмите ${CYAN}[5]${NC}."; read -p "Нажмите Enter..." ;;
+        8) toggle_warper ;;
+        9) update_warper ;;
         0) clear; exit 0 ;;
         *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
     esac
