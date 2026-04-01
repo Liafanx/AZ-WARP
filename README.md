@@ -237,10 +237,16 @@ User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
 # Ждем 2 секунды, пока интерфейс resolved появится
 ExecStartPost=/bin/sleep 2
-# Полностью стираем DNS-сервер с этого интерфейса
+# Стираем локальные DNS
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
-# Полностью стираем DOMAINS=~. из правил resolved
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
+# Разрешаем маршрутизацию FORWARD (Фикс для Docker)
+ExecStartPost=-/usr/sbin/iptables -I FORWARD -o singbox-tun -j ACCEPT
+ExecStartPost=-/usr/sbin/iptables -I FORWARD -i singbox-tun -j ACCEPT
+# Убираем правила при остановке службы
+ExecStopPost=-/usr/sbin/iptables -D FORWARD -o singbox-tun -j ACCEPT
+ExecStopPost=-/usr/sbin/iptables -D FORWARD -i singbox-tun -j ACCEPT
+
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
