@@ -56,9 +56,13 @@ if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then
     echo -e " - ${CYAN}Удаление подсети 198.18.0.0/24 из $AZ_INC...${NC}"
     sed -i '/198.18.0.0\/24/d' "$AZ_INC"
     
-    echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
-    # ИСПРАВЛЕНИЕ ЗАВИСАНИЯ:
-    </dev/null /root/antizapret/doall.sh >/dev/null 2>&1
+    echo -e " - ${CYAN}Запуск doall.sh (компиляция списков AntiZapret)...${NC}"
+    echo -e " - ${YELLOW}⏳ ВНИМАНИЕ: Это может занять от 1 до 5 минут. Пожалуйста, подождите!${NC}"
+    
+    # ЖЕСТКОЕ ИСПРАВЛЕНИЕ: Блокируем любые всплывающие окна и прерывания
+    export DEBIAN_FRONTEND=noninteractive
+    export SYSTEMD_PAGER=""
+    bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
     
     echo -e " - ${GREEN}Конфигурация маршрутов успешно восстановлена!${NC}"
 else
