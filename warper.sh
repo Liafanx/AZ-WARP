@@ -6,6 +6,14 @@ KRESD_CONF="/etc/knot-resolver/kresd.conf"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 LOCAL_VER=$(cat /root/warper/version 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
+CONF_FILE="/root/warper/warper.conf"
+
+if [ -f "$CONF_FILE" ]; then
+    source "$CONF_FILE"
+else
+    SUBNET="198.18.0.0/24"
+    TUN_IP="198.18.0.1/24"
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -127,7 +135,7 @@ toggle_list() {
     local marker="# --- ${list_name^^} ---"
     
     if [ ! -f "$list_file" ]; then
-        echo -e "${RED}Файл списка $list_file не найден! Пожалуйста, обновите WARPER.${NC}"
+        echo -e "${RED}Файл списка $list_file не найден! Пожалуйста, обновите списки через меню.${NC}"
         sleep 2
         return
     fi
@@ -174,7 +182,7 @@ update_warper() {
     
     update_list_blocks
     
-    echo -e "${GREEN}Утилита успешно обновлена!${NC}"
+    echo -e "${GREEN}Утилита и списки успешно обновлены!${NC}"
     read -e -p "Нажмите Enter для перезапуска WARPER..."
     exec /usr/local/bin/warper
 }
@@ -190,12 +198,13 @@ settings_menu() {
         if grep -q "# --- GEMINI ---" "$MASTER_FILE"; then GEM_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else GEM_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
         if grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then GPT_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else GPT_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
         
-        echo -e " ${CYAN}1.${NC} Автопатч DNS при перезагрузке сервера: [$AP_STAT]"
-        echo -e " ${CYAN}2.${NC} Интеграция доменов Gemini:             [$GEM_STAT]"
-        echo -e " ${CYAN}3.${NC} Интеграция доменов ChatGPT:            [$GPT_STAT]"
+        echo -e " ${CYAN}1.${NC} Автопатч DNS при перезагрузке:  [$AP_STAT]"
+        echo -e " ${CYAN}2.${NC} Интеграция доменов Gemini:      [$GEM_STAT]"
+        echo -e " ${CYAN}3.${NC} Интеграция доменов ChatGPT:     [$GPT_STAT]"
+        echo -e " ${CYAN}4.${NC} Изменить фейковую подсеть:      [Текущая: $SUBNET]"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
-        read -e -p "Выбор [0-3]: " set_choice
+        read -e -p "Выбор [0-4]: " set_choice
         case $set_choice in
             1)
                 if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then
@@ -208,6 +217,37 @@ settings_menu() {
                 ;;
             2) toggle_list "gemini" ;;
             3) toggle_list "chatgpt" ;;
+            4)
+                echo -e "\n${YELLOW}Внимание! Изменение подсети обновит конфигурации и перезапустит службы.${NC}"
+                read -e -p "Вы уверены? [y/N]: " conf_sub
+                if [[ "$conf_sub" == "y" || "$conf_sub" == "Y" ]]; then
+                    read -e -p "Введите новую подсеть (например 10.99.0.0/24): " new_subnet
+                    if [ -n "$new_subnet" ]; then
+                        new_tun="${new_subnet/.0\//.1\/}"
+                        
+                        sed -i "s|\"$SUBNET\"|\"$new_subnet\"|g" /etc/sing-box/config.json
+                        sed -i "s|\"$TUN_IP\"|\"$new_tun\"|g" /etc/sing-box/config.json
+                        
+                        ESC_OLD=$(echo "$SUBNET" | sed 's/\//\\\//g')
+                        sed -i "/$ESC_OLD/d" "$AZ_INC"
+                        echo "$new_subnet" >> "$AZ_INC"
+                        
+                        echo "SUBNET=\"$new_subnet\"" > "$CONF_FILE"
+                        echo "TUN_IP=\"$new_tun\"" >> "$CONF_FILE"
+                        SUBNET="$new_subnet"
+                        TUN_IP="$new_tun"
+                        
+                        echo -e "${YELLOW}⏳ Обновление маршрутов AntiZapret (подождите)...${NC}"
+                        export DEBIAN_FRONTEND=noninteractive
+                        export SYSTEMD_PAGER=""
+                        bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
+                        
+                        systemctl restart sing-box
+                        echo -e "${GREEN}Подсеть успешно изменена!${NC}"
+                        sleep 2
+                    fi
+                fi
+                ;;
             0) return ;;
             *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
         esac
@@ -223,7 +263,7 @@ singbox_menu() {
         if systemctl is-active --quiet sing-box; then echo -e "Текущий статус: ${GREEN}ЗАПУЩЕН 🟢${NC}"; else echo -e "Текущий статус: ${RED}ОСТАНОВЛЕН 🔴${NC}"; fi
         if systemctl is-enabled --quiet sing-box 2>/dev/null; then echo -e "Автозагрузка: ${GREEN}ВКЛЮЧЕНА${NC}"; else echo -e "Автозагрузка: ${RED}ВЫКЛЮЧЕНА${NC}"; fi
         echo -e "${CYAN}------------------------------------------${NC}"
-        echo -e " ${GREEN}1.${NC} Запустить службу"
+        echo -e " ${GREEN}1.${NC} ��апустить службу"
         echo -e " ${RED}2.${NC} Остановить службу"
         echo -e " ${GREEN}3.${NC} Включить в автозагрузку"
         echo -e " ${RED}4.${NC} Выключить из автозагрузки"
@@ -257,14 +297,14 @@ show_main_menu() {
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена автозагрузка${NC}"; else SB_EN="${RED}отключена автозагрузка${NC}"; fi
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
     if diff -q "$MASTER_FILE" "$ACTIVE_FILE" >/dev/null 2>&1; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
-    if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}добавлена${NC}"; else AZ_STAT="${RED}не добавлена${NC}"; fi
+    if grep -q "$SUBNET" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}добавлена${NC}"; else AZ_STAT="${RED}не добавлена${NC}"; fi
     if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}включено${NC}"; else AP_STAT="${RED}отключено${NC}"; fi
 
     echo -e " - Версия: $VER_STR"
     echo -e " - Sing-box ($SB_RUN, $SB_EN)"
     echo -e " - Kresd.conf ($KR_STAT)"
     echo -e " - 📁 Домены: /root/warper/domains.txt ($DOM_STAT)"
-    echo -e " - Fake подсеть 198.18.0.0/24 в include-ips ($AZ_STAT)"
+    echo -e " - Fake подсеть $SUBNET в include-ips ($AZ_STAT)"
     echo -e " - Автовосстановление DNS ($AP_STAT)"
     
     echo -e "${CYAN}------------------------------------------${NC}"
@@ -272,7 +312,7 @@ show_main_menu() {
     echo -e " ${RED}2.${NC} Удалить домен из WARP"
     echo -e " ${YELLOW}3.${NC} Посмотреть список доменов"
     echo -e " ${CYAN}4.${NC} Отредактировать список (через nano)"
-    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация / Восстановление"
+    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} 📄 Показать логи"
     
@@ -282,9 +322,14 @@ show_main_menu() {
         echo -e " ${GREEN}8. ▶ Включить WARPER${NC}"
     fi
 
-    echo -e " ${CYAN}9. 🛠 Настройки (Автопатч, Вкл/Выкл списков)${NC}"
+    echo -e " ${CYAN}9. 🛠 Настройки (Автопатч, Подсеть, Списки)${NC}"
     
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then echo -e " ${YELLOW}10. ⚡ Обновить WARPER до $REMOTE_VER${NC}"; fi
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then 
+        echo -e " ${YELLOW}10. ⚡ Обновить WARPER до $REMOTE_VER${NC}"
+    else 
+        echo -e " ${CYAN}10.${NC} 🔄 Проверить и обновить списки доменов"
+    fi
+    
     echo -e " ${RED}U. Удалить warper полностью${NC}"
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
@@ -296,7 +341,6 @@ while true; do
     show_main_menu
     read -e -p "Выбор: " choice
     
-    # Удаляем пробелы из ввода для надежности (чтобы "u " и "u" работали одинаково)
     choice=$(echo "$choice" | tr -d ' ')
     
     case "$choice" in
@@ -329,12 +373,16 @@ while true; do
             if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then
                 update_warper
             else
-                echo -e "${RED}Нет доступных обновлений.${NC}"
-                sleep 1
+                echo -e "\n${CYAN}Проверка обновлений списков...${NC}"
+                mkdir -p /root/warper/download
+                curl -s -o /root/warper/download/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
+                curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
+                update_list_blocks
+                echo -e "${GREEN}Списки успешно обновлены!${NC}"
+                prompt_apply
             fi
             ;;
         u|U) 
-            # Используем exec для жесткой передачи терминала скрипту удаления
             if [ -f "/root/warper/uninstaller.sh" ]; then
                 exec bash /root/warper/uninstaller.sh
             else
