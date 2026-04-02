@@ -128,6 +128,13 @@ if [ ! -f "/usr/local/bin/wgcf" ]; then
     mv wgcf /usr/local/bin/wgcf
 fi
 
+# Поиск ключей в корне (для совместимости со старыми установками)
+if [ -f "/root/wgcf-profile.conf" ] && [ ! -f "wgcf-profile.conf" ]; then
+    echo -e " - ${CYAN}Найден профиль WARP в /root/, переносим...${NC}"
+    cp /root/wgcf-account.toml . 2>/dev/null
+    cp /root/wgcf-profile.conf . 2>/dev/null
+fi
+
 GENERATE_WARP=true
 if [ -f "wgcf-profile.conf" ] && grep -q "PrivateKey" wgcf-profile.conf && grep -q "Address" wgcf-profile.conf; then
     echo -e " - ${GREEN}Профиль WARP уже существует. Используем старые ключи.${NC}"
@@ -136,15 +143,27 @@ fi
 
 if [ "$GENERATE_WARP" = true ]; then
     echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP...${NC}"
-    wgcf register --accept-tos > /dev/null 2>&1
-    wgcf generate > /dev/null 2>&1
+    wgcf register --accept-tos > /dev/null
+    wgcf generate > /dev/null
+    
+    if [ ! -f "wgcf-profile.conf" ]; then
+        echo -e "\n${RED}================================================${NC}"
+        echo -e "${RED}КРИТИЧЕСКАЯ ОШИБКА: Файл wgcf-profile.conf не был создан!${NC}"
+        echo -e "${YELLOW}Скорее всего Cloudflare заблокировал регистрацию с IP-адреса вашего сервера.${NC}"
+        echo -e "${CYAN}Решение:${NC}"
+        echo -e "1. Сгенерируйте файл wgcf-profile.conf на своем домашнем ПК (Windows/Mac/Linux)."
+        echo -e "2. Положите этот файл в директорию ${YELLOW}/root/warper/wgcf/${NC} на сервере."
+        echo -e "3. Запустите скрипт установки заново."
+        echo -e "${RED}================================================${NC}"
+        exit 1
+    fi
 fi
 
 WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 
 if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
-    echo -e " - ${RED}Ошибка: Не удалось получить ключи WARP.${NC}"
+    echo -e " - ${RED}Ошибка: Не удалось извлечь ключи из файла wgcf-profile.conf.${NC}"
     exit 1
 fi
 echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
