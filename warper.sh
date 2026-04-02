@@ -14,7 +14,14 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 if [ ! -f "$MASTER_FILE" ]; then
-    echo "# Пользовательские домены:" > "$MASTER_FILE"
+cat << 'EOF' > "$MASTER_FILE"
+# ==========================================
+# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
+# Строки, начинающиеся с '#', игнорируются.
+# ==========================================
+
+# Пользовательские домены:
+EOF
 fi
 
 sync_domains() {
@@ -55,7 +62,6 @@ patch_kresd() {
         systemctl restart kresd@1 kresd@2
         return 0
     fi
-    # В awk добавлена логика игнорирования строк, начинающихся с #
     awk '
     /-- Resolve non-blocked domains/ || /-- Resolve blocked domains/ {
         print "\t-- [WARP-MOD-START]"
@@ -115,26 +121,25 @@ toggle_warper() {
     sleep 2
 }
 
-# Функция управления блоками доменов (Gemini / ChatGPT)
 toggle_list() {
     local list_name=$1
     local list_file="/root/warper/download/${list_name}.txt"
     local marker="# --- ${list_name^^} ---"
     
     if [ ! -f "$list_file" ]; then
-        echo -e "${RED}Файл списка не найден! Пожалуйста, обновите WARPER.${NC}"
+        echo -e "${RED}Файл списка $list_file не найден! Пожалуйста, обновите WARPER.${NC}"
         sleep 2
         return
     fi
 
     if grep -q "$marker" "$MASTER_FILE"; then
         sed -i "/$marker/,/# --- END ${list_name^^} ---/d" "$MASTER_FILE"
-        echo -e "${YELLOW}Домены ${list_name^^} удалены из маршрутизации.${NC}"
+        echo -e "${YELLOW}Домены ${list_name^^} выключены.${NC}"
     else
         echo "$marker" >> "$MASTER_FILE"
         cat "$list_file" >> "$MASTER_FILE"
         echo "# --- END ${list_name^^} ---" >> "$MASTER_FILE"
-        echo -e "${GREEN}Домены ${list_name^^} добавлены в маршрутизацию.${NC}"
+        echo -e "${GREEN}Домены ${list_name^^} включены.${NC}"
     fi
     prompt_apply
 }
@@ -153,20 +158,23 @@ update_list_blocks() {
 
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
+    
+    # СОЗДАЕМ ПАПКУ ПЕРЕД СКАЧИВАНИЕМ
+    mkdir -p /root/warper/download
+    
     curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh?t=$(date +%s)"
     curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh?t=$(date +%s)"
     curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
     curl -s -o /usr/lib/systemd/system/warper-autopatch.service "$REPO_URL/warper-autopatch.service?t=$(date +%s)"
     curl -s -o /root/warper/version "$REPO_URL/version?t=$(date +%s)"
     
-    mkdir -p /root/warper/download
     curl -s -o /root/warper/download/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
     curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
     
     chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
     systemctl daemon-reload
     
-    # Автоматически обновляем домены в блоках
+    # Автоматически обновляем домены в блоках, если они были включены
     update_list_blocks
     
     echo -e "${GREEN}Утилита успешно обновлена!${NC}"
@@ -265,7 +273,7 @@ show_main_menu() {
     echo -e " ${RED}2.${NC} Удалить домен из WARP"
     echo -e " ${YELLOW}3.${NC} Посмотреть список доменов"
     echo -e " ${CYAN}4.${NC} Отредактировать список (через nano)"
-    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация / Восстановление"
+    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} 📄 Показать логи"
     
