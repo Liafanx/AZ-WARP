@@ -384,11 +384,34 @@ while true; do
             else
                 echo -e "\n${CYAN}Проверка обновлений списков...${NC}"
                 mkdir -p /root/warper/download
-                curl -s -o /root/warper/download/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
-                curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
-                update_list_blocks
-                echo -e "${GREEN}Списки успешно обновлены!${NC}"
-                prompt_apply
+                
+                curl -s -o /tmp/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
+                curl -s -o /tmp/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
+                
+                LISTS_CHANGED=false
+                
+                if ! cmp -s /tmp/gemini.txt /root/warper/download/gemini.txt 2>/dev/null; then
+                    mv /tmp/gemini.txt /root/warper/download/gemini.txt
+                    LISTS_CHANGED=true
+                else
+                    rm -f /tmp/gemini.txt
+                fi
+                
+                if ! cmp -s /tmp/chatgpt.txt /root/warper/download/chatgpt.txt 2>/dev/null; then
+                    mv /tmp/chatgpt.txt /root/warper/download/chatgpt.txt
+                    LISTS_CHANGED=true
+                else
+                    rm -f /tmp/chatgpt.txt
+                fi
+                
+                if [ "$LISTS_CHANGED" = true ]; then
+                    update_list_blocks
+                    echo -e "${GREEN}Найдены новые домены! Списки успешно обновлены.${NC}"
+                    prompt_apply
+                else
+                    echo -e "${GREEN}Версия и файлы актуальны, обновление не требуется.${NC}"
+                    sleep 2
+                fi
             fi
             ;;
         u|U) 
