@@ -137,7 +137,7 @@ nano /etc/sing-box/config.json
       {
         "tag": "real-dns",
         "type": "udp",
-        "server": "8.8.8.8",
+        "server": "1.1.1.1",
         "detour": "warp"
       },
       {
