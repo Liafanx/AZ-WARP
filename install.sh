@@ -21,6 +21,7 @@ fi
 # === ПРЕДВАРИТЕЛЬНЫЙ ОПРОС ПОЛЬЗОВАТЕЛЯ ===
 mkdir -p /root/warper
 MASTER_FILE="/root/warper/domains.txt"
+CONF_FILE="/root/warper/warper.conf"
 
 if [ ! -f "$MASTER_FILE" ]; then
 cat << 'EOF' > "$MASTER_FILE"
@@ -35,6 +36,8 @@ fi
 
 ADD_GEMINI="n"
 ADD_CHATGPT="n"
+SUBNET="198.18.0.0/24"
+TUN_IP="198.18.0.1/24"
 
 echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
 
@@ -51,6 +54,20 @@ else
     read -e -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
     if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then ADD_CHATGPT="y"; fi
 fi
+
+echo -e "\n${YELLOW}⚙️  Настройка сети${NC}"
+read -e -p "Использовать фейковую подсеть $SUBNET (рекомендуется)? [Y/n]: " prompt_subnet < /dev/tty
+if [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
+    read -e -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
+    if [[ -n "$custom_subnet" ]]; then
+        SUBNET="$custom_subnet"
+        TUN_IP="${SUBNET/.0\//.1\/}"
+    fi
+fi
+
+echo "SUBNET=\"$SUBNET\"" > "$CONF_FILE"
+echo "TUN_IP=\"$TUN_IP\"" >> "$CONF_FILE"
+echo -e "${GREEN}✔ Подсеть $SUBNET установлена.${NC}"
 
 echo -e "\n${CYAN}Начинаем процесс установки...${NC}"
 
@@ -110,7 +127,7 @@ cat << EOF > /etc/sing-box/config.json
   "dns": {
     "servers": [
       { "tag": "real-dns", "type": "udp", "server": "8.8.8.8", "detour": "warp" },
-      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/24", "inet6_range": "fc00::/18" }
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "$SUBNET", "inet6_range": "fc00::/18" }
     ],
     "rules": [
       { "query_type": ["A", "AAAA"], "server": "fakeip-dns" }
@@ -139,7 +156,7 @@ cat << EOF > /etc/sing-box/config.json
   ],
   "inbounds": [
     { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
-    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["198.18.0.1/24"], "auto_route": false, "strict_route": false, "stack": "system" }
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["$TUN_IP"], "auto_route": false, "strict_route": false, "stack": "system" }
   ],
   "outbounds": [
     { "type": "direct", "tag": "direct" }
@@ -172,8 +189,8 @@ echo -e "\n${YELLOW}[5/8] Интеграция с маршрутами AntiZapre
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
     sed -i '/10.255.0.0\/24/d' "$AZ_INC" 2>/dev/null
-    if ! grep -q "198.18.0.0/24" "$AZ_INC"; then
-        echo "198.18.0.0/24" >> "$AZ_INC"
+    if ! grep -q "$SUBNET" "$AZ_INC"; then
+        echo "$SUBNET" >> "$AZ_INC"
         echo -e " - ${YELLOW}⏳ Обновление конфигурации AntiZapret (от 1 до 5 минут)...${NC}"
         export DEBIAN_FRONTEND=noninteractive
         export SYSTEMD_PAGER=""
