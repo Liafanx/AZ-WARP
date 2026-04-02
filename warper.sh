@@ -13,7 +13,9 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-touch "$MASTER_FILE"
+if [ ! -f "$MASTER_FILE" ]; then
+    echo "# Пользовательские домены:" > "$MASTER_FILE"
+fi
 
 sync_domains() {
     cp "$MASTER_FILE" "$ACTIVE_FILE"
@@ -24,8 +26,7 @@ prompt_apply() {
     echo -e "\n${YELLOW}Применить изменения и перезапустить DNS?${NC}"
     read -e -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
     if [[ -z "$apply_choice" || "$apply_choice" == "Y" || "$apply_choice" == "y" ]]; then
-        sync_domains
-        systemctl restart kresd@1 kresd@2
+        patch_kresd > /dev/null 2>&1
         echo -e "${GREEN}Изменения успешно применены!${NC}"
     else
         echo -e "${YELLOW}Домены сохранены в файл, но НЕ применены к DNS.${NC}"
@@ -43,22 +44,18 @@ show_logs() {
     echo -e "${YELLOW}Чтение логов sing-box...${NC}"
     echo -e "${GREEN}Для выхода обратно в меню нажмите Ctrl+C${NC}"
     echo -e "${CYAN}==========================================${NC}\n"
-    
-    # Нативный перехват Ctrl+C: позволяет закрыть логи, но не дает закрыть сам скрипт
     trap 'echo -e "\n${CYAN}Возврат в меню...${NC}"' SIGINT
-    
     journalctl -u sing-box -n 20 -f
-    
-    # Снимаем перехват
     trap - SIGINT
 }
 
 patch_kresd() {
+    sync_domains
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
-        if [ ! -f "$ACTIVE_FILE" ]; then sync_domains; systemctl restart kresd@1 kresd@2; fi
+        systemctl restart kresd@1 kresd@2
         return 0
     fi
-    sync_domains
+    # В awk добавлена логика игнорирования строк, начинающихся с #
     awk '
     /-- Resolve non-blocked domains/ || /-- Resolve blocked domains/ {
         print "\t-- [WARP-MOD-START]"
@@ -67,7 +64,7 @@ patch_kresd() {
         print "\tif wfile then"
         print "\t\tfor line in wfile:lines() do"
         print "\t\t\tlocal clean = line:gsub(\"%s+\", \"\")"
-        print "\t\t\tif clean ~= \"\" then table.insert(warp_domains, clean .. \".\") end"
+        print "\t\t\tif clean ~= \"\" and clean:sub(1,1) ~= \"#\" then table.insert(warp_domains, clean .. \".\") end"
         print "\t\tend"
         print "\t\twfile:close()"
         print "\t\tif #warp_domains > 0 then"
@@ -94,13 +91,13 @@ toggle_warper() {
     fi
     
     if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
-        echo -e "\n${YELLOW}Вы уверены что хотите выключить warper? (y/N)${NC}"
+        echo -e "\n${YELLOW}Вы уверены что хотите выключить warper? (Y/n)${NC}"
     else
-        echo -e "\n${YELLOW}Вы уверены что хотите включить warper? (y/N)${NC}"
+        echo -e "\n${YELLOW}Вы уверены что хотите включить warper? (Y/n)${NC}"
     fi
     
     read -e -p "Выбор: " conf
-    if [[ ! "$conf" =~ ^[Yy]$ ]]; then return; fi
+    if [[ -n "$conf" && ! "$conf" =~ ^[Yy]$ ]]; then return; fi
 
     if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
         echo -e "${YELLOW}Отключение WARPER...${NC}"
@@ -112,28 +109,104 @@ toggle_warper() {
         echo -e "${YELLOW}Включение WARPER...${NC}"
         systemctl enable sing-box 2>/dev/null
         systemctl start sing-box
-        patch_kresd
+        patch_kresd >/dev/null 2>&1
         echo -e "${GREEN}WARPER успешно включен!${NC}"
     fi
     sleep 2
 }
 
-if [ "$1" == "patch" ]; then patch_kresd; exit 0; fi
+# Функция управления блоками доменов (Gemini / ChatGPT)
+toggle_list() {
+    local list_name=$1
+    local list_file="/root/warper/download/${list_name}.txt"
+    local marker="# --- ${list_name^^} ---"
+    
+    if [ ! -f "$list_file" ]; then
+        echo -e "${RED}Файл списка не найден! Пожалуйста, обновите WARPER.${NC}"
+        sleep 2
+        return
+    fi
+
+    if grep -q "$marker" "$MASTER_FILE"; then
+        sed -i "/$marker/,/# --- END ${list_name^^} ---/d" "$MASTER_FILE"
+        echo -e "${YELLOW}Домены ${list_name^^} удалены из маршрутизации.${NC}"
+    else
+        echo "$marker" >> "$MASTER_FILE"
+        cat "$list_file" >> "$MASTER_FILE"
+        echo "# --- END ${list_name^^} ---" >> "$MASTER_FILE"
+        echo -e "${GREEN}Домены ${list_name^^} добавлены в маршрутизацию.${NC}"
+    fi
+    prompt_apply
+}
+
+update_list_blocks() {
+    for list_name in "gemini" "chatgpt"; do
+        local marker="# --- ${list_name^^} ---"
+        if grep -q "$marker" "$MASTER_FILE"; then
+            sed -i "/$marker/,/# --- END ${list_name^^} ---/d" "$MASTER_FILE"
+            echo "$marker" >> "$MASTER_FILE"
+            cat "/root/warper/download/${list_name}.txt" >> "$MASTER_FILE"
+            echo "# --- END ${list_name^^} ---" >> "$MASTER_FILE"
+        fi
+    done
+}
 
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh?t=$(date +%s)"
     curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh?t=$(date +%s)"
     curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
+    curl -s -o /usr/lib/systemd/system/warper-autopatch.service "$REPO_URL/warper-autopatch.service?t=$(date +%s)"
     curl -s -o /root/warper/version "$REPO_URL/version?t=$(date +%s)"
+    
+    mkdir -p /root/warper/download
+    curl -s -o /root/warper/download/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
+    curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
+    
     chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
     systemctl daemon-reload
     
+    # Автоматически обновляем домены в блоках
+    update_list_blocks
+    
     echo -e "${GREEN}Утилита успешно обновлена!${NC}"
     read -e -p "Нажмите Enter для перезапуска WARPER..."
-    
-    # Жесткий перезапуск процесса в этом же окне
     exec /usr/local/bin/warper
+}
+
+settings_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}==========================================${NC}"
+        echo -e "          ⚙️  ${YELLOW}НАСТРОЙКИ WARPER${NC} ⚙️"
+        echo -e "${CYAN}==========================================${NC}"
+        
+        if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else AP_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
+        if grep -q "# --- GEMINI ---" "$MASTER_FILE"; then GEM_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else GEM_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
+        if grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then GPT_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else GPT_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
+        
+        echo -e " ${CYAN}1.${NC} Автопатч DNS при перезагрузке сервера: [$AP_STAT]"
+        echo -e " ${CYAN}2.${NC} Интеграция доменов Gemini:             [$GEM_STAT]"
+        echo -e " ${CYAN}3.${NC} Интеграция доменов ChatGPT:            [$GPT_STAT]"
+        echo -e " ${CYAN}0.${NC} Назад в главное меню"
+        echo -e "${CYAN}==========================================${NC}"
+        read -e -p "Выбор [0-3]: " set_choice
+        case $set_choice in
+            1)
+                if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then
+                    systemctl disable warper-autopatch >/dev/null 2>&1
+                    echo -e "${YELLOW}Автопатч отключен.${NC}"; sleep 1
+                else
+                    systemctl enable warper-autopatch >/dev/null 2>&1
+                    echo -e "${GREEN}Автопатч включен.${NC}"; sleep 1
+                fi
+                ;;
+            2) toggle_list "gemini" ;;
+            3) toggle_list "chatgpt" ;;
+            0) return ;;
+            *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
+        esac
+    done
 }
 
 singbox_menu() {
@@ -171,7 +244,7 @@ show_main_menu() {
     if [ -z "$REMOTE_VER" ]; then REMOTE_VER="$LOCAL_VER"; fi
     
     echo -e "${CYAN}==========================================${NC}"
-    echo -e "       🚀 ${YELLOW}WARPER УПРАВЛЕНИЕ ДОМЕНАМИ${NC} 🚀"
+    echo -e "       🚀 ${YELLOW}Панель управления Warper${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     
     if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then VER_STR="${YELLOW}$LOCAL_VER (Доступно: $REMOTE_VER)${NC}"; else VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"; fi
@@ -192,7 +265,7 @@ show_main_menu() {
     echo -e " ${RED}2.${NC} Удалить домен из WARP"
     echo -e " ${YELLOW}3.${NC} Посмотреть список доменов"
     echo -e " ${CYAN}4.${NC} Отредактировать список (через nano)"
-    echo -e " ${CYAN}5.${NC} 🔧 Восстановить / Пропатчить DNS"
+    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация / Восстановление"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} 📄 Показать логи"
     
@@ -202,11 +275,15 @@ show_main_menu() {
         echo -e " ${GREEN}8. ▶ Включить WARPER${NC}"
     fi
 
-    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then echo -e " ${YELLOW}9. ⚡ Обновить WARPER до $REMOTE_VER${NC}"; fi
+    echo -e " ${CYAN}9. 🛠 Настройки (Автопатч, Вкл/Выкл списков)${NC}"
+    
+    if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then echo -e " ${YELLOW}10. ⚡ Обновить WARPER до $REMOTE_VER${NC}"; fi
     echo -e " ${RED}U. Удалить warper полностью${NC}"
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
 }
+
+if [ "$1" == "patch" ]; then patch_kresd >/dev/null 2>&1; exit 0; fi
 
 while true; do
     show_main_menu
@@ -227,16 +304,17 @@ while true; do
             ;;
         3)
             echo -e "\n${CYAN}--- Домены в WARP ---${NC}"
-            if [ -s "$MASTER_FILE" ]; then cat -n "$MASTER_FILE"; else echo -e "${YELLOW}Список пуст.${NC}"; fi
+            if [ -s "$MASTER_FILE" ]; then cat "$MASTER_FILE"; else echo -e "${YELLOW}Список пуст.${NC}"; fi
             echo -e "${CYAN}---------------------${NC}"
             read -p "Нажмите Enter..."
             ;;
         4) nano "$MASTER_FILE"; prompt_apply ;;
-        5) echo -e "\n${YELLOW}Запуск полного восстановления...${NC}"; patch_kresd; echo -e "${GREEN}Готово!${NC}"; sleep 1 ;;
+        5) echo -e "\n${YELLOW}Запуск синхронизации...${NC}"; patch_kresd; echo -e "${GREEN}Готово!${NC}"; sleep 1 ;;
         6) singbox_menu ;;
         7) show_logs ;;
         8) toggle_warper ;;
-        9) update_warper ;;
+        9) settings_menu ;;
+        10) update_warper ;;
         u|U) 
             if [ -f "/root/warper/uninstaller.sh" ]; then
                 bash /root/warper/uninstaller.sh
