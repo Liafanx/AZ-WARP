@@ -103,22 +103,22 @@ toggle_warper() {
     fi
     
     read -e -p "Выбор: " conf
-    if [[ -n "$conf" && ! "$conf" =~ ^[Yy]$ ]]; then return; fi
-
-    if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
-        echo -e "${YELLOW}Отключение WARPER...${NC}"
-        systemctl stop sing-box
-        systemctl disable sing-box 2>/dev/null
-        unpatch_kresd
-        echo -e "${GREEN}WARPER успешно отключен! Трафик идет по умолчанию.${NC}"
-    else
-        echo -e "${YELLOW}Включение WARPER...${NC}"
-        systemctl enable sing-box 2>/dev/null
-        systemctl start sing-box
-        patch_kresd >/dev/null 2>&1
-        echo -e "${GREEN}WARPER успешно включен!${NC}"
+    if [[ -z "$conf" || "$conf" == "Y" || "$conf" == "y" ]]; then
+        if [ "$action" == "ВЫКЛЮЧИТЬ" ]; then
+            echo -e "${YELLOW}Отключение WARPER...${NC}"
+            systemctl stop sing-box
+            systemctl disable sing-box 2>/dev/null
+            unpatch_kresd
+            echo -e "${GREEN}WARPER успешно отключен! Трафик идет по умолчанию.${NC}"
+        else
+            echo -e "${YELLOW}Включение WARPER...${NC}"
+            systemctl enable sing-box 2>/dev/null
+            systemctl start sing-box
+            patch_kresd >/dev/null 2>&1
+            echo -e "${GREEN}WARPER успешно включен!${NC}"
+        fi
+        sleep 2
     fi
-    sleep 2
 }
 
 toggle_list() {
@@ -158,10 +158,7 @@ update_list_blocks() {
 
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
-    
-    # СОЗДАЕМ ПАПКУ ПЕРЕД СКАЧИВАНИЕМ
     mkdir -p /root/warper/download
-    
     curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh?t=$(date +%s)"
     curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh?t=$(date +%s)"
     curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
@@ -173,8 +170,8 @@ update_warper() {
     
     chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
     systemctl daemon-reload
+    systemctl enable warper-autopatch >/dev/null 2>&1
     
-    # Автоматически обновляем домены в блоках, если они были включены
     update_list_blocks
     
     echo -e "${GREEN}Утилита успешно обновлена!${NC}"
@@ -261,19 +258,21 @@ show_main_menu() {
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
     if diff -q "$MASTER_FILE" "$ACTIVE_FILE" >/dev/null 2>&1; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
     if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}добавлена${NC}"; else AZ_STAT="${RED}не добавлена${NC}"; fi
+    if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}включено${NC}"; else AP_STAT="${RED}отключено${NC}"; fi
 
     echo -e " - Версия: $VER_STR"
     echo -e " - Sing-box ($SB_RUN, $SB_EN)"
     echo -e " - Kresd.conf ($KR_STAT)"
     echo -e " - 📁 Домены: /root/warper/domains.txt ($DOM_STAT)"
     echo -e " - Fake подсеть 198.18.0.0/24 в include-ips ($AZ_STAT)"
+    echo -e " - Автовосстановление DNS ($AP_STAT)"
     
     echo -e "${CYAN}------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} Добавить домен в WARP"
     echo -e " ${RED}2.${NC} Удалить домен из WARP"
     echo -e " ${YELLOW}3.${NC} Посмотреть список доменов"
     echo -e " ${CYAN}4.${NC} Отредактировать список (через nano)"
-    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация"
+    echo -e " ${CYAN}5.${NC} 🔧 Пропатчить DNS / Синхронизация / Восстановление"
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} 📄 Показать логи"
     
@@ -296,7 +295,11 @@ if [ "$1" == "patch" ]; then patch_kresd >/dev/null 2>&1; exit 0; fi
 while true; do
     show_main_menu
     read -e -p "Выбор: " choice
-    case $choice in
+    
+    # Удаляем пробелы из ввода для надежности (чтобы "u " и "u" работали одинаково)
+    choice=$(echo "$choice" | tr -d ' ')
+    
+    case "$choice" in
         1)
             echo -e "\n${CYAN}Введите домен (например, openai.com):${NC}"
             read -e -p "> " new_domain
@@ -322,14 +325,21 @@ while true; do
         7) show_logs ;;
         8) toggle_warper ;;
         9) settings_menu ;;
-        10) update_warper ;;
-        u|U) 
-            if [ -f "/root/warper/uninstaller.sh" ]; then
-                bash /root/warper/uninstaller.sh
+        10) 
+            if [ "$REMOTE_VER" != "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ]; then
+                update_warper
             else
-                curl -fsSL "$REPO_URL/uninstaller.sh?t=$(date +%s)" | bash
+                echo -e "${RED}Нет доступных обновлений.${NC}"
+                sleep 1
             fi
-            if [ ! -f "/usr/local/bin/warper" ]; then exit 0; fi
+            ;;
+        u|U) 
+            # Используем exec для жесткой передачи терминала скрипту удаления
+            if [ -f "/root/warper/uninstaller.sh" ]; then
+                exec bash /root/warper/uninstaller.sh
+            else
+                exec curl -fsSL "$REPO_URL/uninstaller.sh?t=$(date +%s)" | bash
+            fi
             ;;
         0) clear; exit 0 ;;
         *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
