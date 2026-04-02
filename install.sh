@@ -44,31 +44,57 @@ echo -e "\n${YELLOW}⚙️  Настройка маршрутизации дом
 if grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
     echo -e "${GREEN}✔ Домены Gemini уже присутствуют в списке. Пропускаем.${NC}"
 else
-    read -e -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
-    if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then ADD_GEMINI="y"; fi
+    while true; do
+        read -e -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
+        if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then 
+            ADD_GEMINI="y"
+            break
+        elif [[ "$prompt_gemini" =~ ^[Nn]$ ]]; then
+            ADD_GEMINI="n"
+            break
+        else
+            echo -e "${RED}Пожалуйста, введите Y или n.${NC}"
+        fi
+    done
 fi
 
 if grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then
     echo -e "${GREEN}✔ Домены ChatGPT уже присутствуют в списке. Пропускаем.${NC}"
 else
-    read -e -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
-    if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then ADD_CHATGPT="y"; fi
-fi
-
-echo -e "\n${YELLOW}⚙️  Настройка сети${NC}"
-read -e -p "Использовать фейковую подсеть $SUBNET (рекомендуется)? [Y/n]: " prompt_subnet < /dev/tty
-if [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
     while true; do
-        read -e -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
-        if [[ "$custom_subnet" =~ ^([0-9]{1,3}\.){3}0/[0-9]{1,2}$ ]]; then
-            SUBNET="$custom_subnet"
-            TUN_IP="${SUBNET/.0\//.1\/}"
+        read -e -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
+        if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then 
+            ADD_CHATGPT="y"
+            break
+        elif [[ "$prompt_chatgpt" =~ ^[Nn]$ ]]; then
+            ADD_CHATGPT="n"
             break
         else
-            echo -e "${RED}Неверный формат! Ожидается подсеть вида X.X.X.0/XX (например, 10.99.0.0/24)${NC}"
+            echo -e "${RED}Пожалуйста, введите Y или n.${NC}"
         fi
     done
 fi
+
+echo -e "\n${YELLOW}⚙️  Настройка сети${NC}"
+while true; do
+    read -e -p "Использовать фейковую подсеть $SUBNET (рекомендуется)? [Y/n]: " prompt_subnet < /dev/tty
+    if [[ -z "$prompt_subnet" || "$prompt_subnet" =~ ^[Yy]$ ]]; then
+        break
+    elif [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
+        while true; do
+            read -e -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
+            if [[ "$custom_subnet" =~ ^([0-9]{1,3}\.){3}0/[0-9]{1,2}$ ]]; then
+                SUBNET="$custom_subnet"
+                TUN_IP="${SUBNET/.0\//.1\/}"
+                break 2 # Выходим сразу из обоих циклов
+            else
+                echo -e "${RED}Неверный формат! Ожидается подсеть вида X.X.X.0/XX (например, 10.99.0.0/24)${NC}"
+            fi
+        done
+    else
+        echo -e "${RED}Пожалуйста, введите Y или n.${NC}"
+    fi
+done
 
 echo "SUBNET=\"$SUBNET\"" > "$CONF_FILE"
 echo "TUN_IP=\"$TUN_IP\"" >> "$CONF_FILE"
