@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -uo pipefail
+
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 SB_VERSION="1.13.5"
 
@@ -18,10 +20,116 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# === ФУНКЦИИ-ПОМОЩНИКИ ===
+
+download_file() {
+    local url="$1" dest="$2" desc="$3"
+    echo -e " - ${CYAN}Загрузка ${desc}...${NC}"
+    if ! curl -sfSL -o "$dest" "${url}?t=$(date +%s)"; then
+        echo -e " - ${RED}Ошибка загрузки: ${desc}${NC}"
+        echo -e " - ${RED}URL: ${url}${NC}"
+        return 1
+    fi
+    if [ ! -s "$dest" ]; then
+        echo -e " - ${RED}Загруженный файл пуст: ${desc}${NC}"
+        return 1
+    fi
+    return 0
+}
+
+validate_subnet() {
+    local subnet="$1"
+    if [[ ! "$subnet" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.0/([0-9]{1,2})$ ]]; then
+        return 1
+    fi
+    local o1="${BASH_REMATCH[1]}" o2="${BASH_REMATCH[2]}" o3="${BASH_REMATCH[3]}" mask="${BASH_REMATCH[4]}"
+    if (( o1 > 255 || o2 > 255 || o3 > 255 || mask < 1 || mask > 32 )); then
+        return 1
+    fi
+    return 0
+}
+
+calculate_tun_ip() {
+    local subnet="$1"
+    local base="${subnet%.*}"
+    local mask="${subnet##*/}"
+    echo "${base}.1/${mask}"
+}
+
+detect_arch() {
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64)  echo "amd64" ;;
+        aarch64) echo "arm64" ;;
+        armv7l)  echo "armv7" ;;
+        *)
+            echo -e "${RED}Неподдерживаемая архитектура процессора: $arch${NC}" >&2
+            echo -e "${YELLOW}Поддерживаются: x86_64, aarch64, armv7l${NC}" >&2
+            exit 1
+            ;;
+    esac
+}
+
+check_os() {
+    if [ ! -f /etc/os-release ]; then
+        echo -e "${RED}Не удалось определить операционную систему.${NC}"
+        exit 1
+    fi
+    source /etc/os-release
+    local supported=false
+    case "$ID" in
+        ubuntu)
+            if [[ "$VERSION_ID" == "22.04" || "$VERSION_ID" == "24.04" ]]; then
+                supported=true
+            fi
+            ;;
+        debian)
+            if [[ "$VERSION_ID" == "11" || "$VERSION_ID" == "12" ]]; then
+                supported=true
+            fi
+            ;;
+    esac
+    if [ "$supported" = false ]; then
+        echo -e "${RED}Неподдерживаемая ОС: $PRETTY_NAME${NC}"
+        echo -e "${YELLOW}Поддерживаются: Ubuntu 22.04/24.04, Debian 11/12${NC}"
+        exit 1
+    fi
+    echo -e " - ${GREEN}ОС: $PRETTY_NAME — поддерживается.${NC}"
+}
+
+check_dependencies() {
+    local deps=("curl" "wget" "awk" "iptables" "nano" "grep" "sed")
+    local missing=()
+    for cmd in "${deps[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing+=("$cmd")
+        fi
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e " - ${CYAN}Установка недостающих пакетов: ${missing[*]}...${NC}"
+        apt-get update -qq >/dev/null 2>&1
+        apt-get install -y -qq "${missing[@]}" >/dev/null 2>&1
+    fi
+    echo -e " - ${GREEN}Все зависимости установлены.${NC}"
+}
+
+# === ПРЕДВАРИТЕЛЬНЫЕ ПРОВЕРКИ ===
+echo -e "\n${YELLOW}[0/8] Предварительные проверки...${NC}"
+check_os
+SYSTEM_ARCH=$(detect_arch)
+echo -e " - ${GREEN}Архитектура: ${SYSTEM_ARCH}${NC}"
+check_dependencies
+
 # === ПРЕДВАРИТЕЛЬНЫЙ ОПРОС ПОЛЬЗОВАТЕЛЯ ===
-mkdir -p /root/warper
-MASTER_FILE="/root/warper/domains.txt"
-CONF_FILE="/root/warper/warper.conf"
+WARPER_DIR="/root/warper"
+DOWNLOAD_DIR="$WARPER_DIR/download"
+WGCF_DIR="$WARPER_DIR/wgcf"
+MASTER_FILE="$WARPER_DIR/domains.txt"
+CONF_FILE="$WARPER_DIR/warper.conf"
+SINGBOX_CONF="/etc/sing-box/config.json"
+
+mkdir -p "$WARPER_DIR" "$DOWNLOAD_DIR" "$WGCF_DIR"
 
 if [ ! -f "$MASTER_FILE" ]; then
 cat << 'EOF' > "$MASTER_FILE"
@@ -46,7 +154,7 @@ if grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
 else
     while true; do
         read -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
-        if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then 
+        if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then
             ADD_GEMINI="y"
             break
         elif [[ "$prompt_gemini" =~ ^[Nn]$ ]]; then
@@ -63,7 +171,7 @@ if grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then
 else
     while true; do
         read -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
-        if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then 
+        if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then
             ADD_CHATGPT="y"
             break
         elif [[ "$prompt_chatgpt" =~ ^[Nn]$ ]]; then
@@ -83,12 +191,12 @@ while true; do
     elif [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
         while true; do
             read -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
-            if [[ "$custom_subnet" =~ ^([0-9]{1,3}\.){3}0/[0-9]{1,2}$ ]]; then
+            if validate_subnet "$custom_subnet"; then
                 SUBNET="$custom_subnet"
-                TUN_IP="${SUBNET/.0\//.1\/}"
+                TUN_IP=$(calculate_tun_ip "$SUBNET")
                 break 2
             else
-                echo -e "${RED}Неверный формат! Ожидается подсеть вида X.X.X.0/XX (например, 10.99.0.0/24)${NC}"
+                echo -e "${RED}Некорректная подсеть! Ожидается формат X.X.X.0/XX с валидными октетами (0-255) и маской (1-32).${NC}"
             fi
         done
     else
@@ -119,12 +227,15 @@ fi
 
 # ==============================================================================
 echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC}"
-mkdir -p /root/warper/wgcf
-cd /root/warper/wgcf
+cd "$WGCF_DIR"
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
-    echo -e " - ${CYAN}Скачивание утилиты wgcf...${NC}"
-    wget -qO wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64
+    echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
+    WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
+    if ! wget -qO wgcf "$WGCF_URL"; then
+        echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
+        exit 1
+    fi
     chmod +x wgcf
     mv wgcf /usr/local/bin/wgcf
 fi
@@ -146,14 +257,14 @@ if [ "$GENERATE_WARP" = true ]; then
     echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP (подождите)...${NC}"
     wgcf register --accept-tos > /dev/null
     wgcf generate > /dev/null
-    
+
     if [ ! -f "wgcf-profile.conf" ]; then
         echo -e "\n${RED}================================================${NC}"
         echo -e "${RED}КРИТИЧЕСКАЯ ОШИБКА: Файл wgcf-profile.conf не был создан!${NC}"
         echo -e "${YELLOW}Скорее всего Cloudflare заблокировал регистрацию с IP-адреса вашего сервера.${NC}"
         echo -e "${CYAN}Решение:${NC}"
         echo -e "1. Сгенерируйте файл wgcf-profile.conf на своем домашнем ПК (Windows/Mac/Linux)."
-        echo -e "2. Положите этот файл в директорию ${YELLOW}/root/warper/wgcf/${NC} на сервере."
+        echo -e "2. Положите этот файл в директорию ${YELLOW}${WGCF_DIR}/${NC} на сервере."
         echo -e "3. Запустите скрипт установки заново."
         echo -e "${RED}================================================${NC}"
         exit 1
@@ -171,9 +282,9 @@ echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
 
 # ==============================================================================
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box...${NC}"
-echo -e " - ${CYAN}Генерация файла /etc/sing-box/config.json с подсетью $SUBNET...${NC}"
+echo -e " - ${CYAN}Генерация файла $SINGBOX_CONF с подсетью $SUBNET...${NC}"
 mkdir -p /etc/sing-box
-cat << EOF > /etc/sing-box/config.json
+cat << EOF > "$SINGBOX_CONF"
 {
   "log": { "level": "info" },
   "dns": {
@@ -228,10 +339,8 @@ EOF
 
 # ==============================================================================
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
-echo -e " - ${CYAN}Скачивание файла службы sing-box.service...${NC}"
-curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
-echo -e " - ${CYAN}Скачивание файла службы warper-autopatch.service...${NC}"
-curl -s -o /usr/lib/systemd/system/warper-autopatch.service "$REPO_URL/warper-autopatch.service?t=$(date +%s)"
+download_file "$REPO_URL/sing-box.service" "/usr/lib/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
+download_file "$REPO_URL/warper-autopatch.service" "/usr/lib/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
 echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
 systemctl daemon-reload
 systemctl enable sing-box > /dev/null 2>&1
@@ -243,8 +352,8 @@ sleep 2
 echo -e "\n${YELLOW}[5/8] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
-    sed -i '/10.255.0.0\/24/d' "$AZ_INC" 2>/dev/null
-    if ! grep -q "$SUBNET" "$AZ_INC"; then
+    sed -i '\|10.255.0.0/24|d' "$AZ_INC" 2>/dev/null
+    if ! grep -qF "$SUBNET" "$AZ_INC"; then
         echo -e " - ${CYAN}Добавление подсети $SUBNET в include-ips.txt...${NC}"
         echo "$SUBNET" >> "$AZ_INC"
         echo -e " - ${YELLOW}⏳ Запуск doall.sh (обновление конфигурации AntiZapret, от 1 до 5 минут)...${NC}"
@@ -259,11 +368,8 @@ fi
 
 # ==============================================================================
 echo -e "\n${YELLOW}[6/8] Скачивание базовых списков с GitHub...${NC}"
-mkdir -p /root/warper/download
-echo -e " - ${CYAN}Загрузка списка доменов Gemini...${NC}"
-curl -s -o /root/warper/download/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
-echo -e " - ${CYAN}Загрузка списка доменов ChatGPT...${NC}"
-curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
+download_file "$REPO_URL/download/gemini.txt" "$DOWNLOAD_DIR/gemini.txt" "список доменов Gemini" || exit 1
+download_file "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "список доменов ChatGPT" || exit 1
 
 # ==============================================================================
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
@@ -272,7 +378,7 @@ if [ "$ADD_GEMINI" == "y" ]; then
     echo -e " - ${CYAN}Интеграция доменов Gemini в мастер-файл...${NC}"
     if ! grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
         echo "# --- GEMINI ---" >> "$MASTER_FILE"
-        cat /root/warper/download/gemini.txt >> "$MASTER_FILE"
+        cat "$DOWNLOAD_DIR/gemini.txt" >> "$MASTER_FILE"
         echo "# --- END GEMINI ---" >> "$MASTER_FILE"
     fi
 fi
@@ -281,18 +387,18 @@ if [ "$ADD_CHATGPT" == "y" ]; then
     echo -e " - ${CYAN}Интеграция доменов ChatGPT в мастер-файл...${NC}"
     if ! grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then
         echo "# --- CHATGPT ---" >> "$MASTER_FILE"
-        cat /root/warper/download/chatgpt.txt >> "$MASTER_FILE"
+        cat "$DOWNLOAD_DIR/chatgpt.txt" >> "$MASTER_FILE"
         echo "# --- END CHATGPT ---" >> "$MASTER_FILE"
     fi
 fi
 
-echo -e " - ${CYAN}Скачивание исполняемого файла утилиты warper.sh...${NC}"
-curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh?t=$(date +%s)"
-curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh?t=$(date +%s)"
-curl -s -o /root/warper/version "$REPO_URL/version?t=$(date +%s)"
+echo -e " - ${CYAN}Скачивание исполняемых файлов утилиты...${NC}"
+download_file "$REPO_URL/warper.sh" "$WARPER_DIR/warper.sh" "утилита warper.sh" || exit 1
+download_file "$REPO_URL/uninstaller.sh" "$WARPER_DIR/uninstaller.sh" "деинсталлятор uninstaller.sh" || exit 1
+download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" || exit 1
 
-chmod +x /root/warper/warper.sh /root/warper/uninstaller.sh
-ln -sf /root/warper/warper.sh /usr/local/bin/warper
+chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
+ln -sf "$WARPER_DIR/warper.sh" /usr/local/bin/warper
 
 # ==============================================================================
 echo -e "\n${YELLOW}[8/8] Применение правил DNS и Firewall...${NC}"
