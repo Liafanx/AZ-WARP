@@ -11,18 +11,30 @@ echo -e " 🗑️ УДАЛЕНИЕ WARPER И SING-BOX"
 echo -e "${RED}================================================${NC}"
 echo -e "Эта команда полностью удалит службу туннеля, очистит настройки DNS и маршруты."
 
-read -e -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
-if [[ ! "$conf" =~ ^[Yy]$ ]]; then
-    echo -e "${GREEN}Отмена. Ничего не изменено.${NC}"
-    exit 0
-fi
+while true; do
+    read -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
+    if [[ -z "$conf" || "$conf" =~ ^[Nn]$ ]]; then
+        echo -e "${GREEN}Отмена. Ничего не изменено.${NC}"
+        exit 0
+    elif [[ "$conf" =~ ^[Yy]$ ]]; then
+        break
+    else
+        echo -e "${RED}Ошибка: Пожалуйста, введите y (да) или N (нет).${NC}"
+    fi
+done
 
-read -e -p "Оставить список доменов в папке /root/warper? (Y/n): " keep_dom < /dev/tty
-if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
-    KEEP_DOMAINS=true
-else
-    KEEP_DOMAINS=false
-fi
+while true; do
+    read -p "Оставить список доменов в папке /root/warper? (Y/n): " keep_dom < /dev/tty
+    if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
+        KEEP_DOMAINS=true
+        break
+    elif [[ "$keep_dom" =~ ^[Nn]$ ]]; then
+        KEEP_DOMAINS=false
+        break
+    else
+        echo -e "${RED}Ошибка: Пожалуйста, введите Y (да) или n (нет).${NC}"
+    fi
+done
 
 CONF_FILE="/root/warper/warper.conf"
 if [ -f "$CONF_FILE" ]; then
