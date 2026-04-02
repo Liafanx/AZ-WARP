@@ -1,0 +1,11 @@
+[Unit]
+Description=WARPER Auto-Patch Kresd on Boot
+After=network-online.target kresd@1.service kresd@2.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/warper patch
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
