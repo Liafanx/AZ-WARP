@@ -276,19 +276,11 @@ echo "198.18.0.0/24" >> /root/antizapret/config/include-ips.txt
 ### Шаг 6. Создание умной утилиты WARPER
 Мы создадим мощный инструмент, который защитит ваши настройки от перезаписи при обновлениях AntiZapret и позволит легко управлять туннелем прямо из консоли.
 
-**1. Создаем папку и мастер-файл с доменами (домены добавлены как пример для первого тестирования, их можно удалить позже, добавить свои):**
+**1. Создаем папку для утилиты:**
 ```bash
 mkdir -p /root/warper
-
-cat << 'EOF' > /root/warper/domains.txt
-gemini.google.com
-proactivebackend-pa.googleapis.com
-assistant-s3-pa.googleapis.com
-gemini.google
-alkaliminer-pa.googleapis.com
-robinfrontend-pa.googleapis.com
-EOF
 ```
+*(Файл с доменами domains.txt утилита создаст автоматически при первом запуске).*
 
 **2. Создаем скрипт-утилиту:**
 ```bash
@@ -297,10 +289,31 @@ nano /root/warper/warper.sh
 Вставляем код утилиты:
 *(Код утилиты смотрите в файле `warper.sh` в этом репозитории)*
 
-**3. Выдаем права и создаем ярлык:**
+**3. Создаем службу автопатча для сохранения настроек при перезагрузках:**
+```bash
+nano /usr/lib/systemd/system/warper-autopatch.service
+```
+Вставляем следующий текст:
+```ini
+[Unit]
+Description=WARPER Auto-Patch Kresd on Boot
+After=network-online.target kresd@1.service kresd@2.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/warper patch
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**4. Выдаем права, создаем ярлык и включаем службу:**
 ```bash
 chmod +x /root/warper/warper.sh
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
+systemctl daemon-reload
+systemctl enable warper-autopatch
 ```
 
 ### Шаг 7. Активация и Финал
@@ -309,12 +322,13 @@ ln -sf /root/warper/warper.sh /usr/local/bin/warper
 warper
 ```
 Перед вами появится меню утилиты.
-1. Нажмите **5**, чтобы утилита внедрила правила в конфигурацию DNS.
-2. Проверьте статусы в шапке (все должно светиться зеленым).
-3. Нажмите **0** для выхода.
+1. Рекомендуется сначала нажать **10** (Обновить WARPER), чтобы утилита скачала готовые списки доменов (Gemini, ChatGPT) с GitHub.
+2. Перейдите в раздел **9 (Настройки)** и включите нужные сервисы, либо добавьте свои домены вручную через пункт **1** главного меню.
+3. Нажмите **5**, чтобы утилита внедрила правила в конфигурацию DNS и применила списки.
+4. Проверьте статусы в шапке (все должно светиться зеленым).
+5. Нажмите **0** для выхода.
 
 **Готово! 🎉**
 У вас настроен идеальный гибридный VPN. AntiZapret обрабатывает стандартные блокировки, а `sing-box` (через WARP) берет на себя недоступные по какой-либо причине ресурсы или нужные вам для скрытия IP адреса. Если сервис перестал работать — просто введите `warper`, добавьте его домен в список, нажмите `Enter` (для авто-перезагрузки DNS) и пользуйтесь!
 
 </details>
-```
