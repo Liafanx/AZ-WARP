@@ -58,11 +58,16 @@ fi
 echo -e "\n${YELLOW}⚙️  Настройка сети${NC}"
 read -e -p "Использовать фейковую подсеть $SUBNET (рекомендуется)? [Y/n]: " prompt_subnet < /dev/tty
 if [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
-    read -e -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
-    if [[ -n "$custom_subnet" ]]; then
-        SUBNET="$custom_subnet"
-        TUN_IP="${SUBNET/.0\//.1\/}"
-    fi
+    while true; do
+        read -e -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
+        if [[ "$custom_subnet" =~ ^([0-9]{1,3}\.){3}0/[0-9]{1,2}$ ]]; then
+            SUBNET="$custom_subnet"
+            TUN_IP="${SUBNET/.0\//.1\/}"
+            break
+        else
+            echo -e "${RED}Неверный формат! Ожидается подсеть вида X.X.X.0/XX (например, 10.99.0.0/24)${NC}"
+        fi
+    done
 fi
 
 echo "SUBNET=\"$SUBNET\"" > "$CONF_FILE"
