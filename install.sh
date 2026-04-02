@@ -18,15 +18,39 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
+# === ПРЕДВАРИТЕЛЬНЫЙ ОПРОС ПОЛЬЗОВАТЕЛЯ ===
+mkdir -p /root/warper
+MASTER_FILE="/root/warper/domains.txt"
+
+if [ ! -f "$MASTER_FILE" ]; then
+cat << 'EOF' > "$MASTER_FILE"
+# ==========================================
+# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
+# Строки, начинающиеся с '#', игнорируются.
+# ==========================================
+
+# Пользовательские домены:
+EOF
+fi
+
 ADD_GEMINI="n"
 ADD_CHATGPT="n"
 
-read -e -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
-if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then ADD_GEMINI="y"; fi
+echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
 
-read -e -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
-if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then ADD_CHATGPT="y"; fi
+if grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
+    echo -e "${GREEN}✔ Домены Gemini уже присутствуют в списке. Пропускаем.${NC}"
+else
+    read -e -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
+    if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then ADD_GEMINI="y"; fi
+fi
+
+if grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then
+    echo -e "${GREEN}✔ Домены ChatGPT уже присутствуют в списке. Пропускаем.${NC}"
+else
+    read -e -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
+    if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then ADD_CHATGPT="y"; fi
+fi
 
 echo -e "\n${CYAN}Начинаем процесс установки...${NC}"
 
@@ -165,18 +189,6 @@ curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$
 
 # ==============================================================================
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
-MASTER_FILE="/root/warper/domains.txt"
-
-if [ ! -f "$MASTER_FILE" ]; then
-cat << 'EOF' > "$MASTER_FILE"
-# ==========================================
-# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
-# Строки, начинающиеся с символа '#', игнорируются.
-# ==========================================
-
-# Пользовательские домены:
-EOF
-fi
 
 if [ "$ADD_GEMINI" == "y" ]; then
     if ! grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
