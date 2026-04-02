@@ -178,7 +178,7 @@ cat << EOF > /etc/sing-box/config.json
   "log": { "level": "info" },
   "dns": {
     "servers": [
-      { "tag": "real-dns", "type": "udp", "server": "8.8.8.8", "detour": "warp" },
+      { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "warp" },
       { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "$SUBNET", "inet6_range": "fc00::/18" }
     ],
     "rules": [
