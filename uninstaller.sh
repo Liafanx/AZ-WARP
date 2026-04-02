@@ -24,6 +24,13 @@ else
     KEEP_DOMAINS=false
 fi
 
+CONF_FILE="/root/warper/warper.conf"
+if [ -f "$CONF_FILE" ]; then
+    source "$CONF_FILE"
+else
+    SUBNET="198.18.0.0/24"
+fi
+
 echo -e "\n${YELLOW}1. Остановка и удаление служб...${NC}"
 echo -e " - ${CYAN}Остановка демона sing-box...${NC}"
 systemctl stop sing-box 2>/dev/null
@@ -55,9 +62,11 @@ fi
 
 echo -e "\n${YELLOW}4. Восстановление маршрутов AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
-if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then
-    echo -e " - ${CYAN}Удаление подсети 198.18.0.0/24 из $AZ_INC...${NC}"
-    sed -i '/198.18.0.0\/24/d' "$AZ_INC"
+ESC_SUBNET=$(echo "$SUBNET" | sed 's/\//\\\//g')
+
+if grep -q "$SUBNET" "$AZ_INC" 2>/dev/null; then
+    echo -e " - ${CYAN}Удаление подсети $SUBNET из $AZ_INC...${NC}"
+    sed -i "/$ESC_SUBNET/d" "$AZ_INC"
     
     echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
     export DEBIAN_FRONTEND=noninteractive
@@ -66,7 +75,7 @@ if grep -q "198.18.0.0/24" "$AZ_INC" 2>/dev/null; then
     
     echo -e " - ${GREEN}Конфигурация маршрутов успешно восстановлена!${NC}"
 else
-    echo -e " - ${GREEN}Подсеть отсутствует, изменения маршрутов не требуются.${NC}"
+    echo -e " - ${GREEN}Подсеть $SUBNET отсутствует, изменения маршрутов не требуются.${NC}"
 fi
 
 echo -e "\n${YELLOW}5. Удаление утилиты WARPER...${NC}"
@@ -75,10 +84,10 @@ rm -f /usr/local/bin/warper
 rm -f /etc/knot-resolver/warper-domains.txt
 
 if [ "$KEEP_DOMAINS" = true ]; then
-    echo -e " - ${CYAN}Очистка папки /root/warper (с сохранением domains.txt)...${NC}"
-    find /root/warper -type f -not -name 'domains.txt' -delete 2>/dev/null
+    echo -e " - ${CYAN}Очистка папки /root/warper (с сохранением domains.txt и warper.conf)...${NC}"
+    find /root/warper -type f -not -name 'domains.txt' -not -name 'warper.conf' -delete 2>/dev/null
     rm -rf /root/warper/download 2>/dev/null
-    echo -e " - ${GREEN}Файл доменов /root/warper/domains.txt сохранен!${NC}"
+    echo -e " - ${GREEN}Настройки сохранены!${NC}"
 else
     echo -e " - ${CYAN}Полное удаление папки /root/warper...${NC}"
     rm -rf /root/warper
