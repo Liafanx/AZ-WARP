@@ -123,6 +123,7 @@ mkdir -p /root/warper/wgcf
 cd /root/warper/wgcf
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
+    echo -e " - ${CYAN}Скачивание утилиты wgcf...${NC}"
     wget -qO wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64
     chmod +x wgcf
     mv wgcf /usr/local/bin/wgcf
@@ -142,7 +143,7 @@ if [ -f "wgcf-profile.conf" ] && grep -q "PrivateKey" wgcf-profile.conf && grep 
 fi
 
 if [ "$GENERATE_WARP" = true ]; then
-    echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP...${NC}"
+    echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP (подождите)...${NC}"
     wgcf register --accept-tos > /dev/null
     wgcf generate > /dev/null
     
@@ -170,6 +171,7 @@ echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
 
 # ==============================================================================
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box...${NC}"
+echo -e " - ${CYAN}Генерация файла /etc/sing-box/config.json с подсетью $SUBNET...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > /etc/sing-box/config.json
 {
@@ -226,8 +228,11 @@ EOF
 
 # ==============================================================================
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
+echo -e " - ${CYAN}Скачивание файла службы sing-box.service...${NC}"
 curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
+echo -e " - ${CYAN}Скачивание файла службы warper-autopatch.service...${NC}"
 curl -s -o /usr/lib/systemd/system/warper-autopatch.service "$REPO_URL/warper-autopatch.service?t=$(date +%s)"
+echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
 systemctl daemon-reload
 systemctl enable sing-box > /dev/null 2>&1
 systemctl restart sing-box
@@ -240,24 +245,31 @@ AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
     sed -i '/10.255.0.0\/24/d' "$AZ_INC" 2>/dev/null
     if ! grep -q "$SUBNET" "$AZ_INC"; then
+        echo -e " - ${CYAN}Добавление подсети $SUBNET в include-ips.txt...${NC}"
         echo "$SUBNET" >> "$AZ_INC"
-        echo -e " - ${YELLOW}⏳ Обновление конфигурации AntiZapret (от 1 до 5 минут)...${NC}"
+        echo -e " - ${YELLOW}⏳ Запуск doall.sh (обновление конфигурации AntiZapret, от 1 до 5 минут)...${NC}"
         export DEBIAN_FRONTEND=noninteractive
         export SYSTEMD_PAGER=""
         bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
+        echo -e " - ${GREEN}Конфигурация маршрутов успешно обновлена!${NC}"
+    else
+        echo -e " - ${GREEN}Подсеть $SUBNET уже присутствует в include-ips.txt.${NC}"
     fi
 fi
 
 # ==============================================================================
 echo -e "\n${YELLOW}[6/8] Скачивание базовых списков с GitHub...${NC}"
 mkdir -p /root/warper/download
+echo -e " - ${CYAN}Загрузка списка доменов Gemini...${NC}"
 curl -s -o /root/warper/download/gemini.txt "$REPO_URL/download/gemini.txt?t=$(date +%s)"
+echo -e " - ${CYAN}Загрузка списка доменов ChatGPT...${NC}"
 curl -s -o /root/warper/download/chatgpt.txt "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
 
 # ==============================================================================
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
 
 if [ "$ADD_GEMINI" == "y" ]; then
+    echo -e " - ${CYAN}Интеграция доменов Gemini в мастер-файл...${NC}"
     if ! grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
         echo "# --- GEMINI ---" >> "$MASTER_FILE"
         cat /root/warper/download/gemini.txt >> "$MASTER_FILE"
@@ -266,6 +278,7 @@ if [ "$ADD_GEMINI" == "y" ]; then
 fi
 
 if [ "$ADD_CHATGPT" == "y" ]; then
+    echo -e " - ${CYAN}Интеграция доменов ChatGPT в мастер-файл...${NC}"
     if ! grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then
         echo "# --- CHATGPT ---" >> "$MASTER_FILE"
         cat /root/warper/download/chatgpt.txt >> "$MASTER_FILE"
@@ -273,6 +286,7 @@ if [ "$ADD_CHATGPT" == "y" ]; then
     fi
 fi
 
+echo -e " - ${CYAN}Скачивание исполняемого файла утилиты warper.sh...${NC}"
 curl -s -o /root/warper/warper.sh "$REPO_URL/warper.sh?t=$(date +%s)"
 curl -s -o /root/warper/uninstaller.sh "$REPO_URL/uninstaller.sh?t=$(date +%s)"
 curl -s -o /root/warper/version "$REPO_URL/version?t=$(date +%s)"
@@ -282,8 +296,10 @@ ln -sf /root/warper/warper.sh /usr/local/bin/warper
 
 # ==============================================================================
 echo -e "\n${YELLOW}[8/8] Применение правил DNS и Firewall...${NC}"
+echo -e " - ${CYAN}Патчинг конфигурации DNS-сервера (kresd)...${NC}"
 /usr/local/bin/warper patch > /dev/null 2>&1
 
+echo -e " - ${CYAN}Применение разрешающих правил iptables для туннеля...${NC}"
 iptables -I FORWARD -o singbox-tun -j ACCEPT 2>/dev/null
 iptables -I FORWARD -i singbox-tun -j ACCEPT 2>/dev/null
 
