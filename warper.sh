@@ -116,12 +116,14 @@ toggle_warper() {
             echo -e "${YELLOW}Отключение WARPER...${NC}"
             systemctl stop sing-box
             systemctl disable sing-box 2>/dev/null
+            systemctl disable warper-autopatch 2>/dev/null
             unpatch_kresd
             echo -e "${GREEN}WARPER успешно отключен! Трафик идет по умолчанию.${NC}"
         else
             echo -e "${YELLOW}Включение WARPER...${NC}"
             systemctl enable sing-box 2>/dev/null
             systemctl start sing-box
+            systemctl enable warper-autopatch 2>/dev/null
             patch_kresd >/dev/null 2>&1
             echo -e "${GREEN}WARPER успешно включен!${NC}"
         fi
