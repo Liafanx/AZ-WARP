@@ -24,7 +24,7 @@ while true; do
 done
 
 while true; do
-    read -p "Оставить список доменов в папке /root/warper? (Y/n): " keep_dom < /dev/tty
+    read -p "Оставить список доменов и настройки в папке /root/warper? (Y/n): " keep_dom < /dev/tty
     if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
         KEEP_DOMAINS=true
         break
@@ -96,8 +96,8 @@ rm -f /usr/local/bin/warper
 rm -f /etc/knot-resolver/warper-domains.txt
 
 if [ "$KEEP_DOMAINS" = true ]; then
-    echo -e " - ${CYAN}Очистка папки /root/warper (с сохранением domains.txt и warper.conf)...${NC}"
-    find /root/warper -type f -not -name 'domains.txt' -not -name 'warper.conf' -delete 2>/dev/null
+    echo -e " - ${CYAN}Очистка папки /root/warper (с сохранением настроек, доменов и ключей WARP)...${NC}"
+    find /root/warper -type f -not -name 'domains.txt' -not -name 'warper.conf' -not -path '*/wgcf/*' -delete 2>/dev/null
     rm -rf /root/warper/download 2>/dev/null
     echo -e " - ${GREEN}Настройки сохранены!${NC}"
 else
