@@ -221,31 +221,40 @@ settings_menu() {
                 echo -e "\n${YELLOW}Внимание! Изменение подсети обновит конфигурации и перезапустит службы.${NC}"
                 read -e -p "Вы уверены? [y/N]: " conf_sub
                 if [[ "$conf_sub" == "y" || "$conf_sub" == "Y" ]]; then
-                    read -e -p "Введите новую подсеть (например 10.99.0.0/24): " new_subnet
-                    if [ -n "$new_subnet" ]; then
-                        new_tun="${new_subnet/.0\//.1\/}"
-                        
-                        sed -i "s|\"$SUBNET\"|\"$new_subnet\"|g" /etc/sing-box/config.json
-                        sed -i "s|\"$TUN_IP\"|\"$new_tun\"|g" /etc/sing-box/config.json
-                        
-                        ESC_OLD=$(echo "$SUBNET" | sed 's/\//\\\//g')
-                        sed -i "/$ESC_OLD/d" "$AZ_INC"
-                        echo "$new_subnet" >> "$AZ_INC"
-                        
-                        echo "SUBNET=\"$new_subnet\"" > "$CONF_FILE"
-                        echo "TUN_IP=\"$new_tun\"" >> "$CONF_FILE"
-                        SUBNET="$new_subnet"
-                        TUN_IP="$new_tun"
-                        
-                        echo -e "${YELLOW}⏳ Обновление маршрутов AntiZapret (подождите)...${NC}"
-                        export DEBIAN_FRONTEND=noninteractive
-                        export SYSTEMD_PAGER=""
-                        bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
-                        
-                        systemctl restart sing-box
-                        echo -e "${GREEN}Подсеть успешно изменена!${NC}"
-                        sleep 2
-                    fi
+                    while true; do
+                        read -e -p "Введите новую подсеть (X.X.X.0/XX) или оставьте пустым для отмены: " new_subnet
+                        if [ -z "$new_subnet" ]; then
+                            echo -e "${YELLOW}Отмена.${NC}"; sleep 1; break
+                        elif [[ "$new_subnet" =~ ^([0-9]{1,3}\.){3}0/[0-9]{1,2}$ ]]; then
+                            new_tun="${new_subnet/.0\//.1\/}"
+                            
+                            sed -i "s|\"$SUBNET\"|\"$new_subnet\"|g" /etc/sing-box/config.json
+                            sed -i "s|\"$TUN_IP\"|\"$new_tun\"|g" /etc/sing-box/config.json
+                            
+                            ESC_OLD=$(echo "$SUBNET" | sed 's/\//\\\//g')
+                            sed -i "/$ESC_OLD/d" "$AZ_INC"
+                            echo "$new_subnet" >> "$AZ_INC"
+                            
+                            echo "SUBNET=\"$new_subnet\"" > "$CONF_FILE"
+                            echo "TUN_IP=\"$new_tun\"" >> "$CONF_FILE"
+                            SUBNET="$new_subnet"
+                            TUN_IP="$new_tun"
+                            
+                            echo -e "${YELLOW}⏳ Обновление маршрутов AntiZapret (подождите)...${NC}"
+                            export DEBIAN_FRONTEND=noninteractive
+                            export SYSTEMD_PAGER=""
+                            bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
+                            
+                            echo -e "${CYAN}Перезапуск службы sing-box для применения правил...${NC}"
+                            systemctl restart sing-box
+                            
+                            echo -e "${GREEN}Подсеть успешно изменена!${NC}"
+                            sleep 2
+                            break
+                        else
+                            echo -e "${RED}Неверный формат! Ожидается подсеть вида X.X.X.0/XX (например 10.99.0.0/24)${NC}"
+                        fi
+                    done
                 fi
                 ;;
             0) return ;;
@@ -263,7 +272,7 @@ singbox_menu() {
         if systemctl is-active --quiet sing-box; then echo -e "Текущий статус: ${GREEN}ЗАПУЩЕН 🟢${NC}"; else echo -e "Текущий статус: ${RED}ОСТАНОВЛЕН 🔴${NC}"; fi
         if systemctl is-enabled --quiet sing-box 2>/dev/null; then echo -e "Автозагрузка: ${GREEN}ВКЛЮЧЕНА${NC}"; else echo -e "Автозагрузка: ${RED}ВЫКЛЮЧЕНА${NC}"; fi
         echo -e "${CYAN}------------------------------------------${NC}"
-        echo -e " ${GREEN}1.${NC} ��апустить службу"
+        echo -e " ${GREEN}1.${NC} Запустить службу"
         echo -e " ${RED}2.${NC} Остановить службу"
         echo -e " ${GREEN}3.${NC} Включить в автозагрузку"
         echo -e " ${RED}4.${NC} Выключить из автозагрузки"
