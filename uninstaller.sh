@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -uo pipefail
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -63,7 +65,7 @@ rm -rf /etc/sing-box
 
 echo -e "\n${YELLOW}3. Восстановление исходного kresd.conf...${NC}"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
-if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
+if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
     echo -e " - ${CYAN}Очистка кода WARPER из конфигурации DNS...${NC}"
     sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
     echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
@@ -74,17 +76,16 @@ fi
 
 echo -e "\n${YELLOW}4. Восстановление маршрутов AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
-ESC_SUBNET=$(echo "$SUBNET" | sed 's/\//\\\//g')
 
-if grep -q "$SUBNET" "$AZ_INC" 2>/dev/null; then
+if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then
     echo -e " - ${CYAN}Удаление подсети $SUBNET из $AZ_INC...${NC}"
-    sed -i "/$ESC_SUBNET/d" "$AZ_INC"
-    
+    sed -i "\|$SUBNET|d" "$AZ_INC"
+
     echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export SYSTEMD_PAGER=""
     bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
-    
+
     echo -e " - ${GREEN}Конфигурация маршрутов успешно восстановлена!${NC}"
 else
     echo -e " - ${GREEN}Подсеть $SUBNET отсутствует, изменения маршрутов не требуются.${NC}"
