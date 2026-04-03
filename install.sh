@@ -107,7 +107,7 @@ check_dependencies() {
         fi
     done
     if [ ${#missing[@]} -gt 0 ]; then
-        echo -e " - ${CYAN}Установка недостающих пакетов: ${missing[*]}...${NC}"
+        echo -e " - ${CYAN}Установк�� недостающих пакетов: ${missing[*]}...${NC}"
         apt-get update -qq >/dev/null 2>&1
         apt-get install -y -qq "${missing[@]}" >/dev/null 2>&1
     fi
@@ -223,7 +223,7 @@ if command -v sing-box >/dev/null 2>&1; then
         curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION >/dev/null 2>&1
     fi
 else
-    echo -e " - ${CYAN}Скачивание и установка пакета sing-box $SB_VERSION...${NC}"
+    echo -e " - ${CYAN}Скачиван��е и установка пакета sing-box $SB_VERSION...${NC}"
     curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION >/dev/null 2>&1
 fi
 
@@ -232,7 +232,7 @@ echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC
 cd "$WGCF_DIR"
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
-    echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
+    echo -e " - ${CYAN}Скачиван��е утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
     WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
     if ! wget -qO wgcf "$WGCF_URL"; then
         echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
@@ -297,7 +297,8 @@ cat << EOF > "$SINGBOX_CONF"
     "rules": [
       { "query_type": ["A"], "server": "fakeip-dns" }
     ],
-    "independent_cache": true
+    "independent_cache": true,
+    "strategy": "ipv4_only"
   },
   "endpoints": [
     {
@@ -343,7 +344,7 @@ EOF
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
 download_file "$REPO_URL/sing-box.service" "/usr/lib/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
 download_file "$REPO_URL/warper-autopatch.service" "/usr/lib/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
-echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
+echo -e " - ${CYAN}Добавлен��е служб в автозагрузку и запуск...${NC}"
 systemctl daemon-reload
 systemctl enable sing-box > /dev/null 2>&1
 systemctl restart sing-box
