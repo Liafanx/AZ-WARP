@@ -107,7 +107,7 @@ check_dependencies() {
         fi
     done
     if [ ${#missing[@]} -gt 0 ]; then
-        echo -e " - ${CYAN}Установк�� недостающих пакетов: ${missing[*]}...${NC}"
+        echo -e " - ${CYAN}Установка недостающих пакетов: ${missing[*]}...${NC}"
         apt-get update -qq >/dev/null 2>&1
         apt-get install -y -qq "${missing[@]}" >/dev/null 2>&1
     fi
@@ -232,7 +232,7 @@ echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC
 cd "$WGCF_DIR"
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
-    echo -e " - ${CYAN}Скачиван��е утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
+    echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
     WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
     if ! wget -qO wgcf "$WGCF_URL"; then
         echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
@@ -377,7 +377,7 @@ download_file "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "сп
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
 
 if [ "$ADD_GEMINI" == "y" ]; then
-    echo -e " - ${CYAN}Интеграц��я доменов Gemini в мастер-файл...${NC}"
+    echo -e " - ${CYAN}Интеграция доменов Gemini в мастер-файл...${NC}"
     if ! grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
         echo "# --- GEMINI ---" >> "$MASTER_FILE"
         cat "$DOWNLOAD_DIR/gemini.txt" >> "$MASTER_FILE"
