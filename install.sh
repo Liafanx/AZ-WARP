@@ -128,6 +128,7 @@ WGCF_DIR="$WARPER_DIR/wgcf"
 MASTER_FILE="$WARPER_DIR/domains.txt"
 CONF_FILE="$WARPER_DIR/warper.conf"
 SINGBOX_CONF="/etc/sing-box/config.json"
+SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
 
 mkdir -p "$WARPER_DIR" "$DOWNLOAD_DIR" "$WGCF_DIR"
 
@@ -284,61 +285,19 @@ echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
 
 # ==============================================================================
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
-echo -e " - ${CYAN}Генерация файла $SINGBOX_CONF с подсетью $SUBNET...${NC}"
+echo -e " - ${CYAN}Загрузка шаблона и генерация $SINGBOX_CONF...${NC}"
 mkdir -p /etc/sing-box
-cat << EOF > "$SINGBOX_CONF"
-{
-  "log": { "level": "info" },
-  "dns": {
-    "servers": [
-      { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "warp" },
-      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "$SUBNET" }
-    ],
-    "rules": [
-      { "query_type": ["A"], "server": "fakeip-dns" }
-    ],
-    "independent_cache": true,
-    "strategy": "ipv4_only"
-  },
-  "endpoints": [
-    {
-      "type": "wireguard",
-      "tag": "warp",
-      "name": "warp-tun",
-      "system": false,
-      "mtu": 1280,
-      "address": [ "$WARP_ADDRESS" ],
-      "private_key": "$WARP_PRIVATE_KEY",
-      "peers": [
-        {
-          "address": "162.159.192.1",
-          "port": 2408,
-          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-          "allowed_ips": ["0.0.0.0/0"],
-          "reserved": [0, 0, 0]
-        }
-      ]
-    }
-  ],
-  "inbounds": [
-    { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
-    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["$TUN_IP"], "auto_route": false, "strict_route": false, "stack": "system" }
-  ],
-  "outbounds": [
-    { "type": "direct", "tag": "direct" }
-  ],
-  "route": {
-    "rules": [
-      { "inbound": "dns-in", "action": "hijack-dns" },
-      { "protocol": "dns", "action": "hijack-dns" },
-      { "inbound": "tun-in", "outbound": "warp" }
-    ],
-    "default_domain_resolver": "real-dns",
-    "auto_detect_interface": true,
-    "final": "direct"
-  }
-}
-EOF
+
+download_file "$REPO_URL/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json" || exit 1
+
+sed \
+    -e "s|__WARP_ADDRESS__|$WARP_ADDRESS|g" \
+    -e "s|__WARP_PRIVATE_KEY__|$WARP_PRIVATE_KEY|g" \
+    -e "s|__SUBNET__|$SUBNET|g" \
+    -e "s|__TUN_IP__|$TUN_IP|g" \
+    "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
+
+echo -e " - ${GREEN}Конфигурация sing-box создана с подсетью $SUBNET.${NC}"
 
 # ==============================================================================
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
