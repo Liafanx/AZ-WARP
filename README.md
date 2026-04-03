@@ -1,4 +1,3 @@
-```markdown
 # 🚀 Как точечно пустить сервисы (Gemini, ChatGPT и др.) через Cloudflare WARP на сервере с AntiZapret
 
 Сам проект AntiZapret VPN: https://github.com/GubernievS/AntiZapret-VPN
