@@ -149,7 +149,8 @@ cat wgcf-profile.conf
 ```bash
 nano /etc/sing-box/config.json
 ```
-Вставляем этот код. **Обязательно замените значения `Address` и `PrivateKey` на свои из Шага 2!** *(В этом конфиге по умолчанию прописана подсеть `198.18.0.0/24`, при необходимости вы можете изменить её на свою)*.
+
+Вставляем этот код. **Обязательно замените значения `Address` и `PrivateKey` на свои из Шага 2!** *(В этом конфиге по умолчанию прописана подсеть `198.18.0.0/24`, при необходимости вы можете изменить её на свою. IPv6 намеренно исключён, так как kresd уже возвращает заглушку на AAAA-запросы, а наличие IPv6 в конфиге может конфликтовать с sysctl-настройками сервера)*.
 
 ```json
 {
@@ -167,13 +168,12 @@ nano /etc/sing-box/config.json
       {
         "tag": "fakeip-dns",
         "type": "fakeip",
-        "inet4_range": "198.18.0.0/24",
-        "inet6_range": "fc00::/18"
+        "inet4_range": "198.18.0.0/24"
       }
     ],
     "rules": [
       {
-        "query_type": ["A", "AAAA"],
+        "query_type": ["A"],
         "server": "fakeip-dns"
       }
     ],
@@ -187,7 +187,7 @@ nano /etc/sing-box/config.json
       "system": false,
       "mtu": 1280,
       "address": [
-        "ВАШ_ADDRESS_ИЗ_WGCF" 
+        "ВАШ_ADDRESS_ИЗ_WGCF"
       ],
       "private_key": "ВАШ_PRIVATE_KEY_ИЗ_WGCF",
       "peers": [
@@ -196,8 +196,7 @@ nano /etc/sing-box/config.json
           "port": 2408,
           "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
           "allowed_ips": [
-            "0.0.0.0/0",
-            "::/0"
+            "0.0.0.0/0"
           ],
           "reserved": [0, 0, 0]
         }
@@ -272,6 +271,8 @@ User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
 # Ожидаем появления интерфейса singbox-tun (до 10 секунд)
 ExecStartPost=/bin/bash -c 'for i in $(seq 1 10); do ip link show singbox-tun >/dev/null 2>&1 && break; sleep 1; done'
+# Отключаем IPv6 на TUN-интерфейсе (предотвращает переопределение sysctl)
+ExecStartPost=-/usr/sbin/sysctl -w net.ipv6.conf.singbox-tun.disable_ipv6=1
 # Стираем локальные DNS
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
