@@ -55,7 +55,16 @@ validate_domain() {
     if [ -z "$domain" ]; then
         return 1
     fi
-    if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$ ]]; then
+    # Домен должен содержать хотя бы одну точку
+    if [[ ! "$domain" =~ \. ]]; then
+        return 1
+    fi
+    # Не допускаем двойные точки
+    if [[ "$domain" =~ \.\. ]]; then
+        return 1
+    fi
+    # Только буквы, цифры, точки и дефисы; начинается и заканчивается буквой/цифрой
+    if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])$ ]]; then
         return 1
     fi
     echo "$domain"
@@ -230,17 +239,14 @@ toggle_list() {
         echo -e "${YELLOW}Домены ${list_name^^} выключены.${NC}"
     else
         # Включение: сначала удаляем возможные дубликаты доменов из списка
-        # (на случай если маркеры были удалены вручную, а домены остались)
         local dedup_tmp
         dedup_tmp=$(mktemp /tmp/warper_dedup.XXXXXX)
         grep -vE '^\s*#|^\s*$' "$list_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > "$dedup_tmp"
         if [ -s "$dedup_tmp" ]; then
-            # Удаляем из мастер-файла только точные совпадения строк, которые НЕ внутри других блоков
             local master_tmp
             master_tmp=$(mktemp /tmp/warper_master.XXXXXX)
             local in_block=false
             while IFS= read -r line; do
-                # Проверяем, находимся ли мы внутри другого блока
                 if [[ "$line" =~ ^#\ ---\ .+\ ---$ ]] && [[ ! "$line" =~ END ]]; then
                     in_block=true
                     echo "$line" >> "$master_tmp"
@@ -251,12 +257,10 @@ toggle_list() {
                     echo "$line" >> "$master_tmp"
                     continue
                 fi
-                # Если внутри другого блока — не трогаем
                 if [ "$in_block" = true ]; then
                     echo "$line" >> "$master_tmp"
                     continue
                 fi
-                # Если строка — домен из добавляемого списка, пропускаем (удаляем дубликат)
                 local clean_line
                 clean_line=$(echo "$line" | xargs)
                 if [ -n "$clean_line" ] && [ "${clean_line:0:1}" != "#" ] && grep -qxF "$clean_line" "$dedup_tmp"; then
@@ -484,7 +488,6 @@ show_main_menu() {
     echo -e " ${CYAN}0.${NC} Выход"
     echo -e "${CYAN}==========================================${NC}"
 
-    # Экспортируем для использования в main loop
     MENU_UPDATE_AVAILABLE=$UPDATE_AVAILABLE
     MENU_REMOTE_VER=$REMOTE_VER
 }
@@ -507,7 +510,7 @@ while true; do
             echo -e "\n${CYAN}Введите домен (например, openai.com):${NC}"
             read -e -p "> " raw_domain
             new_domain=$(validate_domain "${raw_domain:-}") || {
-                echo -e "${RED}Некорректный формат домена! Допускаются буквы, цифры, точки и дефисы.${NC}"
+                echo -e "${RED}Некорректный формат домена! Домен должен содержать точку (например, openai.com).${NC}"
                 sleep 2
                 continue
             }
