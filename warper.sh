@@ -35,6 +35,8 @@ cat << 'EOF' > "$MASTER_FILE"
 # ==========================================
 # СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
 # Строки, начинающиеся с '#', игнорируются.
+# ⚠️ НЕ удаляйте маркеры вида # --- GEMINI ---
+#    Они используются для управления списками.
 # ==========================================
 
 # Пользовательские домены:
@@ -93,9 +95,23 @@ get_remote_version() {
     echo "${REMOTE_VER_CACHE:-$LOCAL_VER}"
 }
 
+# Извлекает чистый список доменов (без комментариев, пустых строк, дубликатов)
+get_clean_domains() {
+    grep -vE '^\s*#|^\s*$' "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u
+}
+
+# Синхронизация: создаёт чистый активный файл для kresd
 sync_domains() {
-    cp "$MASTER_FILE" "$ACTIVE_FILE"
+    get_clean_domains "$MASTER_FILE" > "$ACTIVE_FILE"
     chmod 644 "$ACTIVE_FILE"
+}
+
+# Проверяет, синхронизированы ли домены (сравнивает очищенные версии)
+domains_in_sync() {
+    local clean_master clean_active
+    clean_master=$(get_clean_domains "$MASTER_FILE")
+    clean_active=$(cat "$ACTIVE_FILE" 2>/dev/null | sort -u)
+    [ "$clean_master" = "$clean_active" ]
 }
 
 prompt_apply() {
@@ -158,6 +174,7 @@ patch_kresd() {
 unpatch_kresd() {
     if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
         sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
+        chmod 644 "$KRESD_CONF"
         systemctl restart kresd@1 kresd@2
     fi
 }
@@ -199,6 +216,7 @@ toggle_list() {
     local list_name=$1
     local list_file="$DOWNLOAD_DIR/${list_name}.txt"
     local marker="# --- ${list_name^^} ---"
+    local end_marker="# --- END ${list_name^^} ---"
 
     if [ ! -f "$list_file" ]; then
         echo -e "${RED}Файл списка $list_file не найден! Пожалуйста, обновите списки через меню.${NC}"
@@ -207,12 +225,53 @@ toggle_list() {
     fi
 
     if grep -q "$marker" "$MASTER_FILE"; then
-        sed -i "/$marker/,/# --- END ${list_name^^} ---/d" "$MASTER_FILE"
+        # Выключение: удаляем блок с маркерами
+        sed -i "/$marker/,/$end_marker/d" "$MASTER_FILE"
         echo -e "${YELLOW}Домены ${list_name^^} выключены.${NC}"
     else
+        # Включение: сначала удаляем возможные дубликаты доменов из списка
+        # (на случай если маркеры были удалены вручную, а домены остались)
+        local dedup_tmp
+        dedup_tmp=$(mktemp /tmp/warper_dedup.XXXXXX)
+        grep -vE '^\s*#|^\s*$' "$list_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > "$dedup_tmp"
+        if [ -s "$dedup_tmp" ]; then
+            # Удаляем из мастер-файла только точные совпадения строк, которые НЕ внутри других блоков
+            local master_tmp
+            master_tmp=$(mktemp /tmp/warper_master.XXXXXX)
+            local in_block=false
+            while IFS= read -r line; do
+                # Проверяем, находимся ли мы внутри другого блока
+                if [[ "$line" =~ ^#\ ---\ .+\ ---$ ]] && [[ ! "$line" =~ END ]]; then
+                    in_block=true
+                    echo "$line" >> "$master_tmp"
+                    continue
+                fi
+                if [[ "$line" =~ ^#\ ---\ END\ .+\ ---$ ]]; then
+                    in_block=false
+                    echo "$line" >> "$master_tmp"
+                    continue
+                fi
+                # Если внутри другого блока — не трогаем
+                if [ "$in_block" = true ]; then
+                    echo "$line" >> "$master_tmp"
+                    continue
+                fi
+                # Если строка — домен из добавляемого списка, пропускаем (удаляем дубликат)
+                local clean_line
+                clean_line=$(echo "$line" | xargs)
+                if [ -n "$clean_line" ] && [ "${clean_line:0:1}" != "#" ] && grep -qxF "$clean_line" "$dedup_tmp"; then
+                    continue
+                fi
+                echo "$line" >> "$master_tmp"
+            done < "$MASTER_FILE"
+            mv "$master_tmp" "$MASTER_FILE"
+        fi
+        rm -f "$dedup_tmp"
+
+        # Добавляем блок с маркерами
         echo "$marker" >> "$MASTER_FILE"
         cat "$list_file" >> "$MASTER_FILE"
-        echo "# --- END ${list_name^^} ---" >> "$MASTER_FILE"
+        echo "$end_marker" >> "$MASTER_FILE"
         echo -e "${GREEN}Домены ${list_name^^} включены.${NC}"
     fi
     prompt_apply
@@ -221,16 +280,17 @@ toggle_list() {
 update_list_blocks() {
     for list_name in "gemini" "chatgpt"; do
         local marker="# --- ${list_name^^} ---"
+        local end_marker="# --- END ${list_name^^} ---"
         local list_file="$DOWNLOAD_DIR/${list_name}.txt"
         if grep -q "$marker" "$MASTER_FILE"; then
             if [ ! -f "$list_file" ]; then
                 echo -e "${RED}Файл $list_file не найден, пропускаем ${list_name}${NC}"
                 continue
             fi
-            sed -i "/$marker/,/# --- END ${list_name^^} ---/d" "$MASTER_FILE"
+            sed -i "/$marker/,/$end_marker/d" "$MASTER_FILE"
             echo "$marker" >> "$MASTER_FILE"
             cat "$list_file" >> "$MASTER_FILE"
-            echo "# --- END ${list_name^^} ---" >> "$MASTER_FILE"
+            echo "$end_marker" >> "$MASTER_FILE"
         fi
     done
 }
@@ -383,10 +443,10 @@ show_main_menu() {
         VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"
     fi
 
-    if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}запущен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
+    if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}зап��щен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена автозагрузка${NC}"; else SB_EN="${RED}отключена автозагрузка${NC}"; fi
     if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
-    if diff -q "$MASTER_FILE" "$ACTIVE_FILE" >/dev/null 2>&1; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
+    if domains_in_sync; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
     if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}добавлена${NC}"; else AZ_STAT="${RED}не добавлена${NC}"; fi
     if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}включено${NC}"; else AP_STAT="${RED}отключено${NC}"; fi
 
