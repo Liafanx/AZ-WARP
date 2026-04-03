@@ -443,7 +443,7 @@ show_main_menu() {
         VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"
     fi
 
-    if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}зап��щен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
+    if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}запущен${NC}"; else SB_RUN="${RED}выключен${NC}"; fi
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена автозагрузка${NC}"; else SB_EN="${RED}отключена автозагрузка${NC}"; fi
     if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then KR_STAT="${GREEN}пропатчен${NC}"; else KR_STAT="${RED}не пропатчен${NC}"; fi
     if domains_in_sync; then DOM_STAT="${GREEN}синхронизированы${NC}"; else DOM_STAT="${RED}не синхронизированы${NC}"; fi
