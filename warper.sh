@@ -4,11 +4,13 @@ set -u
 
 WARPER_DIR="/root/warper"
 DOWNLOAD_DIR="$WARPER_DIR/download"
+WGCF_DIR="$WARPER_DIR/wgcf"
 MASTER_FILE="$WARPER_DIR/domains.txt"
 ACTIVE_FILE="/etc/knot-resolver/warper-domains.txt"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 SINGBOX_CONF="/etc/sing-box/config.json"
+SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 LOCAL_VER=$(cat "$WARPER_DIR/version" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 CONF_FILE="$WARPER_DIR/warper.conf"
@@ -55,15 +57,12 @@ validate_domain() {
     if [ -z "$domain" ]; then
         return 1
     fi
-    # Домен должен содержать хотя бы одну точку
     if [[ ! "$domain" =~ \. ]]; then
         return 1
     fi
-    # Не допускаем двойные точки
     if [[ "$domain" =~ \.\. ]]; then
         return 1
     fi
-    # Только буквы, цифры, точки и дефисы; начинается и заканчивается буквой/цифрой
     if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])$ ]]; then
         return 1
     fi
@@ -104,23 +103,74 @@ get_remote_version() {
     echo "${REMOTE_VER_CACHE:-$LOCAL_VER}"
 }
 
-# Извлекает чистый список доменов (без комментариев, пустых строк, дубликатов)
 get_clean_domains() {
     grep -vE '^\s*#|^\s*$' "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u
 }
 
-# Синхронизация: создаёт чистый активный файл для kresd
 sync_domains() {
     get_clean_domains "$MASTER_FILE" > "$ACTIVE_FILE"
     chmod 644 "$ACTIVE_FILE"
 }
 
-# Проверяет, синхронизированы ли домены (сравнивает очищенные версии)
 domains_in_sync() {
     local clean_master clean_active
     clean_master=$(get_clean_domains "$MASTER_FILE")
     clean_active=$(cat "$ACTIVE_FILE" 2>/dev/null | sort -u)
     [ "$clean_master" = "$clean_active" ]
+}
+
+# Извлекает WARP-ключи из текущего config.json или wgcf-profile.conf
+get_warp_credentials() {
+    local address="" private_key=""
+
+    # Сначала пробуем из текущего config.json
+    if [ -f "$SINGBOX_CONF" ]; then
+        address=$(grep -o '"address": \[ "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+        private_key=$(grep -o '"private_key": "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    fi
+
+    # Если не нашли — берём из wgcf-profile.conf
+    if [ -z "$address" ] || [ -z "$private_key" ] || [ "$address" = "__WARP_ADDRESS__" ]; then
+        local wgcf_profile="$WGCF_DIR/wgcf-profile.conf"
+        if [ -f "$wgcf_profile" ]; then
+            address=$(grep -m 1 '^Address = ' "$wgcf_profile" | awk '{print $3}' | tr -d '\r\n')
+            private_key=$(grep -m 1 '^PrivateKey = ' "$wgcf_profile" | awk '{print $3}' | tr -d '\r\n')
+        fi
+    fi
+
+    if [ -z "$address" ] || [ -z "$private_key" ]; then
+        return 1
+    fi
+
+    echo "$address"
+    echo "$private_key"
+    return 0
+}
+
+# Собирает config.json из шаблона с подстановкой значений
+rebuild_config() {
+    local template="$1"
+
+    local creds
+    creds=$(get_warp_credentials) || {
+        echo -e "${RED}Ошибка: Не удалось извлечь WARP-ключи!${NC}"
+        echo -e "${YELLOW}Проверьте наличие файла $WGCF_DIR/wgcf-profile.conf${NC}"
+        return 1
+    }
+
+    local warp_address warp_private_key
+    warp_address=$(echo "$creds" | sed -n '1p')
+    warp_private_key=$(echo "$creds" | sed -n '2p')
+
+    sed \
+        -e "s|__WARP_ADDRESS__|$warp_address|g" \
+        -e "s|__WARP_PRIVATE_KEY__|$warp_private_key|g" \
+        -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__TUN_IP__|$TUN_IP|g" \
+        "$template" > "$SINGBOX_CONF"
+
+    echo -e "${GREEN}Конфигурация sing-box успешно обновлена.${NC}"
+    return 0
 }
 
 prompt_apply() {
@@ -234,11 +284,9 @@ toggle_list() {
     fi
 
     if grep -q "$marker" "$MASTER_FILE"; then
-        # Выключение: удаляем блок с маркерами
         sed -i "/$marker/,/$end_marker/d" "$MASTER_FILE"
         echo -e "${YELLOW}Домены ${list_name^^} выключены.${NC}"
     else
-        # Включение: сначала удаляем возможные дубликаты доменов из списка
         local dedup_tmp
         dedup_tmp=$(mktemp /tmp/warper_dedup.XXXXXX)
         grep -vE '^\s*#|^\s*$' "$list_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > "$dedup_tmp"
@@ -272,7 +320,6 @@ toggle_list() {
         fi
         rm -f "$dedup_tmp"
 
-        # Добавляем блок с маркерами
         echo "$marker" >> "$MASTER_FILE"
         cat "$list_file" >> "$MASTER_FILE"
         echo "$end_marker" >> "$MASTER_FILE"
@@ -302,18 +349,33 @@ update_list_blocks() {
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     mkdir -p "$DOWNLOAD_DIR"
+
+    # Скрипты и служебные файлы
     curl -s -o "$WARPER_DIR/warper.sh" "$REPO_URL/warper.sh?t=$(date +%s)"
     curl -s -o "$WARPER_DIR/uninstaller.sh" "$REPO_URL/uninstaller.sh?t=$(date +%s)"
     curl -s -o /usr/lib/systemd/system/sing-box.service "$REPO_URL/sing-box.service?t=$(date +%s)"
     curl -s -o /usr/lib/systemd/system/warper-autopatch.service "$REPO_URL/warper-autopatch.service?t=$(date +%s)"
     curl -s -o "$WARPER_DIR/version" "$REPO_URL/version?t=$(date +%s)"
 
+    # Шаблон конфига и списки доменов
+    curl -s -o "$SINGBOX_TEMPLATE" "$REPO_URL/config.json.template?t=$(date +%s)"
     curl -s -o "$DOWNLOAD_DIR/gemini.txt" "$REPO_URL/download/gemini.txt?t=$(date +%s)"
     curl -s -o "$DOWNLOAD_DIR/chatgpt.txt" "$REPO_URL/download/chatgpt.txt?t=$(date +%s)"
 
     chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
     systemctl daemon-reload
     systemctl enable warper-autopatch >/dev/null 2>&1
+
+    # Обновляем config.json из шаблона (сохраняя ключи)
+    if [ -f "$SINGBOX_TEMPLATE" ] && [ -s "$SINGBOX_TEMPLATE" ]; then
+        echo -e "${CYAN}Обновление конфигурации sing-box из шаблона...${NC}"
+        if rebuild_config "$SINGBOX_TEMPLATE"; then
+            systemctl restart sing-box
+            echo -e "${GREEN}Служба sing-box перезапущена с обновлённым конфигом.${NC}"
+        else
+            echo -e "${YELLOW}Конфигурация sing-box не обновлена (ошибка извлечения ключей).${NC}"
+        fi
+    fi
 
     update_list_blocks
 
@@ -326,7 +388,7 @@ settings_menu() {
     while true; do
         clear
         echo -e "${CYAN}==========================================${NC}"
-        echo -e "          ⚙️  ${YELLOW}НАСТРОЙКИ WARPER${NC} ⚙️"
+        echo -e "          ⚙️  ${YELLOW}НАСТРОЙ��И WARPER${NC} ⚙️"
         echo -e "${CYAN}==========================================${NC}"
 
         local AP_STAT GEM_STAT GPT_STAT
@@ -365,16 +427,23 @@ settings_menu() {
                             local new_tun
                             new_tun=$(calculate_tun_ip "$new_subnet")
 
-                            sed -i "s|\"$SUBNET\"|\"$new_subnet\"|g" "$SINGBOX_CONF"
-                            sed -i "s|\"$TUN_IP\"|\"$new_tun\"|g" "$SINGBOX_CONF"
+                            # Обновляем через шаблон если он есть, иначе sed
+                            if [ -f "$SINGBOX_TEMPLATE" ] && [ -s "$SINGBOX_TEMPLATE" ]; then
+                                SUBNET="$new_subnet"
+                                TUN_IP="$new_tun"
+                                rebuild_config "$SINGBOX_TEMPLATE"
+                            else
+                                sed -i "s|\"$SUBNET\"|\"$new_subnet\"|g" "$SINGBOX_CONF"
+                                sed -i "s|\"$TUN_IP\"|\"$new_tun\"|g" "$SINGBOX_CONF"
+                                SUBNET="$new_subnet"
+                                TUN_IP="$new_tun"
+                            fi
 
-                            sed -i "\|$SUBNET|d" "$AZ_INC"
+                            sed -i "\|$SUBNET|d" "$AZ_INC" 2>/dev/null
                             echo "$new_subnet" >> "$AZ_INC"
 
                             echo "SUBNET=\"$new_subnet\"" > "$CONF_FILE"
                             echo "TUN_IP=\"$new_tun\"" >> "$CONF_FILE"
-                            SUBNET="$new_subnet"
-                            TUN_IP="$new_tun"
 
                             echo -e "${YELLOW}⏳ Обновление маршрутов AntiZapret (подождите)...${NC}"
                             export DEBIAN_FRONTEND=noninteractive
