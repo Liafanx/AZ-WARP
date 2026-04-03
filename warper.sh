@@ -388,7 +388,7 @@ settings_menu() {
     while true; do
         clear
         echo -e "${CYAN}==========================================${NC}"
-        echo -e "          ⚙️  ${YELLOW}НАСТРОЙ��И WARPER${NC} ⚙️"
+        echo -e "          ⚙️  ${YELLOW}НАСТРОЙКИ WARPER${NC} ⚙️"
         echo -e "${CYAN}==========================================${NC}"
 
         local AP_STAT GEM_STAT GPT_STAT
