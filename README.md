@@ -177,7 +177,8 @@ nano /etc/sing-box/config.json
         "server": "fakeip-dns"
       }
     ],
-    "independent_cache": true
+    "independent_cache": true,
+    "strategy": "ipv4_only"
   },
   "endpoints": [
     {
