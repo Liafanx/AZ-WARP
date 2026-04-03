@@ -151,6 +151,7 @@ patch_kresd() {
         print "\t-- [WARP-MOD-END]"
     }
     {print}' "$KRESD_CONF" > "$tmpfile" && mv "$tmpfile" "$KRESD_CONF"
+    chmod 644 "$KRESD_CONF"
     systemctl restart kresd@1 kresd@2
 }
 
