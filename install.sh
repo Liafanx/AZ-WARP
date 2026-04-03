@@ -107,7 +107,7 @@ check_dependencies() {
         fi
     done
     if [ ${#missing[@]} -gt 0 ]; then
-        echo -e " - ${CYAN}Установка недостающих пакетов: ${missing[*]}...${NC}"
+        echo -e " - ${CYAN}Установк�� недостающих пакетов: ${missing[*]}...${NC}"
         apt-get update -qq >/dev/null 2>&1
         apt-get install -y -qq "${missing[@]}" >/dev/null 2>&1
     fi
@@ -136,6 +136,8 @@ cat << 'EOF' > "$MASTER_FILE"
 # ==========================================
 # СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
 # Строки, начинающиеся с '#', игнорируются.
+# ⚠️ НЕ удаляйте маркеры вида # --- GEMINI ---
+#    Они используются для управления списками.
 # ==========================================
 
 # Пользовательские домены:
@@ -230,7 +232,7 @@ echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC
 cd "$WGCF_DIR"
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
-    echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
+    echo -e " - ${CYAN}Скачиван��е утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
     WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
     if ! wget -qO wgcf "$WGCF_URL"; then
         echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
@@ -281,7 +283,7 @@ fi
 echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
 
 # ==============================================================================
-echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box...${NC}"
+echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
 echo -e " - ${CYAN}Генерация файла $SINGBOX_CONF с подсетью $SUBNET...${NC}"
 mkdir -p /etc/sing-box
 cat << EOF > "$SINGBOX_CONF"
@@ -290,10 +292,10 @@ cat << EOF > "$SINGBOX_CONF"
   "dns": {
     "servers": [
       { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "warp" },
-      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "$SUBNET", "inet6_range": "fc00::/18" }
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "$SUBNET" }
     ],
     "rules": [
-      { "query_type": ["A", "AAAA"], "server": "fakeip-dns" }
+      { "query_type": ["A"], "server": "fakeip-dns" }
     ],
     "independent_cache": true
   },
@@ -311,7 +313,7 @@ cat << EOF > "$SINGBOX_CONF"
           "address": "162.159.192.1",
           "port": 2408,
           "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-          "allowed_ips": ["0.0.0.0/0", "::/0"],
+          "allowed_ips": ["0.0.0.0/0"],
           "reserved": [0, 0, 0]
         }
       ]
@@ -375,7 +377,7 @@ download_file "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "сп
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
 
 if [ "$ADD_GEMINI" == "y" ]; then
-    echo -e " - ${CYAN}Интеграция доменов Gemini в мастер-файл...${NC}"
+    echo -e " - ${CYAN}Интеграц��я доменов Gemini в мастер-файл...${NC}"
     if ! grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
         echo "# --- GEMINI ---" >> "$MASTER_FILE"
         cat "$DOWNLOAD_DIR/gemini.txt" >> "$MASTER_FILE"
