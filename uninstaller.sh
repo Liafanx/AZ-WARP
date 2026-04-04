@@ -13,8 +13,20 @@ echo -e " 🗑️ УДАЛЕНИЕ WARPER И SING-BOX"
 echo -e "${RED}================================================${NC}"
 echo -e "Эта команда полностью удалит службу туннеля, очистит настройки DNS и маршруты."
 
+remove_iptables_rule() {
+    local chain="$1" iface_flag="$2" iface_name="$3"
+    iptables -C "$chain" "$iface_flag" "$iface_name" -j ACCEPT 2>/dev/null && \
+        iptables -D "$chain" "$iface_flag" "$iface_name" -j ACCEPT
+}
+
+load_config_value() {
+    local key="$1"
+    local file="$2"
+    grep -E "^${key}=" "$file" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '"'\''[:space:]'
+}
+
 while true; do
-    read -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
+    read -r -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
     if [[ -z "$conf" || "$conf" =~ ^[Nn]$ ]]; then
         echo -e "${GREEN}Отмена. Ничего не изменено.${NC}"
         exit 0
@@ -26,7 +38,7 @@ while true; do
 done
 
 while true; do
-    read -p "Оставить список доменов и настройки в папке /root/warper? (Y/n): " keep_dom < /dev/tty
+    read -r -p "Оставить список доменов и настройки в папке /root/warper? (Y/n): " keep_dom < /dev/tty
     if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
         KEEP_DOMAINS=true
         break
@@ -39,10 +51,12 @@ while true; do
 done
 
 CONF_FILE="/root/warper/warper.conf"
+SUBNET="198.18.0.0/24"
 if [ -f "$CONF_FILE" ]; then
-    source "$CONF_FILE"
-else
-    SUBNET="198.18.0.0/24"
+    loaded_subnet=$(load_config_value "SUBNET" "$CONF_FILE")
+    if [ -n "$loaded_subnet" ]; then
+        SUBNET="$loaded_subnet"
+    fi
 fi
 
 echo -e "\n${YELLOW}1. Остановка и удаление служб...${NC}"
@@ -53,6 +67,8 @@ echo -e " - ${CYAN}Удаление из автозагрузки...${NC}"
 systemctl disable sing-box 2>/dev/null
 systemctl disable warper-autopatch 2>/dev/null
 echo -e " - ${CYAN}Удаление файлов служб...${NC}"
+rm -f /etc/systemd/system/sing-box.service
+rm -f /etc/systemd/system/warper-autopatch.service
 rm -f /usr/lib/systemd/system/sing-box.service
 rm -f /usr/lib/systemd/system/warper-autopatch.service
 systemctl daemon-reload
@@ -65,7 +81,15 @@ rm -rf /etc/sing-box
 
 echo -e "\n${YELLOW}3. Восстановление исходного kresd.conf...${NC}"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
-if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+KRESD_BACKUP="/etc/knot-resolver/kresd.conf.warper.bak"
+
+if [ -f "$KRESD_BACKUP" ]; then
+    echo -e " - ${CYAN}Восстановление kresd.conf из резервной копии...${NC}"
+    cp -a "$KRESD_BACKUP" "$KRESD_CONF"
+    chmod 644 "$KRESD_CONF" 2>/dev/null || true
+    systemctl restart kresd@1 kresd@2 2>/dev/null
+    rm -f "$KRESD_BACKUP"
+elif grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
     echo -e " - ${CYAN}Очистка кода WARPER из конфигурации DNS...${NC}"
     sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
     echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
@@ -91,7 +115,11 @@ else
     echo -e " - ${GREEN}Подсеть $SUBNET отсутствует, изменения маршрутов не требуются.${NC}"
 fi
 
-echo -e "\n${YELLOW}5. Удаление утилиты WARPER...${NC}"
+echo -e "\n${YELLOW}5. Удаление правил firewall...${NC}"
+remove_iptables_rule FORWARD -o singbox-tun
+remove_iptables_rule FORWARD -i singbox-tun
+
+echo -e "\n${YELLOW}6. Удаление утилиты WARPER...${NC}"
 echo -e " - ${CYAN}Удаление системного ярлыка утилиты...${NC}"
 rm -f /usr/local/bin/warper
 rm -f /etc/knot-resolver/warper-domains.txt

@@ -20,8 +20,6 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# === ФУНКЦИИ-ПОМОЩНИКИ ===
-
 download_file() {
     local url="$1" dest="$2" desc="$3"
     echo -e " - ${CYAN}Загрузка ${desc}...${NC}"
@@ -76,6 +74,7 @@ check_os() {
         echo -e "${RED}Не удалось определить операционную систему.${NC}"
         exit 1
     fi
+    # shellcheck disable=SC1091
     source /etc/os-release
     local supported=false
     case "$ID" in
@@ -114,14 +113,50 @@ check_dependencies() {
     echo -e " - ${GREEN}Все зависимости установлены.${NC}"
 }
 
-# === ПРЕДВАРИТЕЛЬНЫЕ ПРОВЕРКИ ===
+check_antizapret() {
+    if [ ! -x /root/antizapret/doall.sh ] || [ ! -f /root/antizapret/config/include-ips.txt ]; then
+        echo -e "${RED}AntiZapret не найден или установлен не по ожидаемому пути /root/antizapret.${NC}"
+        echo -e "${YELLOW}Убедитесь, что основной проект AntiZapret VPN уже установлен перед запуском этого скрипта.${NC}"
+        exit 1
+    fi
+    echo -e " - ${GREEN}AntiZapret найден.${NC}"
+}
+
+validate_singbox_config() {
+    if ! command -v sing-box >/dev/null 2>&1; then
+        echo -e "${RED}sing-box не найден для проверки конфигурации.${NC}"
+        return 1
+    fi
+    if ! sing-box check -c "$SINGBOX_CONF" >/dev/null 2>&1; then
+        echo -e "${RED}Ошибка: сгенерирован некорректный config.json для sing-box.${NC}"
+        return 1
+    fi
+    return 0
+}
+
+ensure_singbox_running() {
+    if ! systemctl is-active --quiet sing-box; then
+        echo -e "${RED}Ошибка: служба sing-box не запустилась.${NC}"
+        echo -e "${YELLOW}Последние логи:${NC}"
+        journalctl -u sing-box -n 30 --no-pager 2>/dev/null || true
+        return 1
+    fi
+    return 0
+}
+
+ensure_iptables_rule() {
+    local chain="$1" iface_flag="$2" iface_name="$3"
+    iptables -C "$chain" "$iface_flag" "$iface_name" -j ACCEPT 2>/dev/null || \
+        iptables -I "$chain" "$iface_flag" "$iface_name" -j ACCEPT
+}
+
 echo -e "\n${YELLOW}[0/8] Предварительные проверки...${NC}"
 check_os
 SYSTEM_ARCH=$(detect_arch)
 echo -e " - ${GREEN}Архитектура: ${SYSTEM_ARCH}${NC}"
 check_dependencies
+check_antizapret
 
-# === ПРЕДВАРИТЕЛЬНЫЙ ОПРОС ПОЛЬЗОВАТЕЛЯ ===
 WARPER_DIR="/root/warper"
 DOWNLOAD_DIR="$WARPER_DIR/download"
 WGCF_DIR="$WARPER_DIR/wgcf"
@@ -156,7 +191,7 @@ if grep -q "# --- GEMINI ---" "$MASTER_FILE"; then
     echo -e "${GREEN}✔ Домены Gemini уже присутствуют в списке. Пропускаем.${NC}"
 else
     while true; do
-        read -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
+        read -r -p "Добавить Gemini в список доменов для WARP? (Y/n): " prompt_gemini < /dev/tty
         if [[ -z "$prompt_gemini" || "$prompt_gemini" =~ ^[Yy]$ ]]; then
             ADD_GEMINI="y"
             break
@@ -173,7 +208,7 @@ if grep -q "# --- CHATGPT ---" "$MASTER_FILE"; then
     echo -e "${GREEN}✔ Домены ChatGPT уже присутствуют в списке. Пропускаем.${NC}"
 else
     while true; do
-        read -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
+        read -r -p "Добавить ChatGPT в список доменов для WARP? (Y/n): " prompt_chatgpt < /dev/tty
         if [[ -z "$prompt_chatgpt" || "$prompt_chatgpt" =~ ^[Yy]$ ]]; then
             ADD_CHATGPT="y"
             break
@@ -188,12 +223,12 @@ fi
 
 echo -e "\n${YELLOW}⚙️  Настройка сети${NC}"
 while true; do
-    read -p "Использовать фейковую подсеть $SUBNET (рекомендуется)? [Y/n]: " prompt_subnet < /dev/tty
+    read -r -p "Использовать фейковую подсеть $SUBNET (рекомендуется)? [Y/n]: " prompt_subnet < /dev/tty
     if [[ -z "$prompt_subnet" || "$prompt_subnet" =~ ^[Yy]$ ]]; then
         break
     elif [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
         while true; do
-            read -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
+            read -r -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
             if validate_subnet "$custom_subnet"; then
                 SUBNET="$custom_subnet"
                 TUN_IP=$(calculate_tun_ip "$SUBNET")
@@ -207,13 +242,15 @@ while true; do
     fi
 done
 
-echo "SUBNET=\"$SUBNET\"" > "$CONF_FILE"
-echo "TUN_IP=\"$TUN_IP\"" >> "$CONF_FILE"
+{
+    echo "SUBNET=$SUBNET"
+    echo "TUN_IP=$TUN_IP"
+} > "$CONF_FILE"
+chmod 600 "$CONF_FILE"
 echo -e "${GREEN}✔ Подсеть $SUBNET установлена.${NC}"
 
 echo -e "\n${CYAN}Начинаем процесс установки...${NC}"
 
-# ==============================================================================
 echo -e "\n${YELLOW}[1/8] Установка ядра sing-box...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
@@ -221,16 +258,15 @@ if command -v sing-box >/dev/null 2>&1; then
         echo -e " - ${GREEN}sing-box актуальной версии ($CURRENT_SB) уже установлен.${NC}"
     else
         echo -e " - ${YELLOW}Обновляем до версии $SB_VERSION...${NC}"
-        curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION >/dev/null 2>&1
+        curl -fsSL https://sing-box.app/install.sh | bash -s -- --version "$SB_VERSION" >/dev/null 2>&1
     fi
 else
     echo -e " - ${CYAN}Скачивание и установка пакета sing-box $SB_VERSION...${NC}"
-    curl -fsSL https://sing-box.app/install.sh | bash -s -- --version $SB_VERSION >/dev/null 2>&1
+    curl -fsSL https://sing-box.app/install.sh | bash -s -- --version "$SB_VERSION" >/dev/null 2>&1
 fi
 
-# ==============================================================================
 echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC}"
-cd "$WGCF_DIR"
+cd "$WGCF_DIR" || exit 1
 
 if [ ! -f "/usr/local/bin/wgcf" ]; then
     echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
@@ -243,11 +279,10 @@ if [ ! -f "/usr/local/bin/wgcf" ]; then
     mv wgcf /usr/local/bin/wgcf
 fi
 
-# Поиск ключей в корне (для совместимости со старыми установками)
 if [ -f "/root/wgcf-profile.conf" ] && [ ! -f "wgcf-profile.conf" ]; then
     echo -e " - ${CYAN}Найден профиль WARP в /root/, переносим...${NC}"
-    cp /root/wgcf-account.toml . 2>/dev/null
-    cp /root/wgcf-profile.conf . 2>/dev/null
+    cp /root/wgcf-account.toml . 2>/dev/null || true
+    cp /root/wgcf-profile.conf . 2>/dev/null || true
 fi
 
 GENERATE_WARP=true
@@ -274,6 +309,9 @@ if [ "$GENERATE_WARP" = true ]; then
     fi
 fi
 
+chmod 600 "$WGCF_DIR"/wgcf-profile.conf 2>/dev/null || true
+chmod 600 "$WGCF_DIR"/wgcf-account.toml 2>/dev/null || true
+
 WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 
@@ -283,7 +321,6 @@ if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
 fi
 echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
 
-# ==============================================================================
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
 echo -e " - ${CYAN}Загрузка шаблона и генерация $SINGBOX_CONF...${NC}"
 mkdir -p /etc/sing-box
@@ -297,20 +334,27 @@ sed \
     -e "s|__TUN_IP__|$TUN_IP|g" \
     "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
 
+chmod 600 "$SINGBOX_CONF"
+
+if ! validate_singbox_config; then
+    exit 1
+fi
+
 echo -e " - ${GREEN}Конфигурация sing-box создана с подсетью $SUBNET.${NC}"
 
-# ==============================================================================
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
-download_file "$REPO_URL/sing-box.service" "/usr/lib/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
-download_file "$REPO_URL/warper-autopatch.service" "/usr/lib/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
+download_file "$REPO_URL/sing-box.service" "/etc/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
+download_file "$REPO_URL/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
 echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
 systemctl daemon-reload
 systemctl enable sing-box > /dev/null 2>&1
 systemctl restart sing-box
+if ! ensure_singbox_running; then
+    exit 1
+fi
 systemctl enable warper-autopatch > /dev/null 2>&1
 sleep 2
 
-# ==============================================================================
 echo -e "\n${YELLOW}[5/8] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
@@ -328,12 +372,10 @@ if [ -f "$AZ_INC" ]; then
     fi
 fi
 
-# ==============================================================================
 echo -e "\n${YELLOW}[6/8] Скачивание базовых списков с GitHub...${NC}"
 download_file "$REPO_URL/download/gemini.txt" "$DOWNLOAD_DIR/gemini.txt" "список доменов Gemini" || exit 1
 download_file "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "список доменов ChatGPT" || exit 1
 
-# ==============================================================================
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
 
 if [ "$ADD_GEMINI" == "y" ]; then
@@ -362,16 +404,19 @@ download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" 
 chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
 ln -sf "$WARPER_DIR/warper.sh" /usr/local/bin/warper
 
-# ==============================================================================
 echo -e "\n${YELLOW}[8/8] Применение правил DNS и Firewall...${NC}"
 echo -e " - ${CYAN}Патчинг конфигурации DNS-сервера (kresd)...${NC}"
-/usr/local/bin/warper patch > /dev/null 2>&1
+if ! /usr/local/bin/warper patch >/dev/null 2>&1; then
+    echo -e " - ${RED}Ошибка применения патча WARPER к kresd.${NC}"
+    exit 1
+fi
 
 echo -e " - ${CYAN}Применение разрешающих правил iptables для туннеля...${NC}"
-iptables -I FORWARD -o singbox-tun -j ACCEPT 2>/dev/null
-iptables -I FORWARD -i singbox-tun -j ACCEPT 2>/dev/null
+ensure_iptables_rule FORWARD -o singbox-tun
+ensure_iptables_rule FORWARD -i singbox-tun
 
 echo -e "\n${GREEN}================================================${NC}"
 echo -e " 🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!"
 echo -e "${GREEN}================================================${NC}"
 echo -e "Для управления доменами введите команду: ${CYAN}warper${NC}"
+echo -e "Для диагностики используйте: ${CYAN}warper doctor${NC}"
