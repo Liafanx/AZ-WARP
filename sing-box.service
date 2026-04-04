@@ -6,19 +6,14 @@ After=network.target nss-lookup.target network-online.target
 [Service]
 User=root
 ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
-# Ожидаем появления интерфейса singbox-tun (до 10 секунд)
 ExecStartPost=/bin/bash -c 'for i in $(seq 1 10); do ip link show singbox-tun >/dev/null 2>&1 && break; sleep 1; done'
-# Отключаем IPv6 на TUN-интерфейсе (предотвращает переопределение sysctl)
 ExecStartPost=-/usr/sbin/sysctl -w net.ipv6.conf.singbox-tun.disable_ipv6=1
-# Стираем локальные DNS
 ExecStartPost=-/usr/bin/resolvectl dns singbox-tun ""
 ExecStartPost=-/usr/bin/resolvectl domain singbox-tun ""
-# Разрешаем маршрутизацию FORWARD (Фикс для Docker)
-ExecStartPost=-/usr/sbin/iptables -I FORWARD -o singbox-tun -j ACCEPT
-ExecStartPost=-/usr/sbin/iptables -I FORWARD -i singbox-tun -j ACCEPT
-# Убираем правила при остановке службы
-ExecStopPost=-/usr/sbin/iptables -D FORWARD -o singbox-tun -j ACCEPT
-ExecStopPost=-/usr/sbin/iptables -D FORWARD -i singbox-tun -j ACCEPT
+ExecStartPost=-/bin/bash -c '/usr/sbin/iptables -C FORWARD -o singbox-tun -j ACCEPT 2>/dev/null || /usr/sbin/iptables -I FORWARD -o singbox-tun -j ACCEPT'
+ExecStartPost=-/bin/bash -c '/usr/sbin/iptables -C FORWARD -i singbox-tun -j ACCEPT 2>/dev/null || /usr/sbin/iptables -I FORWARD -i singbox-tun -j ACCEPT'
+ExecStopPost=-/bin/bash -c '/usr/sbin/iptables -C FORWARD -o singbox-tun -j ACCEPT 2>/dev/null && /usr/sbin/iptables -D FORWARD -o singbox-tun -j ACCEPT || true'
+ExecStopPost=-/bin/bash -c '/usr/sbin/iptables -C FORWARD -i singbox-tun -j ACCEPT 2>/dev/null && /usr/sbin/iptables -D FORWARD -i singbox-tun -j ACCEPT || true'
 
 Restart=on-failure
 RestartSec=10s
