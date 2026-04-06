@@ -98,7 +98,7 @@ check_os() {
 }
 
 check_dependencies() {
-    local deps=("curl" "wget" "awk" "iptables" "nano" "grep" "sed")
+    local deps=("curl" "wget" "awk" "iptables" "nano" "grep" "sed" "jq")
     local missing=()
     for cmd in "${deps[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -120,6 +120,23 @@ check_antizapret() {
         exit 1
     fi
     echo -e " - ${GREEN}AntiZapret найден.${NC}"
+}
+
+subnet_conflicts() {
+    local subnet="$1"
+
+    ip -o -4 addr show 2>/dev/null | awk '{print $4}' | grep -qxF "$subnet" && return 0
+    ip route 2>/dev/null | grep -qF "${subnet%/*}" && return 0
+
+    if command -v docker >/dev/null 2>&1; then
+        local ids
+        ids=$(docker network ls -q 2>/dev/null || true)
+        if [ -n "$ids" ]; then
+            docker network inspect $ids 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+        fi
+    fi
+
+    return 1
 }
 
 validate_singbox_config() {
@@ -230,6 +247,13 @@ while true; do
         while true; do
             read -r -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
             if validate_subnet "$custom_subnet"; then
+                if subnet_conflicts "$custom_subnet"; then
+                    echo -e "${YELLOW}Предупреждение: подсеть $custom_subnet уже может использоваться локально или Docker.${NC}"
+                    read -r -p "Использовать её всё равно? [y/N]: " force_subnet < /dev/tty
+                    if [[ ! "$force_subnet" =~ ^[Yy]$ ]]; then
+                        continue
+                    fi
+                fi
                 SUBNET="$custom_subnet"
                 TUN_IP=$(calculate_tun_ip "$SUBNET")
                 break 2
@@ -420,3 +444,4 @@ echo -e " 🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!"
 echo -e "${GREEN}================================================${NC}"
 echo -e "Для управления доменами введите команду: ${CYAN}warper${NC}"
 echo -e "Для диагностики используйте: ${CYAN}warper doctor${NC}"
+echo -e "Для краткого статуса используйте: ${CYAN}warper status${NC}"

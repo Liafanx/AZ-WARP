@@ -84,7 +84,7 @@ KRESD_CONF="/etc/knot-resolver/kresd.conf"
 KRESD_BACKUP="/etc/knot-resolver/kresd.conf.warper.bak"
 
 if [ -f "$KRESD_BACKUP" ]; then
-    echo -e " - ${CYAN}Восстановление kresd.conf из резервной копии...${NC}"
+    echo -e " - ${CYAN}Восстано��ление kresd.conf из резервной копии...${NC}"
     cp -a "$KRESD_BACKUP" "$KRESD_CONF"
     chmod 644 "$KRESD_CONF" 2>/dev/null || true
     systemctl restart kresd@1 kresd@2 2>/dev/null
