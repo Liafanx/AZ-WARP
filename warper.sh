@@ -231,19 +231,33 @@ remove_iptables_rule() {
         iptables -D "$chain" "$iface_flag" "$iface_name" -j ACCEPT
 }
 
-subnet_conflicts() {
+subnet_conflict_reason() {
     local subnet="$1"
-    ip -o -4 addr show 2>/dev/null | awk '{print $4}' | grep -qxF "$subnet" && return 0
-    ip route 2>/dev/null | grep -qF "${subnet%/*}" && return 0
+
+    if ip -o -4 addr show 2>/dev/null | awk '{print $4}' | grep -qxF "$subnet"; then
+        echo "подсеть уже назначена на локальном интерфейсе"
+        return 0
+    fi
+
+    if ip route 2>/dev/null | grep -qF "${subnet%/*}"; then
+        echo "подсеть уже встречается в таблице маршрутов"
+        return 0
+    fi
 
     if command -v docker >/dev/null 2>&1; then
         local ids
         ids=$(docker network ls -q 2>/dev/null || true)
-        if [ -n "$ids" ]; then
-            docker network inspect $ids 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+        if [ -n "$ids" ] && docker network inspect $ids 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\""; then
+            echo "подсеть используется в Docker network"
+            return 0
         fi
     fi
+
     return 1
+}
+
+subnet_conflicts() {
+    subnet_conflict_reason "$1" >/dev/null 2>&1
 }
 
 get_warp_credentials() {
@@ -295,7 +309,6 @@ restore_kresd_backup() {
     if [ -f "$KRESD_BACKUP" ]; then
         cp -a "$KRESD_BACKUP" "$KRESD_CONF" || return 1
         chmod 644 "$KRESD_CONF" 2>/dev/null || true
-        systemctl restart kresd@1 kresd@2 || return 1
         return 0
     fi
     return 1
@@ -309,6 +322,7 @@ file_mode_is_600() {
 
 status_cmd() {
     load_config
+
     local sb_run sb_en kr_stat dom_stat az_stat ap_stat subnet_conflict
     systemctl is-active --quiet sing-box && sb_run="running" || sb_run="stopped"
     systemctl is-enabled --quiet sing-box 2>/dev/null && sb_en="enabled" || sb_en="disabled"
@@ -327,19 +341,9 @@ status_cmd() {
     echo "subnet in AntiZapret: $az_stat"
     echo "autopatch: $ap_stat"
     echo "subnet conflict: $subnet_conflict"
-}
-
-prompt_apply() {
-    echo -e "\n${YELLOW}Применить изменения и перезапустить DNS?${NC}"
-    read -r -e -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
-    if [[ -z "$apply_choice" || "$apply_choice" == "Y" || "$apply_choice" == "y" ]]; then
-        if patch_kresd > /dev/null 2>&1; then
-            echo -e "${GREEN}Изменения успешно применены!${NC}"
-        else
-            echo -e "${RED}Не удалось применить изменения к DNS.${NC}"
-        fi
+    if subnet_conflicts "$SUBNET"; then
+        echo "conflict reason: $(subnet_conflict_reason "$SUBNET")"
     fi
-    read -r -p "Нажмите Enter для продолжения..."
 }
 
 show_logs() {
@@ -352,11 +356,10 @@ show_logs() {
     trap - SIGINT
 }
 
-build_selective_patch() {
+insert_selective_patch_instance1() {
     awk '
-    BEGIN { found=0 }
-    /-- Resolve non-blocked domains/ || /-- Resolve blocked domains/ {
-        found=1
+    BEGIN { inserted=0 }
+    /^\t-- Resolve non-blocked domains$/ && inserted==0 {
         print "\t-- [WARP-MOD-START]"
         print "\tlocal warp_domains = {}"
         print "\tlocal wfile = io.open(\"/etc/knot-resolver/warper-domains.txt\", \"r\")"
@@ -371,17 +374,44 @@ build_selective_patch() {
         print "\t\tend"
         print "\tend"
         print "\t-- [WARP-MOD-END]"
+        print ""
+        inserted=1
     }
     { print }
-    END { if (found == 0) exit 42 }
-    ' "$KRESD_CONF"
+    END { if (inserted==0) exit 42 }
+    '
 }
 
-build_global_except_patch() {
+insert_selective_patch_instance2() {
     awk '
-    BEGIN { found=0 }
-    /-- Resolve blocked domains/ {
-        found=1
+    BEGIN { inserted=0 }
+    /^\t-- Resolve blocked domains$/ && inserted==0 {
+        print "\t-- [WARP-MOD-START]"
+        print "\tlocal warp_domains = {}"
+        print "\tlocal wfile = io.open(\"/etc/knot-resolver/warper-domains.txt\", \"r\")"
+        print "\tif wfile then"
+        print "\t\tfor line in wfile:lines() do"
+        print "\t\t\tlocal clean = line:gsub(\"%s+\", \"\")"
+        print "\t\t\tif clean ~= \"\" and clean:sub(1,1) ~= \"#\" then table.insert(warp_domains, clean .. \".\") end"
+        print "\t\tend"
+        print "\t\twfile:close()"
+        print "\t\tif #warp_domains > 0 then"
+        print "\t\t\tpolicy.add(policy.suffix(policy.STUB(\"127.0.0.1@40000\"), policy.todnames(warp_domains)))"
+        print "\t\tend"
+        print "\tend"
+        print "\t-- [WARP-MOD-END]"
+        print ""
+        inserted=1
+    }
+    { print }
+    END { if (inserted==0) exit 42 }
+    '
+}
+
+insert_global_except_patch_instance2() {
+    awk '
+    BEGIN { inserted=0 }
+    /^\t-- Resolve blocked domains$/ && inserted==0 {
         print "\t-- [WARP-MOD-START]"
         print "\tlocal warp_exclude_domains = {}"
         print "\tlocal efile = io.open(\"/etc/knot-resolver/warper-exclude-domains.txt\", \"r\")"
@@ -391,17 +421,18 @@ build_global_except_patch() {
         print "\t\t\tif clean ~= \"\" and clean:sub(1,1) ~= \"#\" then table.insert(warp_exclude_domains, clean .. \".\") end"
         print "\t\tend"
         print "\t\tefile:close()"
-        print "\tend"
-        print "\tif #warp_exclude_domains > 0 then"
-        print "\t\tpolicy.add(policy.suffix(policy.PASS, policy.todnames(warp_exclude_domains)))"
+        print "\t\tif #warp_exclude_domains > 0 then"
+        print "\t\t\tpolicy.add(policy.suffix(policy.PASS, policy.todnames(warp_exclude_domains)))"
+        print "\t\tend"
         print "\tend"
         print "\tpolicy.add(policy.all(policy.STUB(\"127.0.0.1@40000\")))"
         print "\t-- [WARP-MOD-END]"
-        print
+        print ""
+        inserted=1
     }
     { print }
-    END { if (found == 0) exit 42 }
-    ' "$KRESD_CONF"
+    END { if (inserted==0) exit 42 }
+    '
 }
 
 patch_kresd() {
@@ -412,54 +443,69 @@ patch_kresd() {
         return 1
     }
 
-    if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
-        if ! restore_kresd_backup; then
-            sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
-        fi
-    else
-        backup_kresd || return 1
-    fi
+    backup_kresd || {
+        echo -e "${RED}Не удалось создать backup kresd.conf.${NC}"
+        return 1
+    }
+
+    restore_kresd_backup || {
+        echo -e "${RED}Не удалось восстановить исходный kresd.conf из backup.${NC}"
+        return 1
+    }
 
     local tmpfile
     tmpfile=$(mktemp /tmp/kresd.conf.XXXXXX)
 
-    if [ "$MODE" = "global-except" ]; then
-        build_global_except_patch > "$tmpfile"
-    else
-        build_selective_patch > "$tmpfile"
-    fi
+    if [ "$MODE" = "selective" ]; then
+        if ! insert_selective_patch_instance1 < "$KRESD_CONF" > "$tmpfile"; then
+            rm -f "$tmpfile"
+            echo -e "${RED}Не удалось вставить selective-патч для kresd@1.${NC}"
+            return 1
+        fi
 
-    local rc=$?
-    if [ "$rc" -ne 0 ]; then
-        rm -f "$tmpfile"
-        echo -e "${RED}Не удалось подготовить патч kresd.conf.${NC}"
-        return 1
+        if ! insert_selective_patch_instance2 < "$tmpfile" > "${tmpfile}.2"; then
+            rm -f "$tmpfile" "${tmpfile}.2"
+            echo -e "${RED}Не удалось вставить selective-патч для kresd@2.${NC}"
+            return 1
+        fi
+
+        mv "${tmpfile}.2" "$tmpfile"
+    else
+        if ! insert_global_except_patch_instance2 < "$KRESD_CONF" > "$tmpfile"; then
+            rm -f "$tmpfile"
+            echo -e "${RED}Не удалось вставить global-except-патч для kresd@2.${NC}"
+            return 1
+        fi
     fi
 
     mv "$tmpfile" "$KRESD_CONF" || return 1
     chmod 644 "$KRESD_CONF"
+
+    ensure_iptables_rule FORWARD -o singbox-tun
+    ensure_iptables_rule FORWARD -i singbox-tun
+
     systemctl restart kresd@1 kresd@2 || return 1
     return 0
 }
 
 unpatch_kresd() {
-    if [ -f "$KRESD_BACKUP" ]; then
-        restore_kresd_backup && return 0
-    fi
-    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
-        sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
-        chmod 644 "$KRESD_CONF"
+    if restore_kresd_backup; then
+        chmod 644 "$KRESD_CONF" 2>/dev/null || true
         systemctl restart kresd@1 kresd@2 || return 1
+        return 0
     fi
+    return 1
 }
 
 doctor() {
     load_config
+
     echo -e "${CYAN}==========================================${NC}"
     echo -e "        🩺 ${YELLOW}WARPER DOCTOR${NC}"
     echo -e "${CYAN}==========================================${NC}"
 
     local failed=0
+
     check_item() {
         local label="$1" cmd="$2"
         if eval "$cmd" >/dev/null 2>&1; then
@@ -490,17 +536,19 @@ doctor() {
     fi
 
     if subnet_conflicts "$SUBNET"; then
-        echo -e " ${YELLOW}!${NC} Обнаружен возможный конфликт fake-подсети $SUBNET"
+        echo -e " ${YELLOW}!${NC} Обнаружен возможный конфликт fake-подсети $SUBNET: $(subnet_conflict_reason "$SUBNET")"
         failed=1
     else
         echo -e " ${GREEN}✔${NC} Конфликт fake-подсети не обнаружен"
     fi
 
+    echo -e "${CYAN}------------------------------------------${NC}"
     if [ "$failed" -eq 0 ]; then
         echo -e "${GREEN}Диагностика завершена: проблем не обнаружено.${NC}"
     else
         echo -e "${YELLOW}Диагностика завершена: обнаружены проблемы.${NC}"
     fi
+
     return "$failed"
 }
 
@@ -606,6 +654,7 @@ settings_menu() {
                 else
                     enable_disable_list enable gemini
                 fi
+                patch_kresd >/dev/null 2>&1 || true
                 sleep 1
                 ;;
             4)
@@ -614,6 +663,7 @@ settings_menu() {
                 else
                     enable_disable_list enable chatgpt
                 fi
+                patch_kresd >/dev/null 2>&1 || true
                 sleep 1
                 ;;
             5)
@@ -690,6 +740,7 @@ singbox_menu() {
 show_main_menu() {
     clear
     local REMOTE_VER UPDATE_AVAILABLE=false VER_STR
+    local SB_RUN SB_EN KR_STAT DOM_STAT AZ_STAT AP_STAT
     REMOTE_VER=$(get_remote_version)
 
     if version_gt "$REMOTE_VER" "$LOCAL_VER"; then
@@ -699,21 +750,37 @@ show_main_menu() {
         VER_STR="${GREEN}$LOCAL_VER (Актуальная)${NC}"
     fi
 
+    systemctl is-active --quiet sing-box && SB_RUN="${GREEN}запущен${NC}" || SB_RUN="${RED}выключен${NC}"
+    systemctl is-enabled --quiet sing-box 2>/dev/null && SB_EN="${GREEN}включена автозагрузка${NC}" || SB_EN="${RED}отключена автозагрузка${NC}"
+    grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null && KR_STAT="${GREEN}пропатчен${NC}" || KR_STAT="${RED}не пропатчен${NC}"
+    domains_in_sync && DOM_STAT="${GREEN}синхронизированы${NC}" || DOM_STAT="${RED}не синхронизированы${NC}"
+    grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null && AZ_STAT="${GREEN}добавлена${NC}" || AZ_STAT="${RED}не добавлена${NC}"
+    systemctl is-enabled --quiet warper-autopatch 2>/dev/null && AP_STAT="${GREEN}включено${NC}" || AP_STAT="${RED}отключено${NC}"
+
     echo -e "${CYAN}==========================================${NC}"
     echo -e "       🚀 ${YELLOW}Панель управления Warper${NC} 🚀"
     echo -e "${CYAN}==========================================${NC}"
     echo -e " - Версия: $VER_STR"
     echo -e " - Режим: ${GREEN}$MODE${NC}"
+    echo -e " - Sing-box ($SB_RUN, $SB_EN)"
+    echo -e " - Kresd.conf ($KR_STAT)"
+    echo -e " - 📁 Домены selective: $MASTER_FILE ($DOM_STAT)"
+    echo -e " - 📁 Исключения global-except: $EXCLUDE_FILE"
+    echo -e " - Fake подсеть $SUBNET в include-ips ($AZ_STAT)"
+    echo -e " - Автовосстановление DNS ($AP_STAT)"
     echo -e "${CYAN}------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} Добавить домен (selective)"
     echo -e " ${RED}2.${NC} Удалить домен (selective)"
     echo -e " ${GREEN}3.${NC} Добавить исключение (global-except)"
     echo -e " ${RED}4.${NC} Удалить исключение (global-except)"
-    echo -e " ${CYAN}5.${NC} Пропатчить DNS / Синхронизация"
-    echo -e " ${CYAN}6.${NC} Управление sing-box"
-    echo -e " ${CYAN}7.${NC} Логи"
-    echo -e " ${CYAN}8.${NC} Вкл/выкл WARPER"
-    echo -e " ${CYAN}9.${NC} Настройки"
+    echo -e " ${YELLOW}5.${NC} Посмотреть списки"
+    echo -e " ${CYAN}6.${NC} Редактировать domains.txt (nano)"
+    echo -e " ${CYAN}7.${NC} Редактировать exclude_domains.txt (nano)"
+    echo -e " ${CYAN}8.${NC} Пропатчить DNS / Синхронизация"
+    echo -e " ${CYAN}9.${NC} Управление sing-box"
+    echo -e " ${CYAN}L.${NC} Показать логи"
+    echo -e " ${CYAN}T.${NC} Вкл/выкл WARPER"
+    echo -e " ${CYAN}N.${NC} Настройки"
     echo -e " ${CYAN}D.${NC} Doctor"
     echo -e " ${CYAN}S.${NC} Status"
     echo -e " ${RED}U.${NC} Удалить warper"
@@ -774,6 +841,15 @@ cli_remove_exclude() {
     echo -e "${GREEN}Исключение удалено: $domain${NC}"
 }
 
+show_lists() {
+    echo -e "\n${CYAN}--- domains.txt (selective) ---${NC}"
+    cat "$MASTER_FILE" 2>/dev/null || true
+    echo -e "${CYAN}--- exclude_domains.txt (global-except) ---${NC}"
+    cat "$EXCLUDE_FILE" 2>/dev/null || true
+    echo -e "${CYAN}-------------------------------------------${NC}"
+    read -r -p "Нажмите Enter..."
+}
+
 toggle_warper() {
     if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
         systemctl stop sing-box
@@ -817,6 +893,7 @@ while true; do
     show_main_menu
     read -r -e -p "Выбор: " choice
     choice=$(echo "${choice:-}" | tr -d ' ')
+
     case "$choice" in
         1)
             echo -e "\n${CYAN}Введите домен:${NC}"
@@ -842,14 +919,17 @@ while true; do
             cli_remove_exclude "${raw_domain:-}"
             read -r -p "Нажмите Enter..."
             ;;
-        5)
+        5) show_lists ;;
+        6) nano "$MASTER_FILE"; patch_kresd >/dev/null 2>&1 || true ;;
+        7) nano "$EXCLUDE_FILE"; patch_kresd >/dev/null 2>&1 || true ;;
+        8)
             patch_kresd && echo -e "${GREEN}Готово!${NC}" || echo -e "${RED}Ошибка.${NC}"
             sleep 1
             ;;
-        6) singbox_menu ;;
-        7) show_logs ;;
-        8) toggle_warper ;;
-        9) settings_menu ;;
+        9) singbox_menu ;;
+        l|L) show_logs ;;
+        t|T) toggle_warper ;;
+        n|N) settings_menu ;;
         d|D) doctor; read -r -p "Нажмите Enter..." ;;
         s|S) status_cmd; read -r -p "Нажмите Enter..." ;;
         u|U)
