@@ -68,6 +68,7 @@ validate_domain() {
     local domain="$1"
     domain=$(echo "$domain" | xargs)
     domain="${domain%.}"
+    domain=$(echo "$domain" | tr '[:upper:]' '[:lower:]')
 
     if [ -z "$domain" ]; then
         return 1
@@ -81,7 +82,7 @@ validate_domain() {
     if [[ "$domain" =~ ^- || "$domain" =~ -$ ]]; then
         return 1
     fi
-    if [[ ! "$domain" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    if [[ ! "$domain" =~ ^[a-z0-9._-]+$ ]]; then
         return 1
     fi
 
@@ -94,7 +95,7 @@ validate_domain() {
         if [[ "$label" =~ ^- || "$label" =~ -$ ]]; then
             return 1
         fi
-        if [[ ! "$label" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        if [[ ! "$label" =~ ^[a-z0-9_-]+$ ]]; then
             return 1
         fi
     done
@@ -181,7 +182,6 @@ filter_valid_domains_file() {
 sync_domains() {
     local tmp
     tmp=$(mktemp /tmp/warper_sync.XXXXXX)
-
     filter_valid_domains_file "$MASTER_FILE" "$tmp"
     mv "$tmp" "$ACTIVE_FILE"
     chmod 644 "$ACTIVE_FILE"
@@ -206,6 +206,23 @@ domains_in_sync() {
 
     rm -f "$tmp_master" "$tmp_active"
     return "$result"
+}
+
+subnet_conflicts() {
+    local subnet="$1"
+
+    ip -o -4 addr show 2>/dev/null | awk '{print $4}' | grep -qxF "$subnet" && return 0
+    ip route 2>/dev/null | grep -qF "${subnet%/*}" && return 0
+
+    if command -v docker >/dev/null 2>&1; then
+        local ids
+        ids=$(docker network ls -q 2>/dev/null || true)
+        if [ -n "$ids" ]; then
+            docker network inspect $ids 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+        fi
+    fi
+
+    return 1
 }
 
 validate_singbox_config() {
@@ -244,9 +261,16 @@ remove_iptables_rule() {
 get_warp_credentials() {
     local address="" private_key=""
 
-    if [ -f "$SINGBOX_CONF" ]; then
-        address=$(grep -o '"address": \[ "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-        private_key=$(grep -o '"private_key": "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    if command -v jq >/dev/null 2>&1 && [ -f "$SINGBOX_CONF" ]; then
+        address=$(jq -r '.endpoints[] | select(.tag=="warp") | .address[0] // empty' "$SINGBOX_CONF" 2>/dev/null || true)
+        private_key=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
+    fi
+
+    if [ -z "$address" ] || [ -z "$private_key" ]; then
+        if [ -f "$SINGBOX_CONF" ]; then
+            address=$(grep -o '"address": \[ "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
+            private_key=$(grep -o '"private_key": "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
+        fi
     fi
 
     if [ -z "$address" ] || [ -z "$private_key" ] || [ "$address" = "__WARP_ADDRESS__" ]; then
@@ -313,6 +337,34 @@ restore_kresd_backup() {
         return 0
     fi
     return 1
+}
+
+file_mode_is_600() {
+    local file="$1"
+    [ -f "$file" ] || return 1
+    [ "$(stat -c %a "$file" 2>/dev/null || true)" = "600" ]
+}
+
+status_cmd() {
+    load_config
+
+    local sb_run sb_en kr_stat dom_stat az_stat ap_stat subnet_conflict
+    if systemctl is-active --quiet sing-box; then sb_run="running"; else sb_run="stopped"; fi
+    if systemctl is-enabled --quiet sing-box 2>/dev/null; then sb_en="enabled"; else sb_en="disabled"; fi
+    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then kr_stat="patched"; else kr_stat="not patched"; fi
+    if domains_in_sync; then dom_stat="synced"; else dom_stat="not synced"; fi
+    if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then az_stat="present"; else az_stat="missing"; fi
+    if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then ap_stat="enabled"; else ap_stat="disabled"; fi
+    if subnet_conflicts "$SUBNET"; then subnet_conflict="yes"; else subnet_conflict="no"; fi
+
+    echo "Version: $LOCAL_VER"
+    echo "sing-box: $sb_run"
+    echo "sing-box autostart: $sb_en"
+    echo "kresd patch: $kr_stat"
+    echo "domains: $dom_stat"
+    echo "subnet in AntiZapret: $az_stat"
+    echo "autopatch: $ap_stat"
+    echo "subnet conflict: $subnet_conflict"
 }
 
 prompt_apply() {
@@ -430,6 +482,8 @@ unpatch_kresd() {
 }
 
 doctor() {
+    load_config
+
     echo -e "${CYAN}==========================================${NC}"
     echo -e "        🩺 ${YELLOW}WARPER DOCTOR${NC}"
     echo -e "${CYAN}==========================================${NC}"
@@ -455,6 +509,7 @@ doctor() {
     check_item "Конфиг sing-box валиден" "validate_singbox_config"
     check_item "Служба sing-box активна" "systemctl is-active --quiet sing-box"
     check_item "Автозагрузка sing-box включена" "systemctl is-enabled --quiet sing-box"
+    check_item "Службы kresd активны" "systemctl is-active --quiet kresd@1 && systemctl is-active --quiet kresd@2"
     check_item "Автопатч warper включен" "systemctl is-enabled --quiet warper-autopatch"
     check_item "kresd.conf пропатчен" "grep -q 'WARP-MOD-START' '$KRESD_CONF'"
     check_item "Резервная копия kresd.conf существует" "[ -f '$KRESD_BACKUP' ]"
@@ -463,6 +518,19 @@ doctor() {
     check_item "Интерфейс singbox-tun существует" "ip link show singbox-tun"
     check_item "Правило iptables FORWARD -o singbox-tun существует" "iptables -C FORWARD -o singbox-tun -j ACCEPT"
     check_item "Правило iptables FORWARD -i singbox-tun существует" "iptables -C FORWARD -i singbox-tun -j ACCEPT"
+    check_item "Права /etc/sing-box/config.json ограничены" "file_mode_is_600 '$SINGBOX_CONF'"
+    check_item "Права /root/warper/warper.conf ограничены" "file_mode_is_600 '$CONF_FILE'"
+
+    if [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
+        check_item "Права wgcf-profile.conf ограничены" "file_mode_is_600 '$WGCF_DIR/wgcf-profile.conf'"
+    fi
+
+    if subnet_conflicts "$SUBNET"; then
+        echo -e " ${YELLOW}!${NC} Обнаружен возможный конфликт fake-подсети $SUBNET"
+        failed=1
+    else
+        echo -e " ${GREEN}✔${NC} Конфликт fake-подсети не обнаружен"
+    fi
 
     echo -e "${CYAN}------------------------------------------${NC}"
     if [ "$failed" -eq 0 ]; then
@@ -527,26 +595,29 @@ toggle_warper() {
     fi
 }
 
-toggle_list() {
-    local list_name=$1
+enable_disable_list() {
+    local action="$1"
+    local list_name="$2"
     local list_file="$DOWNLOAD_DIR/${list_name}.txt"
     local marker="# --- ${list_name^^} ---"
     local end_marker="# --- END ${list_name^^} ---"
 
     if [ ! -f "$list_file" ]; then
-        echo -e "${RED}Файл списка $list_file не найден! Пожалуйста, обновите списки через меню.${NC}"
-        sleep 2
-        return
+        echo -e "${RED}Файл списка $list_file не найден!${NC}"
+        return 1
     fi
 
     local valid_tmp
     valid_tmp=$(mktemp /tmp/warper_valid_list.XXXXXX)
     filter_valid_domains_file "$list_file" "$valid_tmp"
 
-    if grep -q "$marker" "$MASTER_FILE"; then
-        sed -i "/$marker/,/$end_marker/d" "$MASTER_FILE"
-        echo -e "${YELLOW}Домены ${list_name^^} выключены.${NC}"
-    else
+    if [ "$action" = "enable" ]; then
+        if grep -q "$marker" "$MASTER_FILE"; then
+            rm -f "$valid_tmp"
+            echo -e "${YELLOW}Список ${list_name^^} уже включен.${NC}"
+            return 0
+        fi
+
         if [ -s "$valid_tmp" ]; then
             local master_tmp
             master_tmp=$(mktemp /tmp/warper_master.XXXXXX)
@@ -580,10 +651,33 @@ toggle_list() {
         echo "$marker" >> "$MASTER_FILE"
         cat "$valid_tmp" >> "$MASTER_FILE"
         echo "$end_marker" >> "$MASTER_FILE"
-        echo -e "${GREEN}Домены ${list_name^^} включены.${NC}"
+        rm -f "$valid_tmp"
+        echo -e "${GREEN}Список ${list_name^^} включен.${NC}"
+        return 0
+    fi
+
+    if [ "$action" = "disable" ]; then
+        rm -f "$valid_tmp"
+        if grep -q "$marker" "$MASTER_FILE"; then
+            sed -i "/$marker/,/$end_marker/d" "$MASTER_FILE"
+            echo -e "${YELLOW}Список ${list_name^^} выключен.${NC}"
+            return 0
+        fi
+        echo -e "${YELLOW}Список ${list_name^^} уже выключен.${NC}"
+        return 0
     fi
 
     rm -f "$valid_tmp"
+    return 1
+}
+
+toggle_list() {
+    local list_name=$1
+    if grep -q "# --- ${list_name^^} ---" "$MASTER_FILE"; then
+        enable_disable_list disable "$list_name"
+    else
+        enable_disable_list enable "$list_name"
+    fi
     prompt_apply
 }
 
@@ -691,6 +785,14 @@ settings_menu() {
                         if [ -z "$new_subnet" ]; then
                             echo -e "${YELLOW}Отмена.${NC}"; sleep 1; break
                         elif validate_subnet "$new_subnet"; then
+                            if subnet_conflicts "$new_subnet"; then
+                                echo -e "${YELLOW}Предупреждение: подсеть $new_subnet уже может использоваться локально или Docker.${NC}"
+                                read -r -e -p "Использовать её всё равно? [y/N]: " force_subnet
+                                if [[ ! "$force_subnet" =~ ^[Yy]$ ]]; then
+                                    continue
+                                fi
+                            fi
+
                             local old_subnet old_tun new_tun
                             old_subnet="$SUBNET"
                             old_tun="$TUN_IP"
@@ -862,6 +964,7 @@ show_main_menu() {
     echo -e " ${CYAN}6.${NC} ⚙️ Управление sing-box"
     echo -e " ${CYAN}7.${NC} 📄 Показать логи"
     echo -e " ${CYAN}D.${NC} 🩺 Диагностика (doctor)"
+    echo -e " ${CYAN}S.${NC} 📊 Краткий статус"
 
     if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
         echo -e " ${RED}8. ⏹ Отключить WARPER${NC}"
@@ -885,17 +988,114 @@ show_main_menu() {
     MENU_REMOTE_VER=$REMOTE_VER
 }
 
+cli_add_domain() {
+    local raw="$1"
+    local domain
+    domain=$(validate_domain "$raw") || {
+        echo -e "${RED}Некорректный домен: $raw${NC}"
+        return 1
+    }
+
+    if grep -qxF "$domain" "$MASTER_FILE"; then
+        echo -e "${YELLOW}Домен уже есть в списке: $domain${NC}"
+        return 0
+    fi
+
+    echo "$domain" >> "$MASTER_FILE"
+    patch_kresd >/dev/null 2>&1 || true
+    echo -e "${GREEN}Домен добавлен и применён: $domain${NC}"
+    return 0
+}
+
+cli_remove_domain() {
+    local raw="$1"
+    local domain
+    domain=$(validate_domain "$raw") || {
+        echo -e "${RED}Некорректный домен: $raw${NC}"
+        return 1
+    }
+
+    if grep -qxF "$domain" "$MASTER_FILE"; then
+        local escaped
+        escaped=$(escape_regex "$domain")
+        sed -i "/^${escaped}$/d" "$MASTER_FILE"
+        patch_kresd >/dev/null 2>&1 || true
+        echo -e "${GREEN}Домен удалён и изменения применены: $domain${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Домен не найден: $domain${NC}"
+    return 0
+}
+
+cli_enable_list() {
+    local list_name="$1"
+    case "$list_name" in
+        gemini|chatgpt)
+            enable_disable_list enable "$list_name" || return 1
+            patch_kresd >/dev/null 2>&1 || true
+            ;;
+        *)
+            echo -e "${RED}Неизвестный список: $list_name${NC}"
+            return 1
+            ;;
+    esac
+}
+
+cli_disable_list() {
+    local list_name="$1"
+    case "$list_name" in
+        gemini|chatgpt)
+            enable_disable_list disable "$list_name" || return 1
+            patch_kresd >/dev/null 2>&1 || true
+            ;;
+        *)
+            echo -e "${RED}Неизвестный список: $list_name${NC}"
+            return 1
+            ;;
+    esac
+}
+
 load_config
 
-if [ "${1:-}" == "patch" ]; then
-    patch_kresd >/dev/null 2>&1
-    exit $?
-fi
-
-if [ "${1:-}" == "doctor" ]; then
-    doctor
-    exit $?
-fi
+case "${1:-}" in
+    patch)
+        patch_kresd >/dev/null 2>&1
+        exit $?
+        ;;
+    doctor)
+        doctor
+        exit $?
+        ;;
+    status)
+        status_cmd
+        exit $?
+        ;;
+    sync)
+        patch_kresd
+        exit $?
+        ;;
+    add)
+        [ -n "${2:-}" ] || { echo "Использование: warper add DOMAIN"; exit 1; }
+        cli_add_domain "$2"
+        exit $?
+        ;;
+    remove)
+        [ -n "${2:-}" ] || { echo "Использование: warper remove DOMAIN"; exit 1; }
+        cli_remove_domain "$2"
+        exit $?
+        ;;
+    enable)
+        [ -n "${2:-}" ] || { echo "Использование: warper enable gemini|chatgpt"; exit 1; }
+        cli_enable_list "$2"
+        exit $?
+        ;;
+    disable)
+        [ -n "${2:-}" ] || { echo "Использование: warper disable gemini|chatgpt"; exit 1; }
+        cli_disable_list "$2"
+        exit $?
+        ;;
+esac
 
 MENU_UPDATE_AVAILABLE=false
 MENU_REMOTE_VER="$LOCAL_VER"
@@ -1012,6 +1212,10 @@ while true; do
             ;;
         d|D)
             doctor
+            read -r -p "Нажмите Enter..."
+            ;;
+        s|S)
+            status_cmd
             read -r -p "Нажмите Enter..."
             ;;
         u|U)
