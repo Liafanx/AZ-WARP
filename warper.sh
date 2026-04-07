@@ -227,18 +227,16 @@ insert_user_domain() {
         return 0
     fi
 
+    awk -v domain="$domain" '
+    BEGIN { inserted=0 }
     {
-        awk '
-        BEGIN { inserted=0 }
-        {
-            print
-            if ($0 == "# Пользовательские домены:" && inserted == 0) {
-                print "'"$domain"'"
-                inserted=1
-            }
+        print
+        if ($0 == "# Пользовательские домены:" && inserted == 0) {
+            print domain
+            inserted=1
         }
-        ' "$tmp"
-    } > "${tmp}.new"
+    }
+    ' "$tmp" > "${tmp}.new"
 
     mv "${tmp}.new" "$tmp"
     rebuild_master_file "$tmp" "$MASTER_FILE"
@@ -427,7 +425,7 @@ rebuild_config() {
     local creds
     creds=$(get_warp_credentials) || {
         echo -e "${RED}Ошибка: Не удалось извлечь WARP-ключи!${NC}"
-        echo -e "${YELLOW}Провер��те наличие файла $WGCF_DIR/wgcf-profile.conf${NC}"
+        echo -e "${YELLOW}Проверьте наличие файла $WGCF_DIR/wgcf-profile.conf${NC}"
         return 1
     }
 
@@ -536,23 +534,26 @@ patch_kresd() {
         return 1
     fi
 
-    if grep -q "WARP-MOD-START" "$KRESD_CONF"; then
-        systemctl restart kresd@1 kresd@2 || return 1
-        return 0
-    fi
-
     backup_kresd || {
         echo -e "${RED}Не удалось создать backup $KRESD_CONF.${NC}"
         return 1
     }
 
-    local tmpfile
+    local clean_tmp tmpfile
+    clean_tmp=$(mktemp /tmp/kresd.clean.XXXXXX)
     tmpfile=$(mktemp /tmp/kresd.conf.XXXXXX)
 
+    sed '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF" > "$clean_tmp"
+
     awk '
-    BEGIN { found=0 }
-    /-- Resolve non-blocked domains/ || /-- Resolve blocked domains/ {
-        found=1
+    BEGIN {
+        in_inst1=0
+        in_inst2=0
+        inserted1=0
+        inserted2=0
+    }
+
+    function print_warp_block() {
         print "\t-- [WARP-MOD-START]"
         print "\tlocal warp_domains = {}"
         print "\tlocal wfile = io.open(\"/etc/knot-resolver/warper-domains.txt\", \"r\")"
@@ -568,15 +569,58 @@ patch_kresd() {
         print "\tend"
         print "\t-- [WARP-MOD-END]"
     }
-    { print }
-    END { if (found == 0) exit 42 }
-    ' "$KRESD_CONF" > "$tmpfile"
+
+    /^if string.match\(systemd_instance, '\''\^1'\''\) then$/ {
+        in_inst1=1
+        in_inst2=0
+        print
+        next
+    }
+
+    /^elseif string.match\(systemd_instance, '\''\^2'\''\) then$/ {
+        in_inst1=0
+        in_inst2=1
+        print
+        next
+    }
+
+    /^else panic/ {
+        in_inst1=0
+        in_inst2=0
+        print
+        next
+    }
+
+    in_inst1 && /^[[:space:]]*-- Resolve non-blocked domains$/ && inserted1==0 {
+        print_warp_block()
+        inserted1=1
+        print
+        next
+    }
+
+    in_inst2 && /^[[:space:]]*-- Resolve blocked domains$/ && inserted2==0 {
+        print_warp_block()
+        inserted2=1
+        print
+        next
+    }
+
+    {
+        print
+    }
+
+    END {
+        if (inserted1 == 0 || inserted2 == 0) exit 42
+    }
+    ' "$clean_tmp" > "$tmpfile"
     local awk_rc=$?
+
+    rm -f "$clean_tmp"
 
     if [ "$awk_rc" -ne 0 ]; then
         rm -f "$tmpfile"
         if [ "$awk_rc" -eq 42 ]; then
-            echo -e "${RED}Не удалось найти точки вставки в $KRESD_CONF.${NC}"
+            echo -e "${RED}Не удалось найти корректные точки вставки в $KRESD_CONF.${NC}"
         else
             echo -e "${RED}Ошибка при патчинге $KRESD_CONF.${NC}"
         fi
@@ -643,6 +687,7 @@ doctor() {
     check_item "Службы kresd активны" "systemctl is-active --quiet kresd@1 && systemctl is-active --quiet kresd@2"
     check_item "Автопатч warper включен" "systemctl is-enabled --quiet warper-autopatch"
     check_item "kresd.conf пропатчен" "grep -q 'WARP-MOD-START' '$KRESD_CONF'"
+    check_item "В kresd.conf ровно 2 WARP-блока" "[ \"\$(grep -c 'WARP-MOD-START' '$KRESD_CONF' 2>/dev/null)\" -eq 2 ]"
     check_item "Резервная копия kresd.conf существует" "[ -f '$KRESD_BACKUP' ]"
     check_item "Домены синхронизированы" "domains_in_sync"
     check_item "Подсеть $SUBNET есть в include-ips.txt" "grep -qF '$SUBNET' '$AZ_INC'"
@@ -654,7 +699,7 @@ doctor() {
 
     if [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
         check_item "Права wgcf-profile.conf ограничены" "file_mode_is_600 '$WGCF_DIR/wgcf-profile.conf'"
-    }
+    fi
 
     if subnet_conflicts "$SUBNET"; then
         echo -e " ${YELLOW}!${NC} Обнаружен возможный конфликт fake-подсети $SUBNET"
@@ -857,7 +902,7 @@ settings_menu() {
         local AP_STAT GEM_STAT GPT_STAT
         if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else AP_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
         if has_list_block "gemini"; then GEM_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else GEM_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
-        if has_list_block "chatgpt"; then GPT_STAT="${GREEN}ВК��ЮЧЕНО${NC}"; else GPT_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
+        if has_list_block "chatgpt"; then GPT_STAT="${GREEN}ВКЛЮЧЕНО${NC}"; else GPT_STAT="${RED}ВЫКЛЮЧЕНО${NC}"; fi
 
         echo -e " ${CYAN}1.${NC} Автопатч DNS при перезагрузке:  [$AP_STAT]"
         echo -e " ${CYAN}2.${NC} Интеграция доменов Gemini:      [$GEM_STAT]"
