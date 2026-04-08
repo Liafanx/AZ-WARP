@@ -98,8 +98,11 @@ if [ -f "$KRESD_BACKUP" ]; then
     systemctl restart kresd@1 kresd@2 2>/dev/null
     rm -f "$KRESD_BACKUP"
 elif grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
-    echo -e " - ${CYAN}Очистка кода WARPER из конфигурации DNS...${NC}"
+    echo -e " - ${CYAN}Очистка WARP-блока из конфигурации DNS (kresd@1)...${NC}"
+    # Удаляем WARP-блок и лишние пустые строки после него
     sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
+    # Удаляем двойные пустые строки, которые могли остаться
+    sed -i '/^$/N;/^\n$/d' "$KRESD_CONF"
     echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
     systemctl restart kresd@1 kresd@2 2>/dev/null
 else
