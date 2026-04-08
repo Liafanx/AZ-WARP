@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/1.1.0pre"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 SB_VERSION="1.13.5"
 
 RED='\033[0;31m'
@@ -205,6 +205,54 @@ ensure_iptables_rule() {
         iptables -I "$chain" "$iface_flag" "$iface_name" -j ACCEPT
 }
 
+# Функция поиска существующих WARP-ключей
+find_existing_warp_keys() {
+    local address="" private_key=""
+    local source=""
+
+    # Приоритет 1: /etc/wireguard/warp.conf (от AntiZapret WARP)
+    if [ -f "/etc/wireguard/warp.conf" ]; then
+        private_key=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        address=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        if [ -n "$private_key" ] && [ -n "$address" ]; then
+            # Добавляем /32 если нет маски
+            if [[ ! "$address" =~ / ]]; then
+                address="${address}/32"
+            fi
+            echo "$address"
+            echo "$private_key"
+            echo "/etc/wireguard/warp.conf"
+            return 0
+        fi
+    fi
+
+    # Приоритет 2: Существующий профиль WARPER
+    if [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
+        address=$(grep -m 1 '^Address = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+        private_key=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+        if [ -n "$private_key" ] && [ -n "$address" ]; then
+            echo "$address"
+            echo "$private_key"
+            echo "$WGCF_DIR/wgcf-profile.conf"
+            return 0
+        fi
+    fi
+
+    # Приоритет 3: Профиль в /root/
+    if [ -f "/root/wgcf-profile.conf" ]; then
+        address=$(grep -m 1 '^Address = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+        private_key=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+        if [ -n "$private_key" ] && [ -n "$address" ]; then
+            echo "$address"
+            echo "$private_key"
+            echo "/root/wgcf-profile.conf"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 echo -e "\n${YELLOW}[0/8] Предварительные проверки...${NC}"
 check_os
 SYSTEM_ARCH=$(detect_arch)
@@ -354,33 +402,35 @@ fi
 echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC}"
 cd "$WGCF_DIR" || exit 1
 
-if [ ! -f "/usr/local/bin/wgcf" ]; then
-    echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
-    WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
-    if ! wget -qO wgcf "$WGCF_URL"; then
-        echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
-        exit 1
+# Поиск существующих ключей
+WARP_ADDRESS=""
+WARP_PRIVATE_KEY=""
+WARP_SOURCE=""
+
+if existing_keys=$(find_existing_warp_keys); then
+    WARP_ADDRESS=$(echo "$existing_keys" | sed -n '1p')
+    WARP_PRIVATE_KEY=$(echo "$existing_keys" | sed -n '2p')
+    WARP_SOURCE=$(echo "$existing_keys" | sed -n '3p')
+    echo -e " - ${GREEN}Найдены существующие WARP-ключи в: $WARP_SOURCE${NC}"
+    echo -e " - ${GREEN}Используем существующий аккаунт WARP.${NC}"
+else
+    # Ключи не найдены — генерируем новые
+    echo -e " - ${CYAN}Существующие WARP-ключи не найдены. Генерируем новые...${NC}"
+    
+    if [ ! -f "/usr/local/bin/wgcf" ]; then
+        echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
+        WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
+        if ! wget -qO wgcf "$WGCF_URL"; then
+            echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
+            exit 1
+        fi
+        chmod +x wgcf
+        mv wgcf /usr/local/bin/wgcf
     fi
-    chmod +x wgcf
-    mv wgcf /usr/local/bin/wgcf
-fi
 
-if [ -f "/root/wgcf-profile.conf" ] && [ ! -f "wgcf-profile.conf" ]; then
-    echo -e " - ${CYAN}Найден профиль WARP в /root/, переносим...${NC}"
-    cp /root/wgcf-account.toml . 2>/dev/null || true
-    cp /root/wgcf-profile.conf . 2>/dev/null || true
-fi
-
-GENERATE_WARP=true
-if [ -f "wgcf-profile.conf" ] && grep -q "PrivateKey" wgcf-profile.conf && grep -q "Address" wgcf-profile.conf; then
-    echo -e " - ${GREEN}Профиль WARP уже существует. Используем старые ключи.${NC}"
-    GENERATE_WARP=false
-fi
-
-if [ "$GENERATE_WARP" = true ]; then
     echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP (подождите)...${NC}"
-    wgcf register --accept-tos > /dev/null
-    wgcf generate > /dev/null
+    wgcf register --accept-tos > /dev/null 2>&1
+    wgcf generate > /dev/null 2>&1
 
     if [ ! -f "wgcf-profile.conf" ]; then
         echo -e "\n${RED}================================================${NC}"
@@ -393,19 +443,20 @@ if [ "$GENERATE_WARP" = true ]; then
         echo -e "${RED}================================================${NC}"
         exit 1
     fi
+
+    chmod 600 "$WGCF_DIR"/wgcf-profile.conf 2>/dev/null || true
+    chmod 600 "$WGCF_DIR"/wgcf-account.toml 2>/dev/null || true
+
+    WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
+    WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
+    WARP_SOURCE="$WGCF_DIR/wgcf-profile.conf"
 fi
-
-chmod 600 "$WGCF_DIR"/wgcf-profile.conf 2>/dev/null || true
-chmod 600 "$WGCF_DIR"/wgcf-account.toml 2>/dev/null || true
-
-WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
-WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
 
 if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
-    echo -e " - ${RED}Ошибка: Не удалось извлечь ключи из файла wgcf-profile.conf.${NC}"
+    echo -e " - ${RED}Ошибка: Не удалось извлечь ключи WARP.${NC}"
     exit 1
 fi
-echo -e " - ${GREEN}Ключи успешно извлечены!${NC}"
+echo -e " - ${GREEN}Ключи успешно получены!${NC}"
 
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
 echo -e " - ${CYAN}Загрузка шаблона и генерация $SINGBOX_CONF...${NC}"
@@ -436,7 +487,7 @@ systemctl daemon-reload
 if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
     echo -e " - ${YELLOW}ANTIZAPRET_WARP=y — службы НЕ будут запущены.${NC}"
 else
-    echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
+    echo -e " - ${CYAN}Добавлен��е служб в автозагрузку и запуск...${NC}"
     systemctl enable sing-box > /dev/null 2>&1
     systemctl restart sing-box
     if ! ensure_singbox_running; then
