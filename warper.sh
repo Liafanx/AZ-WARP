@@ -113,10 +113,11 @@ show_down_sh_warning() {
     echo -e "${YELLOW}VPN_WARP и ANTIZAPRET_WARP выключены, но правила${NC}"
     echo -e "${YELLOW}от предыдущего запуска up.sh ещё активны.${NC}"
     echo -e ""
-    echo -e "${CYAN}Для корректной работы WARPER выполните:${NC}"
+    echo -e "${CYAN}Для корректной работы WARPER выполните последовательно:${NC}"
     echo -e "  ${GREEN}/root/antizapret/down.sh${NC}"
+    echo -e "  ${GREEN}/root/antizapret/up.sh${NC}"
     echo -e ""
-    echo -e "${YELLOW}Это отключит старые WARP-правила и позволит${NC}"
+    echo -e "${YELLOW}Это перезапустит правила AntiZapret и позволит${NC}"
     echo -e "${YELLOW}WARPER использовать локальные ключи.${NC}"
     echo -e "${RED}================================================${NC}"
 }
@@ -131,7 +132,8 @@ show_antizapret_warp_warning() {
     echo -e "${CYAN}Для использования WARPER:${NC}"
     echo -e "1. Установите ANTIZAPRET_WARP=n в /root/antizapret/setup"
     echo -e "2. Выполните: /root/antizapret/down.sh"
-    echo -e "3. Запустите: warper"
+    echo -e "3. Выполните: /root/antizapret/up.sh"
+    echo -e "4. Запустите: warper"
     echo -e "${RED}================================================${NC}"
 }
 
@@ -681,7 +683,7 @@ status_cmd() {
     if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then ap_stat="enabled"; else ap_stat="disabled"; fi
     if subnet_conflicts "$SUBNET"; then subnet_conflict="yes"; else subnet_conflict="no"; fi
     if check_antizapret_warp; then az_warp_stat="ENABLED (conflict!)"; else az_warp_stat="disabled"; fi
-    if check_warp_rules_active; then warp_rules_stat="active (run down.sh!)"; else warp_rules_stat="inactive"; fi
+    if needs_down_sh; then warp_rules_stat="active (run down.sh + up.sh!)"; else warp_rules_stat="ok"; fi
     log_level=$(get_log_level)
     mtu=$(get_mtu)
     echo "Version: $LOCAL_VER"
@@ -1241,7 +1243,7 @@ show_main_menu() {
     echo -e "       🚀 ${YELLOW}Панель управления WARPER${NC} 🚀"
     echo -e "${CYAN}================================================${NC}"
     
-    local VER_STR SB_RUN SB_EN KR_STAT DOM_STAT AZ_STAT AP_STAT UPDATE_AVAILABLE LOG_LEVEL MTU AZ_WARP_STAT WARP_RULES_STAT
+    local VER_STR SB_RUN SB_EN KR_STAT DOM_STAT AZ_STAT AP_STAT UPDATE_AVAILABLE LOG_LEVEL MTU AZ_WARP_STAT WARP_KEYS_SRC
     UPDATE_AVAILABLE=false
     LOG_LEVEL=$(get_log_level)
     MTU=$(get_mtu)
@@ -1257,13 +1259,6 @@ show_main_menu() {
         AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ!)${NC}"
     else
         AZ_WARP_STAT="${GREEN}✅ OK${NC}"
-    fi
-
-    # Проверка на активные правила от up.sh
-    if needs_down_sh; then
-        WARP_RULES_STAT="${RED}⚠️  Требуется /root/antizapret/down.sh${NC}"
-    else
-        WARP_RULES_STAT="${GREEN}✅ OK${NC}"
     fi
     
     if systemctl is-active --quiet sing-box; then
@@ -1302,10 +1297,22 @@ show_main_menu() {
         AP_STAT="${RED}❌ выключен${NC}"
     fi
     
+    # Определяем источник WARP-ключей
+    if [ -f "$WARP_SYSTEM_CONF" ]; then
+        local sys_key
+        sys_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        if [ -n "$sys_key" ]; then
+            WARP_KEYS_SRC="${GREEN}$WARP_SYSTEM_CONF${NC}"
+        else
+            WARP_KEYS_SRC="${YELLOW}локальные ключи${NC}"
+        fi
+    else
+        WARP_KEYS_SRC="${YELLOW}локальные ключи${NC}"
+    fi
+    
     echo -e ""
     echo -e " 📌 ${CYAN}Версия:${NC}        $VER_STR"
     echo -e " 🔗 ${CYAN}AntiZapret:${NC}    $AZ_WARP_STAT"
-    echo -e " 🔄 ${CYAN}WARP правила:${NC}  $WARP_RULES_STAT"
     echo -e ""
     echo -e " 📡 ${CYAN}Sing-box:${NC}      $SB_RUN | Автозагрузка: $SB_EN"
     echo -e " ⚙️  ${CYAN}Параметры:${NC}    Log: ${CYAN}$LOG_LEVEL${NC} | MTU: ${CYAN}$MTU${NC}"
@@ -1316,6 +1323,15 @@ show_main_menu() {
     echo -e ""
     echo -e " 🔀 ${CYAN}Fake-подсеть:${NC}  ${YELLOW}$SUBNET${NC} — $AZ_STAT"
     echo -e " 🔄 ${CYAN}Автопатч DNS:${NC}  $AP_STAT"
+    echo -e " 🔑 ${CYAN}WARP-ключи:${NC}    $WARP_KEYS_SRC"
+    
+    # Показываем предупреждение о WARP-правилах только если есть проблема
+    if needs_down_sh; then
+        echo -e ""
+        echo -e " ${RED}⚠️  ВНИМАНИЕ:${NC}     ${RED}Требуется перезапуск правил AntiZapret!${NC}"
+        echo -e "                  ${YELLOW}Выполн��те: down.sh && up.sh${NC}"
+    fi
+    
     echo -e ""
     echo -e "${CYAN}------------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} ➕ Добавить домен в WARP"
@@ -1344,7 +1360,7 @@ show_main_menu() {
     fi
     
     echo -e "${CYAN}------------------------------------------------${NC}"
-        echo -e " ${RED}U.${NC} 🗑️  Удалить WARPER полностью"
+    echo -e " ${RED}U.${NC} 🗑️  Удалить WARPER полностью"
     echo -e " ${CYAN}0.${NC} 🚪 Выход"
     echo -e "${CYAN}================================================${NC}"
     
