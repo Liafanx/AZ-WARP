@@ -275,7 +275,7 @@ if check_antizapret_warp; then
     echo -e " - Патч kresd.conf НЕ будет применён"
     echo -e ""
     echo -e "${YELLOW}Чтобы использовать WARPER, отключите ANTIZAPRET_WARP в /root/antizapret/setup${NC}"
-    echo -e "${YELLOW}и перезапустите AntiZapret: /root/antizapret/doall.sh${NC}"
+    echo -e "${YELLOW}и выполните: /root/antizapret/down.sh${NC}"
     echo -e "${RED}================================================${NC}"
     echo ""
     read -r -p "Продолжить установку? (y/N): " continue_install < /dev/tty
@@ -575,7 +575,7 @@ if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
     echo -e "${RED}⚠️  WARPER установлен, но НЕ АКТИВЕН из-за ANTIZAPRET_WARP=y${NC}"
     echo -e "${YELLOW}Для активации:${NC}"
     echo -e "1. Установите ANTIZAPRET_WARP=n в /root/antizapret/setup"
-    echo -e "2. Выполните: /root/antizapret/doall.sh"
+    echo -e "2. Выполните: /root/antizapret/down.sh"
     echo -e "3. Выполните: warper"
     echo -e "   и выберите пункт 8 для включения WARPER"
 else
