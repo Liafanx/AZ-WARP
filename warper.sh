@@ -1256,7 +1256,7 @@ show_main_menu() {
     fi
     
     if check_antizapret_warp; then
-        AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ!)${NC}"
+        AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ! Warper не будет работать, отключите warper или ANTIZAPRET_WARP)${NC}"
     else
         AZ_WARP_STAT="${GREEN}✅ OK${NC}"
     fi
