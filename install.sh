@@ -134,6 +134,12 @@ check_antizapret_warp() {
     return 1  # ANTIZAPRET_WARP выключен или не найден
 }
 
+has_list_block() {
+    local list_name="$1"
+    local file="$2"
+    [ -f "$file" ] && grep -qxF "# --- ${list_name^^} ---" "$file" 2>/dev/null
+}
+
 normalize_include_ips() {
     local file="$1"
     local tmp
@@ -201,11 +207,10 @@ ensure_iptables_rule() {
 }
 
 # Функция поиска существующих WARP-ключей
-# ПРИОРИТЕТ: /etc/wireguard/warp.conf > локальный профиль WARPER
 find_existing_warp_keys() {
     local address="" private_key=""
 
-    # Приоритет 1: /etc/wireguard/warp.conf (от AntiZapret WARP / VPN_WARP)
+    # Приоритет 1: /etc/wireguard/warp.conf (от AntiZapret WARP)
     if [ -f "/etc/wireguard/warp.conf" ]; then
         private_key=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         address=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
@@ -290,52 +295,7 @@ SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
 
 mkdir -p "$WARPER_DIR" "$DOWNLOAD_DIR" "$WGCF_DIR"
 
-# Проверяем существует ли файл domains.txt и содержит ли он блоки
-EXISTING_DOMAINS=false
-EXISTING_GEMINI=false
-EXISTING_CHATGPT=false
-
-if [ -f "$MASTER_FILE" ]; then
-    EXISTING_DOMAINS=true
-    if grep -qxF "# --- GEMINI ---" "$MASTER_FILE" 2>/dev/null; then
-        EXISTING_GEMINI=true
-    fi
-    if grep -qxF "# --- CHATGPT ---" "$MASTER_FILE" 2>/dev/null; then
-        EXISTING_CHATGPT=true
-    fi
-fi
-
-# Если файл существует с данными, спрашиваем пользователя
-if [ "$EXISTING_DOMAINS" = true ]; then
-    echo -e "\n${YELLOW}Обнаружен существующий файл domains.txt${NC}"
-    while true; do
-        read -r -p "Использовать существующий список доменов? (Y/n): " use_existing < /dev/tty
-        if [[ -z "$use_existing" || "$use_existing" =~ ^[Yy]$ ]]; then
-            echo -e " - ${GREEN}Используем существующий список доменов.${NC}"
-            break
-        elif [[ "$use_existing" =~ ^[Nn]$ ]]; then
-            echo -e " - ${CYAN}Создаём новый список доменов...${NC}"
-            EXISTING_DOMAINS=false
-            EXISTING_GEMINI=false
-            EXISTING_CHATGPT=false
-            # Пересоздаём файл
-            cat << 'EOF' > "$MASTER_FILE"
-# ==========================================
-# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
-# Строки, начинающиеся с '#', игнорируются.
-# ⚠️ НЕ удаляйте служебные маркеры блоков GEMINI/CHATGPT
-# ==========================================
-
-# Пользовательские домены:
-EOF
-            break
-        else
-            echo -e "${RED}Ошибка: Пожалуйста, введите Y (да) или n (нет).${NC}"
-        fi
-    done
-fi
-
-# Создаём файл если его нет
+# Создаём файл domains.txt только если его нет
 if [ ! -f "$MASTER_FILE" ]; then
 cat << 'EOF' > "$MASTER_FILE"
 # ==========================================
@@ -355,7 +315,7 @@ TUN_IP="198.20.0.1/24"
 
 echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
 
-if [ "$EXISTING_GEMINI" = true ]; then
+if has_list_block "gemini" "$MASTER_FILE"; then
     echo -e "${GREEN}✔ Домены Gemini уже присутствуют в списке. Пропускаем.${NC}"
 else
     while true; do
@@ -372,7 +332,7 @@ else
     done
 fi
 
-if [ "$EXISTING_CHATGPT" = true ]; then
+if has_list_block "chatgpt" "$MASTER_FILE"; then
     echo -e "${GREEN}✔ Домены ChatGPT уже присутствуют в списке. Пропускаем.${NC}"
 else
     while true; do
@@ -541,8 +501,7 @@ fi
 echo -e "\n${YELLOW}[5/8] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 if [ -f "$AZ_INC" ]; then
-    # Удаляем старые подсети если они были
-    sed -i '\|10.255.0.0/24|d' "$AZ_INC" 2>/dev/null
+    # Удаляем старую подсеть если была
     sed -i '\|198.18.0.0/24|d' "$AZ_INC" 2>/dev/null
     if ! grep -qxF "$SUBNET" "$AZ_INC"; then
         echo -e " - ${CYAN}Добавление подсети $SUBNET в include-ips.txt...${NC}"
@@ -565,33 +524,21 @@ download_file "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "сп
 
 echo -e "\n${YELLOW}[7/8] Настройка списка доменов и утилиты WARPER...${NC}"
 
-# Функция для проверки наличия блока в файле
-has_list_block() {
-    local list_name="$1"
-    grep -qxF "# --- ${list_name^^} ---" "$MASTER_FILE" 2>/dev/null
-}
-
 if [ "$ADD_GEMINI" == "y" ]; then
     echo -e " - ${CYAN}Интеграция доменов Gemini в мастер-файл...${NC}"
-    if ! has_list_block "gemini"; then
-        {
-            echo ""
-            echo "# --- GEMINI ---"
-            cat "$DOWNLOAD_DIR/gemini.txt"
-            echo "# --- END GEMINI ---"
-        } >> "$MASTER_FILE"
+    if ! has_list_block "gemini" "$MASTER_FILE"; then
+        echo "# --- GEMINI ---" >> "$MASTER_FILE"
+        cat "$DOWNLOAD_DIR/gemini.txt" >> "$MASTER_FILE"
+        echo "# --- END GEMINI ---" >> "$MASTER_FILE"
     fi
 fi
 
 if [ "$ADD_CHATGPT" == "y" ]; then
     echo -e " - ${CYAN}Интеграция доменов ChatGPT в мастер-файл...${NC}"
-    if ! has_list_block "chatgpt"; then
-        {
-            echo ""
-            echo "# --- CHATGPT ---"
-            cat "$DOWNLOAD_DIR/chatgpt.txt"
-            echo "# --- END CHATGPT ---"
-        } >> "$MASTER_FILE"
+    if ! has_list_block "chatgpt" "$MASTER_FILE"; then
+        echo "# --- CHATGPT ---" >> "$MASTER_FILE"
+        cat "$DOWNLOAD_DIR/chatgpt.txt" >> "$MASTER_FILE"
+        echo "# --- END CHATGPT ---" >> "$MASTER_FILE"
     fi
 fi
 
