@@ -579,7 +579,6 @@ get_warp_credentials() {
 }
 
 # Проверка и синхронизация ключей с системным файлом
-# Проверка и синхронизация ключей с системным файлом
 check_and_sync_warp_keys() {
     # Сначала проверяем, нужно ли запустить down.sh
     if needs_down_sh; then
@@ -1342,7 +1341,7 @@ show_main_menu() {
     echo -e " ${RED}2.${NC} ➖ Удалить домен из WARP"
     echo -e " ${YELLOW}3.${NC} 📋 Посмотреть список доменов"
     echo -e " ${CYAN}4.${NC} ✏️  Редактировать список (nano)"
-    echo -e " ${CYAN}5.${NC} 🔧 Применить изменения / Синхронизация"
+    echo -e " ${CYAN}5.${NC} 🔧 Применить изменения / Синхронизация / перезапуск Kresd"
     echo -e " ${CYAN}6.${NC} ⚙️  Управление sing-box"
     echo -e " ${CYAN}7.${NC} 📄 Показать логи sing-box"
     echo -e " ${CYAN}D.${NC} 🩺 Диагностика (doctor)"
@@ -1523,7 +1522,7 @@ while true; do
                 prompt_apply
             else
                 rebuild_master_file
-                echo -e "${YELLOW}Измене��ий не обнаружено.${NC}"; sleep 1
+                echo -e "${YELLOW}Изменений не обнаружено.${NC}"; sleep 1
             fi
             ;;
         5)
