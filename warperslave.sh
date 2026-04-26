@@ -6,7 +6,8 @@ SLAVE_DIR="/root/warperslave"
 SLAVE_CONF="$SLAVE_DIR/slave.conf"
 SINGBOX_SLAVE_CONF="/etc/sing-box-slave/config.json"
 SERVICE_NAME="sing-box-slave"
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/1.2.0pre"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+LOCAL_VER=$(cat "$SLAVE_DIR/versionslave" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,6 +16,8 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 LOCK_FILE="/var/run/warperslave.lock"
+REMOTE_VER_CACHE=""
+REMOTE_VER_TIME=0
 
 acquire_lock() {
     exec 8>"$LOCK_FILE"
@@ -182,6 +185,71 @@ find_warp_keys() {
     return 1
 }
 
+# ===== Версионирование и обновление =====
+
+version_gt() {
+    [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" != "$1" ]
+}
+
+get_remote_version() {
+    local now
+    now=$(date +%s)
+    if (( now - REMOTE_VER_TIME > 300 )) || [ -z "$REMOTE_VER_CACHE" ]; then
+        REMOTE_VER_CACHE=$(curl -s --max-time 3 "$REPO_URL/versionslave?t=$now" | tr -d '\r\n')
+        REMOTE_VER_TIME=$now
+    fi
+    echo "${REMOTE_VER_CACHE:-$LOCAL_VER}"
+}
+
+download_file_safe() {
+    local url="$1" dest="$2" desc="$3"
+    local tmp
+    tmp=$(mktemp)
+    if ! curl -fsSL -o "$tmp" "${url}?t=$(date +%s)"; then
+        echo -e "${RED}Ошибка загрузки: ${desc}${NC}"
+        rm -f "$tmp"; return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        echo -e "${RED}Загруженный файл пуст: ${desc}${NC}"
+        rm -f "$tmp"; return 1
+    fi
+    mv "$tmp" "$dest"
+    return 0
+}
+
+update_warperslave() {
+    echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
+
+    download_file_safe "$REPO_URL/warperslave.sh" "$SLAVE_DIR/warperslave.sh" "warperslave.sh" || return 1
+    download_file_safe "$REPO_URL/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" "uninstall-slave.sh" || return 1
+    download_file_safe "$REPO_URL/versionslave" "$SLAVE_DIR/versionslave" "versionslave" || return 1
+    download_file_safe "$REPO_URL/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service" "sing-box-slave.service" || return 1
+    download_file_safe "$REPO_URL/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" "шаблон direct" || true
+    download_file_safe "$REPO_URL/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" "шаблон warp" || true
+
+    chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
+    systemctl daemon-reload
+
+    # Перезапуск службы если она работает
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo -e "${CYAN}Перезапуск $SERVICE_NAME...${NC}"
+        systemctl restart "$SERVICE_NAME"
+        sleep 2
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo -e "${GREEN}Служба перезапущена.${NC}"
+        else
+            echo -e "${YELLOW}Предупреждение: служба не запустилась после обновления.${NC}"
+            journalctl -u "$SERVICE_NAME" -n 10 --no-pager 2>/dev/null || true
+        fi
+    fi
+
+    local new_ver
+    new_ver=$(cat "$SLAVE_DIR/versionslave" 2>/dev/null | tr -d '\r\n' || echo "?")
+    echo -e "${GREEN}Обновление завершено! Версия: ${new_ver}${NC}"
+    read -r -e -p "Нажмите Enter для перезапуска warperslave..."
+    exec /usr/local/bin/warperslave
+}
+
 # ===== Команды =====
 
 status_cmd() {
@@ -193,6 +261,7 @@ status_cmd() {
     ext_ip=$(get_local_public_ipv4 || echo "n/a")
 
     echo "=== WARPERSLAVE STATUS ==="
+    echo "Version:     $LOCAL_VER"
     echo "Mode:        $SLAVE_MODE"
     echo "Port:        $SLAVE_PORT"
     echo "Service:     $sb_run"
@@ -518,6 +587,8 @@ doctor_cmd() {
         fi
     }
 
+    echo -e " ${CYAN}!${NC} Версия: $LOCAL_VER"
+
     check_item "Конфигурация slave существует" "[ -f '$SLAVE_CONF' ]"
     check_item "Конфиг sing-box-slave существует" "[ -f '$SINGBOX_SLAVE_CONF' ]"
     check_item "Конфиг sing-box-slave валиден" "validate_singbox_config"
@@ -556,10 +627,16 @@ doctor_cmd() {
 
 # ===== Главное меню =====
 
+MENU_UPDATE_AVAILABLE=false
+MENU_REMOTE_VER="$LOCAL_VER"
+
 show_menu() {
     load_config
     clear
     local sb_status mode_display pub_ip
+    local REMOTE_VER
+    REMOTE_VER=$(get_remote_version)
+
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         sb_status="${GREEN}🟢 запущен${NC}"
     else
@@ -572,10 +649,21 @@ show_menu() {
     fi
     pub_ip=$(get_local_public_ipv4 || echo "n/a")
 
+    local VER_STR
+    MENU_UPDATE_AVAILABLE=false
+    if version_gt "$REMOTE_VER" "$LOCAL_VER"; then
+        VER_STR="${YELLOW}$LOCAL_VER${NC} (📦 Доступно: ${GREEN}$REMOTE_VER${NC})"
+        MENU_UPDATE_AVAILABLE=true
+        MENU_REMOTE_VER="$REMOTE_VER"
+    else
+        VER_STR="${GREEN}$LOCAL_VER${NC} (✅ актуальная)"
+    fi
+
     echo -e "${CYAN}================================================${NC}"
     echo -e "    🔧 ${YELLOW}WARPERSLAVE — Панель управления${NC} 🔧"
     echo -e "${CYAN}================================================${NC}"
     echo -e ""
+    echo -e " 📌 ${CYAN}Версия:${NC}   $VER_STR"
     echo -e " 📡 ${CYAN}Статус:${NC}   $sb_status"
     echo -e " 🔀 ${CYAN}Режим:${NC}    $mode_display"
     echo -e " 🔌 ${CYAN}Порт:${NC}     ${YELLOW}${SLAVE_PORT}${NC}"
@@ -592,6 +680,12 @@ show_menu() {
     echo -e " ${CYAN}D.${NC} 🩺 Диагностика"
     echo -e " ${CYAN}S.${NC} 📊 Статус"
     echo -e "${CYAN}------------------------------------------------${NC}"
+    if [ "$MENU_UPDATE_AVAILABLE" = true ]; then
+        echo -e " ${YELLOW}7.${NC} ⚡ Обновить до ${GREEN}$MENU_REMOTE_VER${NC}"
+    else
+        echo -e " ${CYAN}7.${NC} 🔄 Проверить обновления"
+    fi
+    echo -e "${CYAN}------------------------------------------------${NC}"
     echo -e " ${RED}U.${NC} 🗑️  Удалить warperslave"
     echo -e " ${CYAN}0.${NC} 🚪 Выход"
     echo -e "${CYAN}================================================${NC}"
@@ -605,6 +699,7 @@ case "${1:-}" in
     port) change_port; exit $? ;;
     key) change_key; exit $? ;;
     doctor) doctor_cmd; exit $? ;;
+    update) update_warperslave; exit $? ;;
     uninstall) uninstall_cmd; exit $? ;;
     help|--help|-h)
         echo "Использование: warperslave [команда]"
@@ -615,6 +710,7 @@ case "${1:-}" in
         echo "  port       Изменить порт"
         echo "  key        Изменить ключ Shadowsocks"
         echo "  doctor     Диагностика"
+        echo "  update     Обновить warperslave"
         echo "  uninstall  Удалить warperslave"
         echo "  help       Показать эту справку"
         echo ""
@@ -647,6 +743,27 @@ while true; do
             read -r -p "Нажмите Enter..."
             ;;
         6) show_logs ;;
+        7)
+            if [ "$MENU_UPDATE_AVAILABLE" = true ]; then
+                update_warperslave
+            else
+                echo -e "\n${CYAN}Проверка обновлений...${NC}"
+                REMOTE_VER_CACHE=""
+                REMOTE_VER_TIME=0
+                local rv
+                rv=$(get_remote_version)
+                if version_gt "$rv" "$LOCAL_VER"; then
+                    echo -e "${GREEN}Доступно обновление: $rv${NC}"
+                    read -r -p "Обновить сейчас? (Y/n): " upd_choice
+                    if [[ -z "$upd_choice" || "$upd_choice" =~ ^[Yy]$ ]]; then
+                        update_warperslave
+                    fi
+                else
+                    echo -e "${GREEN}Версия актуальна: $LOCAL_VER${NC}"
+                    sleep 2
+                fi
+            fi
+            ;;
         d|D) doctor_cmd; read -r -p "Нажмите Enter..." ;;
         s|S) status_cmd; read -r -p "Нажмите Enter..." ;;
         u|U) uninstall_cmd ;;
