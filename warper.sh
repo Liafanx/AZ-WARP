@@ -1235,40 +1235,79 @@ switch_outbound_mode() {
             echo -e "${YELLOW}На донор-сервере должен быть установлен warperslave.${NC}"
             echo -e ""
 
-            # IP/домен сервера
             local new_server new_port new_password
-            while true; do
-                read -r -p "IP или домен slave-сервера (Enter для отмены): " new_server
-                if [ -z "$new_server" ]; then
-                    echo -e "${YELLOW}Отмена.${NC}"; return
+            local use_saved=false
+
+            # Проверяем есть ли сохранённые данные от предыдущего подключения
+            if [ -n "$SLAVE_SERVER" ] && [ -n "$SLAVE_PASSWORD" ]; then
+                echo -e "${GREEN}Найдено сохранённое подключение:${NC}"
+                echo -e "  ${CYAN}Сервер:${NC} ${YELLOW}${SLAVE_SERVER}${NC}"
+                echo -e "  ${CYAN}Порт:${NC}   ${YELLOW}${SLAVE_PORT}${NC}"
+                echo -e "  ${CYAN}Ключ:${NC}   ${YELLOW}${SLAVE_PASSWORD:0:8}...${NC}"
+                echo -e ""
+                echo -e " ${GREEN}1.${NC} Использовать сохранённое подключение"
+                echo -e " ${CYAN}2.${NC} Ввести новый сервер"
+                echo -e " ${CYAN}0.${NC} Отмена"
+
+                while true; do
+                    read -r -p "Выбор [0-2]: " saved_choice
+                    case "${saved_choice:-}" in
+                        1)
+                            use_saved=true
+                            new_server="$SLAVE_SERVER"
+                            new_port="$SLAVE_PORT"
+                            new_password="$SLAVE_PASSWORD"
+                            break
+                            ;;
+                        2)
+                            use_saved=false
+                            break
+                            ;;
+                        0)
+                            return
+                            ;;
+                        *)
+                            echo -e "${RED}Введите 0, 1 или 2.${NC}"
+                            ;;
+                    esac
+                done
+            fi
+
+            if [ "$use_saved" = false ]; then
+                # IP/домен сервера
+                while true; do
+                    read -r -p "IP или домен slave-сервера (Enter для отмены): " new_server
+                    if [ -z "$new_server" ]; then
+                        echo -e "${YELLOW}Отмена.${NC}"; return
+                    fi
+                    if [[ "$new_server" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
+                        break
+                    fi
+                    echo -e "${RED}Некорректный адрес!${NC}"
+                done
+
+                # Порт
+                local default_sp="${SLAVE_PORT:-8444}"
+                read -r -p "Порт [по умолчанию $default_sp]: " new_port
+                if [ -z "$new_port" ]; then
+                    new_port="$default_sp"
                 fi
-                if [[ "$new_server" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
+                if ! validate_port_simple "$new_port"; then
+                    echo -e "${RED}Некорректный порт!${NC}"
+                    sleep 1
+                    return
+                fi
+
+                # Ключ
+                while true; do
+                    read -r -p "Ключ Shadowsocks: " new_password
+                    if [ -z "$new_password" ]; then
+                        echo -e "${RED}Ключ не может быть пустым!${NC}"
+                        continue
+                    fi
                     break
-                fi
-                echo -e "${RED}Некорректный адрес!${NC}"
-            done
-
-            # Порт
-            local default_sp="${SLAVE_PORT:-8444}"
-            read -r -p "Порт [по умолчанию $default_sp]: " new_port
-            if [ -z "$new_port" ]; then
-                new_port="$default_sp"
+                done
             fi
-            if ! validate_port_simple "$new_port"; then
-                echo -e "${RED}Некорректный порт!${NC}"
-                sleep 1
-                return
-            fi
-
-            # Ключ
-            while true; do
-                read -r -p "Ключ Shadowsocks: " new_password
-                if [ -z "$new_password" ]; then
-                    echo -e "${RED}Ключ не может быть пустым!${NC}"
-                    continue
-                fi
-                break
-            done
 
             SLAVE_SERVER="$new_server"
             SLAVE_PORT="$new_port"
