@@ -1,0 +1,14 @@
+[Unit]
+Description=sing-box slave service (warperslave)
+Documentation=https://sing-box.sagernet.org
+After=network.target nss-lookup.target network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/bin/sing-box run -c /etc/sing-box-slave/config.json
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
