@@ -916,6 +916,7 @@ status_cmd() {
     echo "outbound mode: $CURRENT_OUTBOUND_MODE"
     if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
         echo "slave server: $SLAVE_SERVER:$SLAVE_PORT"
+        echo "slave key: $SLAVE_PASSWORD"
     fi
     echo "sing-box: $sb_run"
     echo "sing-box autostart: $sb_en"
