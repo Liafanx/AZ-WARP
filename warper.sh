@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -u
+set -uo pipefail
 
 WARPER_DIR="/root/warper"
 DOWNLOAD_DIR="$WARPER_DIR/download"
@@ -12,10 +12,13 @@ KRESD_BACKUP="/etc/knot-resolver/kresd.conf.warper.bak"
 AZ_INC="/root/antizapret/config/include-ips.txt"
 SINGBOX_CONF="/etc/sing-box/config.json"
 SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
+SLAVE_TEMPLATE="$WARPER_DIR/config-slave-master.json.template"
+SLAVE_MODE_FILE="$WARPER_DIR/slave_mode.conf"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 LOCAL_VER=$(cat "$WARPER_DIR/version" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 CONF_FILE="$WARPER_DIR/warper.conf"
 WARP_SYSTEM_CONF="/etc/wireguard/warp.conf"
+LOCK_FILE="/var/run/warper.lock"
 
 SUBNET="198.20.0.0/24"
 TUN_IP="198.20.0.1/24"
@@ -29,6 +32,31 @@ NC='\033[0m'
 REMOTE_VER_CACHE=""
 REMOTE_VER_TIME=0
 
+# ===== Lock-файл =====
+
+acquire_lock() {
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        echo -e "${RED}Другой экземпляр warper уже запущен.${NC}" >&2
+        exit 1
+    fi
+}
+
+release_lock() {
+    rm -f "$LOCK_FILE"
+}
+
+trap 'release_lock' EXIT
+acquire_lock
+
+# ===== Определение интерактивного режима =====
+
+is_interactive() {
+    [[ -t 0 && -t 1 ]]
+}
+
+# ===== Инициализация domains.txt =====
+
 if [ ! -f "$MASTER_FILE" ]; then
 cat << 'EOF' > "$MASTER_FILE"
 # ==========================================
@@ -40,6 +68,8 @@ cat << 'EOF' > "$MASTER_FILE"
 # Пользовательские домены:
 EOF
 fi
+
+# ===== Загрузка конфигурации =====
 
 load_config() {
     if [ ! -f "$CONF_FILE" ]; then
@@ -57,6 +87,43 @@ load_config() {
         TUN_IP=$(calculate_tun_ip "$SUBNET")
     fi
 }
+
+# ===== Slave mode конфигурация =====
+
+CURRENT_OUTBOUND_MODE="warp"
+SLAVE_SERVER=""
+SLAVE_PORT="8444"
+SLAVE_PASSWORD=""
+
+load_slave_config() {
+    CURRENT_OUTBOUND_MODE="warp"
+    SLAVE_SERVER=""
+    SLAVE_PORT="8444"
+    SLAVE_PASSWORD=""
+    if [ -f "$SLAVE_MODE_FILE" ]; then
+        local val
+        val=$(grep -E '^OUTBOUND_MODE=' "$SLAVE_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '"'\''[:space:]')
+        [ -n "$val" ] && CURRENT_OUTBOUND_MODE="$val"
+        val=$(grep -E '^SLAVE_SERVER=' "$SLAVE_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '"'\''[:space:]')
+        [ -n "$val" ] && SLAVE_SERVER="$val"
+        val=$(grep -E '^SLAVE_PORT=' "$SLAVE_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '"'\''[:space:]')
+        [ -n "$val" ] && SLAVE_PORT="$val"
+        val=$(grep -E '^SLAVE_PASSWORD=' "$SLAVE_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2-)
+        [ -n "$val" ] && SLAVE_PASSWORD="$val"
+    fi
+}
+
+save_slave_config() {
+    {
+        echo "OUTBOUND_MODE=$CURRENT_OUTBOUND_MODE"
+        echo "SLAVE_SERVER=$SLAVE_SERVER"
+        echo "SLAVE_PORT=$SLAVE_PORT"
+        echo "SLAVE_PASSWORD=$SLAVE_PASSWORD"
+    } > "$SLAVE_MODE_FILE"
+    chmod 600 "$SLAVE_MODE_FILE"
+}
+
+# ===== Проверки AntiZapret =====
 
 check_antizapret_warp() {
     local setup_file="/root/antizapret/setup"
@@ -82,22 +149,17 @@ check_vpn_warp() {
     return 1
 }
 
-# Проверка наличия активных правил от up.sh (интерфейс warp или ip rule lookup 13335)
 check_warp_rules_active() {
-    # Проверяем наличие интерфейса warp
     if ip link show warp >/dev/null 2>&1; then
         return 0
     fi
-    # Проверяем наличие ip rule с lookup 13335
     if ip rule show 2>/dev/null | grep -q "lookup 13335"; then
         return 0
     fi
     return 1
 }
 
-# Проверка нужно ли запустить down.sh
 needs_down_sh() {
-    # Если VPN_WARP=n и ANTIZAPRET_WARP=n, но правила от up.sh ещё активны
     if ! check_vpn_warp && ! check_antizapret_warp; then
         if check_warp_rules_active; then
             return 0
@@ -144,6 +206,8 @@ is_warper_active() {
     return 1
 }
 
+# ===== Валидация =====
+
 escape_regex() {
     printf '%s' "$1" | sed 's/[.[\*^$()+?{|\\]/\\&/g'
 }
@@ -187,6 +251,11 @@ validate_mtu() {
     return 0
 }
 
+validate_port_simple() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
+}
+
 calculate_tun_ip() {
     local subnet="$1"
     local base="${subnet%.*}"
@@ -206,6 +275,8 @@ normalize_include_ips() {
     tmp=$(mktemp)
     awk 'NF && !seen[$0]++' "$file" > "$tmp" && mv "$tmp" "$file"
 }
+
+# ===== Работа с доменами =====
 
 extract_user_domains() {
     local input="$1"
@@ -296,6 +367,8 @@ insert_user_domain() {
     rebuild_master_file "$tmp" "$MASTER_FILE"
     rm -f "$tmp"
 }
+
+# ===== Sing-box параметры =====
 
 get_log_level() {
     if [ -f "$SINGBOX_CONF" ] && command -v jq >/dev/null 2>&1; then
@@ -402,6 +475,8 @@ set_mtu() {
     return 0
 }
 
+# ===== Версионирование =====
+
 version_gt() {
     [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" != "$1" ]
 }
@@ -410,7 +485,13 @@ get_remote_version() {
     local now
     now=$(date +%s)
     if (( now - REMOTE_VER_TIME > 300 )) || [ -z "$REMOTE_VER_CACHE" ]; then
-        REMOTE_VER_CACHE=$(curl -s --max-time 2 "$REPO_URL/version?t=$now" | tr -d '\r\n')
+        local fetched
+        fetched=$(curl -4 -sf --max-time 2 "$REPO_URL/version" | tr -d '\r\n')
+        if [[ "$fetched" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            REMOTE_VER_CACHE="$fetched"
+        else
+            REMOTE_VER_CACHE="$LOCAL_VER"
+        fi
         REMOTE_VER_TIME=$now
     fi
     echo "${REMOTE_VER_CACHE:-$LOCAL_VER}"
@@ -446,6 +527,8 @@ filter_valid_domains_file() {
     sort -u -o "$output" "$output"
 }
 
+# ===== Синхронизация доменов =====
+
 sync_domains() {
     local tmp
     tmp=$(mktemp /tmp/warper_sync.XXXXXX)
@@ -470,6 +553,8 @@ domains_in_sync() {
     return "$result"
 }
 
+# ===== Сетевые проверки =====
+
 subnet_conflicts() {
     local subnet="$1"
     local line iface route_net
@@ -490,7 +575,11 @@ subnet_conflicts() {
         local ids
         ids=$(docker network ls -q 2>/dev/null || true)
         if [ -n "$ids" ]; then
-            docker network inspect $ids 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+            local -a id_array
+            mapfile -t id_array <<< "$ids"
+            if [ ${#id_array[@]} -gt 0 ]; then
+                docker network inspect "${id_array[@]}" 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+            fi
         fi
     fi
     return 1
@@ -510,6 +599,19 @@ ensure_singbox_running() {
     return 0
 }
 
+restart_singbox_full() {
+    systemctl stop sing-box >/dev/null 2>&1 || true
+    sleep 1
+    systemctl start sing-box
+    if ! ensure_singbox_running; then
+        return 1
+    fi
+    ensure_iptables_rule FORWARD -o singbox-tun
+    ensure_iptables_rule FORWARD -i singbox-tun
+    systemctl restart kresd@1 >/dev/null 2>&1 || true
+    return 0
+}
+
 ensure_iptables_rule() {
     local chain="$1" iface_flag="$2" iface_name="$3"
     iptables -C "$chain" "$iface_flag" "$iface_name" -j ACCEPT 2>/dev/null || \
@@ -522,26 +624,22 @@ remove_iptables_rule() {
         iptables -D "$chain" "$iface_flag" "$iface_name" -j ACCEPT
 }
 
-# Функция получения WARP-ключей с приоритетом системного файла
+# ===== WARP-ключи =====
+
 get_warp_credentials() {
     local address="" private_key=""
 
-    # Приоритет 1: ВСЕГДА проверяем /etc/wireguard/warp.conf (системный файл от AntiZapret)
     if [ -f "$WARP_SYSTEM_CONF" ]; then
         private_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         address=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$private_key" ] && [ -n "$address" ]; then
-            # Добавляем /32 если нет маски
-            if [[ ! "$address" =~ / ]]; then
-                address="${address}/32"
-            fi
+            [[ ! "$address" =~ / ]] && address="${address}/32"
             echo "$address"
             echo "$private_key"
             return 0
         fi
     fi
 
-    # Приоритет 2: Существующий конфиг sing-box
     if command -v jq >/dev/null 2>&1 && [ -f "$SINGBOX_CONF" ]; then
         address=$(jq -r '.endpoints[] | select(.tag=="warp") | .address[0] // empty' "$SINGBOX_CONF" 2>/dev/null || true)
         private_key=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
@@ -552,7 +650,6 @@ get_warp_credentials() {
         fi
     fi
 
-    # Приоритет 3: Fallback на grep для sing-box config
     if [ -f "$SINGBOX_CONF" ]; then
         address=$(grep -o '"address": \[ "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
         private_key=$(grep -o '"private_key": "[^"]*"' "$SINGBOX_CONF" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
@@ -563,7 +660,6 @@ get_warp_credentials() {
         fi
     fi
 
-    # Приоритет 4: Профиль WARPER wgcf
     local wgcf_profile="$WGCF_DIR/wgcf-profile.conf"
     if [ -f "$wgcf_profile" ]; then
         address=$(grep -m 1 '^Address = ' "$wgcf_profile" | awk '{print $3}' | tr -d '\r\n')
@@ -578,13 +674,21 @@ get_warp_credentials() {
     return 1
 }
 
-# Проверка и синхронизация ключей с системным файлом
 check_and_sync_warp_keys() {
-    # Сначала проверяем, нужно ли запустить down.sh
     if needs_down_sh; then
-        show_down_sh_warning
-        read -r -p "Нажмите Enter для продолжения..."
+        if is_interactive; then
+            show_down_sh_warning
+            read -r -p "Нажмите Enter для продолжения..."
+        else
+            echo "WARNING: Active WARP rules detected. Run: /root/antizapret/down.sh && /root/antizapret/up.sh" >&2
+        fi
         return 1
+    fi
+
+    # В slave-режиме синхронизация WARP-ключей не нужна
+    load_slave_config
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        return 0
     fi
 
     if [ ! -f "$WARP_SYSTEM_CONF" ]; then
@@ -599,18 +703,13 @@ check_and_sync_warp_keys() {
         return 0
     fi
 
-    # Добавляем /32 если нет маски
-    if [[ ! "$sys_addr" =~ / ]]; then
-        sys_addr="${sys_addr}/32"
-    fi
+    [[ ! "$sys_addr" =~ / ]] && sys_addr="${sys_addr}/32"
 
-    # Получаем текущие ключи из sing-box конфига
     if [ -f "$SINGBOX_CONF" ] && command -v jq >/dev/null 2>&1; then
         current_key=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
         current_addr=$(jq -r '.endpoints[] | select(.tag=="warp") | .address[0] // empty' "$SINGBOX_CONF" 2>/dev/null || true)
     fi
 
-    # Если ключи отличаются - обновляем конфиг
     if [ "$sys_key" != "$current_key" ] || [ "$sys_addr" != "$current_addr" ]; then
         echo -e "${YELLOW}Обнаружено изменение WARP-ключей в системном файле. Синхронизация...${NC}"
         if [ -f "$SINGBOX_TEMPLATE" ]; then
@@ -620,7 +719,6 @@ check_and_sync_warp_keys() {
                     ensure_iptables_rule FORWARD -o singbox-tun
                     ensure_iptables_rule FORWARD -i singbox-tun
                 fi
-                # Перезапускаем kresd@1 для применения новых ключей
                 systemctl restart kresd@1 >/dev/null 2>&1 || true
                 echo -e "${GREEN}Ключи WARP синхронизированы.${NC}"
             fi
@@ -628,8 +726,19 @@ check_and_sync_warp_keys() {
     fi
 }
 
+# ===== Конфигурация sing-box =====
+
 rebuild_config() {
     local template="$1"
+
+    # Проверяем режим — если slave, используем другой шаблон
+    load_slave_config
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        rebuild_config_slave
+        return $?
+    fi
+
+    # Оригинальная логика для WARP
     local creds
     creds=$(get_warp_credentials) || {
         echo -e "${RED}Ошибка: Не удалось извлечь WARP-ключи!${NC}"
@@ -646,9 +755,44 @@ rebuild_config() {
         "$template" > "$SINGBOX_CONF"
     chmod 600 "$SINGBOX_CONF"
     if ! validate_singbox_config; then return 1; fi
-    echo -e "${GREEN}Конфигурация sing-box успешно обновлена.${NC}"
+    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+        echo -e "${GREEN}Конфигурация sing-box (WARP) успешно обновлена.${NC}"
+    else
+        echo -e "${GREEN}Конфигурация sing-box успешно обновлена.${NC}"
+    fi
     return 0
 }
+
+rebuild_config_slave() {
+    if [ -z "$SLAVE_SERVER" ] || [ -z "$SLAVE_PASSWORD" ]; then
+        echo -e "${RED}Не настроены параметры slave-сервера!${NC}"
+        return 1
+    fi
+
+    if [ ! -f "$SLAVE_TEMPLATE" ]; then
+        download_file_safe "$REPO_URL/templates/config-slave-master.json.template" "$SLAVE_TEMPLATE" "шаблон slave-master" || return 1
+    fi
+
+    sed \
+        -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__TUN_IP__|$TUN_IP|g" \
+        -e "s|__SLAVE_SERVER__|$SLAVE_SERVER|g" \
+        -e "s|__SLAVE_PORT__|$SLAVE_PORT|g" \
+        -e "s|__SLAVE_PASSWORD__|$SLAVE_PASSWORD|g" \
+        "$SLAVE_TEMPLATE" > "$SINGBOX_CONF"
+
+    chmod 600 "$SINGBOX_CONF"
+
+    if ! validate_singbox_config; then
+        echo -e "${RED}Ошибка валидации конфига slave!${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Конфигурация sing-box (slave) успешно обновлена.${NC}"
+    return 0
+}
+
+# ===== Kresd =====
 
 backup_kresd() {
     if [ -f "$KRESD_CONF" ] && [ ! -f "$KRESD_BACKUP" ]; then
@@ -674,109 +818,24 @@ file_mode_is_600() {
     [ "$(stat -c %a "$file" 2>/dev/null || true)" = "600" ]
 }
 
-status_cmd() {
-    load_config
-    local sb_run sb_en kr_stat dom_stat az_stat ap_stat subnet_conflict log_level mtu az_warp_stat warp_rules_stat
-    if systemctl is-active --quiet sing-box; then sb_run="running"; else sb_run="stopped"; fi
-    if systemctl is-enabled --quiet sing-box 2>/dev/null; then sb_en="enabled"; else sb_en="disabled"; fi
-    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then kr_stat="patched"; else kr_stat="not patched"; fi
-    if domains_in_sync; then dom_stat="synced"; else dom_stat="not synced"; fi
-    if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then az_stat="present"; else az_stat="missing"; fi
-    if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then ap_stat="enabled"; else ap_stat="disabled"; fi
-    if subnet_conflicts "$SUBNET"; then subnet_conflict="yes"; else subnet_conflict="no"; fi
-    if check_antizapret_warp; then az_warp_stat="ENABLED (conflict!)"; else az_warp_stat="disabled"; fi
-    if needs_down_sh; then warp_rules_stat="active (run down.sh + up.sh!)"; else warp_rules_stat="ok"; fi
-    log_level=$(get_log_level)
-    mtu=$(get_mtu)
-    echo "Version: $LOCAL_VER"
-    echo "ANTIZAPRET_WARP: $az_warp_stat"
-    echo "VPN_WARP: $(check_vpn_warp && echo "enabled" || echo "disabled")"
-    echo "WARP rules from up.sh: $warp_rules_stat"
-    echo "sing-box: $sb_run"
-    echo "sing-box autostart: $sb_en"
-    echo "sing-box log level: $log_level"
-    echo "sing-box MTU: $mtu"
-    echo "kresd patch: $kr_stat"
-    echo "domains: $dom_stat"
-    echo "subnet in AntiZapret: $az_stat"
-    echo "autopatch: $ap_stat"
-    echo "subnet conflict: $subnet_conflict"
-    echo "warp keys source: $([ -f "$WARP_SYSTEM_CONF" ] && echo "$WARP_SYSTEM_CONF" || echo "local")"
-}
-
-prompt_apply() {
-    if check_antizapret_warp; then
-        echo -e "\n${RED}⚠️  ANTIZAPRET_WARP=y — изменения НЕ будут применены к DNS.${NC}"
-        read -r -p "Нажмите Enter для продолжения..."
-        return
-    fi
-
-    # Проверяем нужно ли запустить down.sh
-    if needs_down_sh; then
-        show_down_sh_warning
-        read -r -p "Нажмите Enter для продолжения..."
-        return
-    fi
-
-    # Проверяем активен ли WARPER
-    if ! is_warper_active; then
-        echo -e "\n${YELLOW}WARPER выключен. Домены сохранены, но патч DNS не применяется.${NC}"
-        echo -e "${CYAN}Синхронизация списка доменов...${NC}"
-        sync_domains
-        echo -e "${GREEN}Домены синхронизированы.${NC}"
-        read -r -p "Нажмите Enter для продолжения..."
-        return
-    fi
-
-    echo -e "\n${YELLOW}Применить изменения и перезапустить DNS?${NC}"
-    read -r -e -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
-    if [[ -z "$apply_choice" || "$apply_choice" == "Y" || "$apply_choice" == "y" ]]; then
-        if patch_kresd > /dev/null 2>&1; then
-            echo -e "${GREEN}Изменения успешно применены!${NC}"
-        else
-            echo -e "${RED}Не удалось применить изменения к DNS.${NC}"
-        fi
-    else
-        echo -e "${YELLOW}Домены сохранены в файл, но НЕ применены к DNS.${NC}"
-        sync_domains
-    fi
-    read -r -p "Нажмите Enter для продолжения..."
-}
-
-prompt_confirm() {
-    read -r -e -p "Вы уверены? [y/N] (по умолчанию N): " conf_choice
-    if [[ "$conf_choice" == "y" || "$conf_choice" == "Y" ]]; then return 0; else return 1; fi
-}
-
-show_logs() {
-    echo -e "\n${CYAN}==========================================${NC}"
-    echo -e "${YELLOW}Чтение логов sing-box...${NC}"
-    echo -e "${GREEN}Для выхода нажмите Ctrl+C${NC}"
-    echo -e "${CYAN}==========================================${NC}\n"
-    trap 'echo -e "\n${CYAN}Возврат в меню...${NC}"' SIGINT
-    journalctl -u sing-box -n 20 -f
-    trap - SIGINT
-}
-
 patch_kresd() {
     if check_antizapret_warp; then
-        echo -e "${RED}ANTIZAPRET_WARP=y — патч kresd.conf не может быть применён.${NC}"
+        echo -e "${RED}ANTIZAPRET_WARP=y — патч kresd.conf не может быть применён.${NC}" >&2
         return 1
     fi
 
-    # Проверяем нужно ли запустить down.sh
     if needs_down_sh; then
-        echo -e "${RED}Активны правила от up.sh — сначала выполните /root/antizapret/down.sh${NC}"
+        echo -e "${RED}Активны правила от up.sh — сначала выполните /root/antizapret/down.sh${NC}" >&2
         return 1
     fi
 
     sync_domains
     if [ ! -f "$KRESD_CONF" ]; then
-        echo -e "${RED}Файл $KRESD_CONF не найден.${NC}"
+        echo -e "${RED}Файл $KRESD_CONF не найден.${NC}" >&2
         return 1
     fi
     backup_kresd || {
-        echo -e "${RED}Не удалось создать backup $KRESD_CONF.${NC}"
+        echo -e "${RED}Не удалось создать backup $KRESD_CONF.${NC}" >&2
         return 1
     }
     local clean_tmp tmpfile
@@ -818,20 +877,20 @@ patch_kresd() {
     if [ "$awk_rc" -ne 0 ]; then
         rm -f "$tmpfile"
         if [ "$awk_rc" -eq 42 ]; then
-            echo -e "${RED}Не удалось найти точку вставки в kresd@1.${NC}"
+            echo -e "${RED}Не удалось найти точку вставки в kresd@1.${NC}" >&2
         else
-            echo -e "${RED}Ошибка при патчинге $KRESD_CONF.${NC}"
+            echo -e "${RED}Ошибка при патчинге $KRESD_CONF.${NC}" >&2
         fi
         return 1
     fi
     if ! mv "$tmpfile" "$KRESD_CONF"; then
         rm -f "$tmpfile"
-        echo -e "${RED}Не удалось записать $KRESD_CONF.${NC}"
+        echo -e "${RED}Не удалось записать $KRESD_CONF.${NC}" >&2
         return 1
     fi
     chmod 644 "$KRESD_CONF"
     if ! systemctl restart kresd@1 kresd@2; then
-        echo -e "${RED}Не удалось перезапустить kresd.${NC}"
+        echo -e "${RED}Не удалось перезапустить kresd.${NC}" >&2
         return 1
     fi
     return 0
@@ -850,8 +909,47 @@ unpatch_kresd() {
     return 0
 }
 
+# ===== Статус и диагностика =====
+
+status_cmd() {
+    load_config
+    load_slave_config
+    local sb_run sb_en kr_stat dom_stat az_stat ap_stat subnet_conflict log_level mtu az_warp_stat warp_rules_stat
+    if systemctl is-active --quiet sing-box; then sb_run="running"; else sb_run="stopped"; fi
+    if systemctl is-enabled --quiet sing-box 2>/dev/null; then sb_en="enabled"; else sb_en="disabled"; fi
+    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then kr_stat="patched"; else kr_stat="not patched"; fi
+    if domains_in_sync; then dom_stat="synced"; else dom_stat="not synced"; fi
+    if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then az_stat="present"; else az_stat="missing"; fi
+    if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then ap_stat="enabled"; else ap_stat="disabled"; fi
+    if subnet_conflicts "$SUBNET"; then subnet_conflict="yes"; else subnet_conflict="no"; fi
+    if check_antizapret_warp; then az_warp_stat="ENABLED (conflict!)"; else az_warp_stat="disabled"; fi
+    if needs_down_sh; then warp_rules_stat="active (run down.sh + up.sh!)"; else warp_rules_stat="ok"; fi
+    log_level=$(get_log_level)
+    mtu=$(get_mtu)
+    echo "Version: $LOCAL_VER"
+    echo "ANTIZAPRET_WARP: $az_warp_stat"
+    echo "VPN_WARP: $(check_vpn_warp && echo "enabled" || echo "disabled")"
+    echo "WARP rules from up.sh: $warp_rules_stat"
+    echo "outbound mode: $CURRENT_OUTBOUND_MODE"
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        echo "slave server: $SLAVE_SERVER:$SLAVE_PORT"
+        echo "slave key: $SLAVE_PASSWORD"
+    fi
+    echo "sing-box: $sb_run"
+    echo "sing-box autostart: $sb_en"
+    echo "sing-box log level: $log_level"
+    echo "sing-box MTU: $mtu"
+    echo "kresd patch: $kr_stat"
+    echo "domains: $dom_stat"
+    echo "subnet in AntiZapret: $az_stat"
+    echo "autopatch: $ap_stat"
+    echo "subnet conflict: $subnet_conflict"
+    echo "warp keys source: $([ -f "$WARP_SYSTEM_CONF" ] && echo "$WARP_SYSTEM_CONF" || echo "local")"
+}
+
 doctor() {
     load_config
+    load_slave_config
     echo -e "${CYAN}==========================================${NC}"
     echo -e "        🩺 ${YELLOW}WARPER DOCTOR${NC}"
     echo -e "${CYAN}==========================================${NC}"
@@ -871,13 +969,18 @@ doctor() {
     else
         echo -e " ${GREEN}✔${NC} ANTIZAPRET_WARP=n"
     fi
-
-    # Проверка на активные правила от up.sh
     if needs_down_sh; then
-        echo -e " ${RED}✘${NC} Правила от up.sh неактивны (сейчас: активны — выполните /root/antizapret/down.sh!)"
+        echo -e " ${RED}✘${NC} Правила от up.sh неактивны (сейчас: активны — выполните down.sh!)"
         failed=1
     else
         echo -e " ${GREEN}✔${NC} Правила от up.sh неактивны"
+    fi
+
+    # Режим маршрутизации
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        echo -e " ${CYAN}!${NC} Режим: Slave ($SLAVE_SERVER:$SLAVE_PORT)"
+    else
+        echo -e " ${GREEN}✔${NC} Режим: WARP (локальный)"
     fi
 
     check_item "AntiZapret установлен" "[ -x /root/antizapret/doall.sh ]"
@@ -903,9 +1006,10 @@ doctor() {
     if [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
         check_item "Права wgcf-profile.conf ограничены" "file_mode_is_600 '$WGCF_DIR/wgcf-profile.conf'"
     fi
-    # Проверка источника WARP-ключей
     if [ -f "$WARP_SYSTEM_CONF" ]; then
         echo -e " ${GREEN}✔${NC} Используются ключи из $WARP_SYSTEM_CONF"
+    elif [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        echo -e " ${CYAN}!${NC} Режим Slave — WARP-ключи не используются"
     else
         echo -e " ${YELLOW}!${NC} Системный файл $WARP_SYSTEM_CONF не найден, используются локальные ключи"
     fi
@@ -925,23 +1029,69 @@ doctor() {
     fi
 }
 
+# ===== Управление =====
+
+prompt_apply() {
+    if check_antizapret_warp; then
+        echo -e "\n${RED}⚠️  ANTIZAPRET_WARP=y — изменения НЕ будут применены к DNS.${NC}"
+        read -r -p "Нажмите Enter для продолжения..."
+        return
+    fi
+    if needs_down_sh; then
+        show_down_sh_warning
+        read -r -p "Нажмите Enter для продолжения..."
+        return
+    fi
+    if ! is_warper_active; then
+        echo -e "\n${YELLOW}WARPER выключен. Домены сохранены, но патч DNS не применяется.${NC}"
+        echo -e "${CYAN}Синхронизация списка доменов...${NC}"
+        sync_domains
+        echo -e "${GREEN}Домены синхронизированы.${NC}"
+        read -r -p "Нажмите Enter для продолжения..."
+        return
+    fi
+    echo -e "\n${YELLOW}Применить изменения и перезапустить DNS?${NC}"
+    read -r -e -p "Выбор [Y/n] (по умолчанию Y): " apply_choice
+    if [[ -z "$apply_choice" || "$apply_choice" == "Y" || "$apply_choice" == "y" ]]; then
+        if patch_kresd > /dev/null 2>&1; then
+            echo -e "${GREEN}Изменения успешно применены!${NC}"
+        else
+            echo -e "${RED}Не удалось применить изменения к DNS.${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Домены сохранены в файл, но НЕ применены к DNS.${NC}"
+        sync_domains
+    fi
+    read -r -p "Нажмите Enter для продолжения..."
+}
+
+prompt_confirm() {
+    read -r -e -p "Вы уверены? [y/N] (по умолчанию N): " conf_choice
+    if [[ "$conf_choice" == "y" || "$conf_choice" == "Y" ]]; then return 0; else return 1; fi
+}
+
+show_logs() {
+    echo -e "\n${CYAN}==========================================${NC}"
+    echo -e "${YELLOW}Чтение логов sing-box...${NC}"
+    echo -e "${GREEN}Для выхода нажмите Ctrl+C${NC}"
+    echo -e "${CYAN}==========================================${NC}\n"
+    trap 'echo -e "\n${CYAN}Возврат в меню...${NC}"' SIGINT
+    journalctl -u sing-box -n 20 -f
+    trap - SIGINT
+}
+
 toggle_warper() {
     if check_antizapret_warp; then
         show_antizapret_warp_warning
         read -r -p "Нажмите Enter для продолжения..."
         return
     fi
-
-    # Проверяем нужно ли запустить down.sh
     if needs_down_sh; then
         show_down_sh_warning
         read -r -p "Нажмите Enter для продолжения..."
         return
     fi
-    
-    # Синхронизируем ключи перед включением
     check_and_sync_warp_keys || return
-    
     local action="ВКЛЮЧИТЬ"
     if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
         action="ВЫКЛЮЧИТЬ"
@@ -980,6 +1130,8 @@ toggle_warper() {
         sleep 2
     fi
 }
+
+# ===== Списки доменов =====
 
 enable_disable_list() {
     local action="$1" list_name="$2"
@@ -1047,24 +1199,214 @@ update_list_blocks() {
     done
 }
 
+# ===== Переключение режима маршрутизации =====
+
+switch_outbound_mode() {
+    load_slave_config
+
+    echo -e "\n${CYAN}================================================${NC}"
+    echo -e "       ${YELLOW}Режим маршрутизации трафика${NC}"
+    echo -e "${CYAN}================================================${NC}"
+    echo -e ""
+
+    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+        echo -e " Текущий режим: ${GREEN}WARP (локальный)${NC}"
+    else
+        echo -e " Текущий режим: ${CYAN}Slave (донор: ${SLAVE_SERVER}:${SLAVE_PORT})${NC}"
+    fi
+
+    echo -e ""
+    echo -e " ${GREEN}1.${NC} WARP — трафик идёт через локальный Cloudflare WARP"
+    echo -e " ${CYAN}2.${NC} Slave — трафик идёт через внешний донор-сервер"
+    echo -e " ${CYAN}0.${NC} Назад"
+    echo -e "${CYAN}================================================${NC}"
+
+    read -r -p "Выбор [0-2]: " mode_choice
+
+    case "${mode_choice:-}" in
+        1)
+            if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+                echo -e "${YELLOW}Уже в режиме WARP.${NC}"
+                sleep 1
+                return
+            fi
+
+            echo -e "${YELLOW}Переключение на WARP...${NC}"
+
+            if [ ! -f "$SINGBOX_TEMPLATE" ]; then
+                download_file_safe "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "config.json.template" || {
+                    echo -e "${RED}Не удалось загрузить шаблон WARP-конфига.${NC}"
+                    sleep 2
+                    return
+                }
+            fi
+
+            CURRENT_OUTBOUND_MODE="warp"
+            save_slave_config
+
+            # Показываем источник WARP-ключей
+            local warp_creds_info
+            if [ -f "$WARP_SYSTEM_CONF" ]; then
+                local sys_pk
+                sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+                if [ -n "$sys_pk" ]; then
+                    warp_creds_info="$WARP_SYSTEM_CONF"
+                fi
+            fi
+            if [ -z "$warp_creds_info" ] && [ -f "$SINGBOX_CONF" ] && command -v jq >/dev/null 2>&1; then
+                local existing_pk
+                existing_pk=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
+                if [ -n "$existing_pk" ] && [ "$existing_pk" != "__WARP_PRIVATE_KEY__" ]; then
+                    warp_creds_info="существующий конфиг sing-box"
+                fi
+            fi
+            if [ -z "$warp_creds_info" ] && [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
+                warp_creds_info="$WGCF_DIR/wgcf-profile.conf"
+            fi
+            if [ -n "$warp_creds_info" ]; then
+                echo -e " - ${GREEN}Источник WARP-ключей: ${warp_creds_info}${NC}"
+            else
+                echo -e " - ${YELLOW}WARP-ключи будут получены при пересборке конфига...${NC}"
+            fi
+
+            if rebuild_config "$SINGBOX_TEMPLATE"; then
+                if restart_singbox_full; then
+                    echo -e "${GREEN}Режим WARP активирован!${NC}"
+                else
+                    echo -e "${RED}Не удалось корректно перезапустить sing-box.${NC}"
+                fi
+            else
+                echo -e "${RED}Ошибка пересборки конфига!${NC}"
+            fi
+            sleep 2
+            ;;
+        2)
+            echo -e "\n${CYAN}Настройка подключения к донор-серверу${NC}"
+            echo -e "${YELLOW}На донор-сервере должен быть установлен warperslave.${NC}"
+            echo -e ""
+
+            local new_server new_port new_password
+            local use_saved=false
+
+            # Проверяем есть ли сохранённые данные от предыдущего подключения
+            if [ -n "$SLAVE_SERVER" ] && [ -n "$SLAVE_PASSWORD" ]; then
+                echo -e "${GREEN}Найдено сохранённое подключение:${NC}"
+                echo -e "  ${CYAN}Сервер:${NC} ${YELLOW}${SLAVE_SERVER}${NC}"
+                echo -e "  ${CYAN}Порт:${NC}   ${YELLOW}${SLAVE_PORT}${NC}"
+                echo -e "  ${CYAN}Ключ:${NC}   ${YELLOW}${SLAVE_PASSWORD:0:8}...${NC}"
+                echo -e ""
+                echo -e " ${GREEN}1.${NC} Использовать сохранённое подключение"
+                echo -e " ${CYAN}2.${NC} Ввести новый сервер"
+                echo -e " ${CYAN}0.${NC} Отмена"
+
+                while true; do
+                    read -r -p "Выбор [0-2]: " saved_choice
+                    case "${saved_choice:-}" in
+                        1)
+                            use_saved=true
+                            new_server="$SLAVE_SERVER"
+                            new_port="$SLAVE_PORT"
+                            new_password="$SLAVE_PASSWORD"
+                            break
+                            ;;
+                        2)
+                            use_saved=false
+                            break
+                            ;;
+                        0)
+                            return
+                            ;;
+                        *)
+                            echo -e "${RED}Введите 0, 1 или 2.${NC}"
+                            ;;
+                    esac
+                done
+            fi
+
+            if [ "$use_saved" = false ]; then
+                # IP/домен сервера
+                while true; do
+                    read -r -p "IP или домен slave-сервера (Enter для отмены): " new_server
+                    if [ -z "$new_server" ]; then
+                        echo -e "${YELLOW}Отмена.${NC}"; return
+                    fi
+                    if [[ "$new_server" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
+                        break
+                    fi
+                    echo -e "${RED}Некорректный адрес!${NC}"
+                done
+
+                # Порт
+                local default_sp="${SLAVE_PORT:-8444}"
+                read -r -p "Порт [по умолчанию $default_sp]: " new_port
+                if [ -z "$new_port" ]; then
+                    new_port="$default_sp"
+                fi
+                if ! validate_port_simple "$new_port"; then
+                    echo -e "${RED}Некорректный порт!${NC}"
+                    sleep 1
+                    return
+                fi
+
+                # Ключ
+                while true; do
+                    read -r -p "Ключ Shadowsocks: " new_password
+                    if [ -z "$new_password" ]; then
+                        echo -e "${RED}Ключ не может быть пустым!${NC}"
+                        continue
+                    fi
+                    break
+                done
+            fi
+
+            SLAVE_SERVER="$new_server"
+            SLAVE_PORT="$new_port"
+            SLAVE_PASSWORD="$new_password"
+            CURRENT_OUTBOUND_MODE="slave"
+            save_slave_config
+
+            echo -e "${YELLOW}Создание конфигурации...${NC}"
+            if rebuild_config_slave; then
+                if restart_singbox_full; then
+                    echo -e "${GREEN}Режим Slave активирован!${NC}"
+                    echo -e "${CYAN}Трафик идёт через: $SLAVE_SERVER:$SLAVE_PORT${NC}"
+                else
+                    echo -e "${RED}Не удалось корректно перезапустить sing-box.${NC}"
+                fi
+            else
+                echo -e "${RED}Ошибка! Возврат к режиму WARP.${NC}"
+                CURRENT_OUTBOUND_MODE="warp"
+                save_slave_config
+                if [ -f "$SINGBOX_TEMPLATE" ]; then
+                    rebuild_config "$SINGBOX_TEMPLATE" >/dev/null 2>&1 || true
+                    restart_singbox_full >/dev/null 2>&1 || true
+                fi
+            fi
+            sleep 2
+            ;;
+        0) return ;;
+        *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
+    esac
+}
+
+# ===== Обновление =====
+
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     mkdir -p "$DOWNLOAD_DIR"
     download_file_safe "$REPO_URL/warper.sh" "$WARPER_DIR/warper.sh" "warper.sh" || return 1
     download_file_safe "$REPO_URL/uninstaller.sh" "$WARPER_DIR/uninstaller.sh" "uninstaller.sh" || return 1
-    download_file_safe "$REPO_URL/sing-box.service" "/etc/systemd/system/sing-box.service" "sing-box.service" || return 1
-    download_file_safe "$REPO_URL/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "warper-autopatch.service" || return 1
+    download_file_safe "$REPO_URL/templates/sing-box.service" "/etc/systemd/system/sing-box.service" "sing-box.service" || return 1
+    download_file_safe "$REPO_URL/templates/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "warper-autopatch.service" || return 1
     download_file_safe "$REPO_URL/version" "$WARPER_DIR/version" "version" || return 1
-    download_file_safe "$REPO_URL/config.json.template" "$SINGBOX_TEMPLATE" "config.json.template" || return 1
+    download_file_safe "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "config.json.template" || return 1
+    download_file_safe "$REPO_URL/templates/config-slave-master.json.template" "$SLAVE_TEMPLATE" "config-slave-master.json.template" || true
     download_file_safe "$REPO_URL/download/gemini.txt" "$DOWNLOAD_DIR/gemini.txt" "gemini.txt" || return 1
     download_file_safe "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "chatgpt.txt" || return 1
     chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
     systemctl daemon-reload
     systemctl enable warper-autopatch >/dev/null 2>&1
-    
-    # Проверяем и синхронизируем ключи WARP
     check_and_sync_warp_keys
-    
     if [ -f "$SINGBOX_TEMPLATE" ] && [ -s "$SINGBOX_TEMPLATE" ]; then
         echo -e "${CYAN}Обновление конфигурации sing-box...${NC}"
         if rebuild_config "$SINGBOX_TEMPLATE"; then
@@ -1072,7 +1414,6 @@ update_warper() {
             if ensure_singbox_running; then
                 echo -e "${GREEN}Служба sing-box перезапущена.${NC}"
             fi
-            # Перезапускаем kresd@1 после обновления конфига
             systemctl restart kresd@1 >/dev/null 2>&1 || true
         fi
     fi
@@ -1082,27 +1423,37 @@ update_warper() {
     read -r -e -p "Нажмите Enter для перезапуска WARPER..."
     exec /usr/local/bin/warper
 }
+
+# ===== Меню настроек =====
+
 settings_menu() {
     while true; do
         clear
+        load_slave_config
         echo -e "${CYAN}==========================================${NC}"
         echo -e "          ⚙️  ${YELLOW}НАСТРОЙКИ WARPER${NC} ⚙️"
         echo -e "${CYAN}==========================================${NC}"
-        local AP_STAT GEM_STAT GPT_STAT LOG_LEVEL MTU
+        local AP_STAT GEM_STAT GPT_STAT LOG_LEVEL MTU MODE_STAT
         LOG_LEVEL=$(get_log_level)
         MTU=$(get_mtu)
         if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}ВКЛ${NC}"; else AP_STAT="${RED}ВЫКЛ${NC}"; fi
         if has_list_block "gemini"; then GEM_STAT="${GREEN}ВКЛ${NC}"; else GEM_STAT="${RED}ВЫКЛ${NC}"; fi
         if has_list_block "chatgpt"; then GPT_STAT="${GREEN}ВКЛ${NC}"; else GPT_STAT="${RED}ВЫКЛ${NC}"; fi
+        if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+            MODE_STAT="${CYAN}Slave ($SLAVE_SERVER:$SLAVE_PORT)${NC}"
+        else
+            MODE_STAT="${GREEN}WARP (локальный)${NC}"
+        fi
         echo -e " ${CYAN}1.${NC} Автопатч DNS при перезагрузке: [$AP_STAT]"
         echo -e " ${CYAN}2.${NC} Интеграция доменов Gemini:     [$GEM_STAT]"
         echo -e " ${CYAN}3.${NC} Интеграция доменов ChatGPT:    [$GPT_STAT]"
         echo -e " ${CYAN}4.${NC} Изменить фейковую подсеть:     [$SUBNET]"
         echo -e " ${CYAN}5.${NC} Изменить log level sing-box:   [$LOG_LEVEL]"
         echo -e " ${CYAN}6.${NC} Изменить MTU sing-box:         [$MTU]"
+        echo -e " ${CYAN}7.${NC} Режим маршрутизации:           [$MODE_STAT]"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
-        read -r -e -p "Выбор [0-6]: " set_choice
+        read -r -e -p "Выбор [0-7]: " set_choice
         case "${set_choice:-}" in
             1)
                 if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then
@@ -1189,11 +1540,14 @@ settings_menu() {
                 read -r -e -p "Введите новый MTU (или пустое для отмены): " new_mtu
                 if [ -n "$new_mtu" ]; then set_mtu "$new_mtu"; sleep 2; fi
                 ;;
+            7) switch_outbound_mode ;;
             0) return ;;
             *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
         esac
     done
 }
+
+# ===== Меню sing-box =====
 
 singbox_menu() {
     while true; do
@@ -1215,7 +1569,6 @@ singbox_menu() {
         case "${sb_choice:-}" in
             1)
                 if prompt_confirm; then
-                    # Проверяем нужно ли запустить down.sh
                     if needs_down_sh; then
                         show_down_sh_warning
                         sleep 2
@@ -1238,70 +1591,53 @@ singbox_menu() {
     done
 }
 
+# ===== Главное меню =====
+
 show_main_menu() {
     clear
+    load_slave_config
     local REMOTE_VER
     REMOTE_VER=$(get_remote_version)
     echo -e "${CYAN}================================================${NC}"
     echo -e "       🚀 ${YELLOW}Панель управления WARPER${NC} 🚀"
     echo -e "${CYAN}================================================${NC}"
-    
-    local VER_STR SB_RUN SB_EN KR_STAT DOM_STAT AZ_STAT AP_STAT UPDATE_AVAILABLE LOG_LEVEL MTU AZ_WARP_STAT WARP_KEYS_SRC
+
+    local VER_STR SB_RUN SB_EN KR_STAT DOM_STAT AZ_STAT AP_STAT UPDATE_AVAILABLE LOG_LEVEL MTU AZ_WARP_STAT WARP_KEYS_SRC MODE_DISPLAY
     UPDATE_AVAILABLE=false
     LOG_LEVEL=$(get_log_level)
     MTU=$(get_mtu)
-    
+
     if version_gt "$REMOTE_VER" "$LOCAL_VER"; then
         VER_STR="${YELLOW}$LOCAL_VER${NC} (📦 Доступно обновление: ${GREEN}$REMOTE_VER${NC})"
         UPDATE_AVAILABLE=true
     else
         VER_STR="${GREEN}$LOCAL_VER${NC} (✅ актуальная)"
     fi
-    
+
     if check_antizapret_warp; then
-        AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ! Warper не будет работать, отключите warper или ANTIZAPRET_WARP)${NC}"
+        AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ!)${NC}"
     else
         AZ_WARP_STAT="${GREEN}✅ OK${NC}"
     fi
-    
-    if systemctl is-active --quiet sing-box; then
-        SB_RUN="${GREEN}🟢 запущен${NC}"
+
+    if systemctl is-active --quiet sing-box; then SB_RUN="${GREEN}🟢 запущен${NC}"; else SB_RUN="${RED}🔴 остановлен${NC}"; fi
+    if systemctl is-enabled --quiet sing-box 2>/dev/null; then SB_EN="${GREEN}включена${NC}"; else SB_EN="${RED}выключена${NC}"; fi
+    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then KR_STAT="${GREEN}✅ пропатчен${NC}"; else KR_STAT="${RED}❌ не пропатчен${NC}"; fi
+    if domains_in_sync; then DOM_STAT="${GREEN}✅ синхронизированы${NC}"; else DOM_STAT="${YELLOW}⚠️  требуется синхронизация${NC}"; fi
+    if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then AZ_STAT="${GREEN}✅ добавлена${NC}"; else AZ_STAT="${RED}❌ отсутствует${NC}"; fi
+    if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then AP_STAT="${GREEN}✅ включён${NC}"; else AP_STAT="${RED}❌ выключен${NC}"; fi
+
+    # Режим маршрутизации
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        MODE_DISPLAY="${CYAN}Slave ($SLAVE_SERVER:$SLAVE_PORT)${NC}"
     else
-        SB_RUN="${RED}🔴 остановлен${NC}"
+        MODE_DISPLAY="${GREEN}WARP (локальный)${NC}"
     fi
-    
-    if systemctl is-enabled --quiet sing-box 2>/dev/null; then
-        SB_EN="${GREEN}включена${NC}"
-    else
-        SB_EN="${RED}выключена${NC}"
-    fi
-    
-    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
-        KR_STAT="${GREEN}✅ пропатчен${NC}"
-    else
-        KR_STAT="${RED}❌ не пропатчен${NC}"
-    fi
-    
-    if domains_in_sync; then
-        DOM_STAT="${GREEN}✅ синхронизированы${NC}"
-    else
-        DOM_STAT="${YELLOW}⚠️  требуется синхронизация${NC}"
-    fi
-    
-    if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then
-        AZ_STAT="${GREEN}✅ добавлена${NC}"
-    else
-        AZ_STAT="${RED}❌ отсутствует${NC}"
-    fi
-    
-    if systemctl is-enabled --quiet warper-autopatch 2>/dev/null; then
-        AP_STAT="${GREEN}✅ включён${NC}"
-    else
-        AP_STAT="${RED}❌ выключен${NC}"
-    fi
-    
-    # Определяем источник WARP-ключей
-    if [ -f "$WARP_SYSTEM_CONF" ]; then
+
+    # Источник WARP-ключей
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        WARP_KEYS_SRC="${CYAN}не используются (Slave)${NC}"
+    elif [ -f "$WARP_SYSTEM_CONF" ]; then
         local sys_key
         sys_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$sys_key" ]; then
@@ -1312,13 +1648,14 @@ show_main_menu() {
     else
         WARP_KEYS_SRC="${YELLOW}локальные ключи${NC}"
     fi
-    
+
     echo -e ""
     echo -e " 📌 ${CYAN}Версия:${NC}        $VER_STR"
     echo -e " 🔗 ${CYAN}AntiZapret:${NC}    $AZ_WARP_STAT"
     echo -e ""
     echo -e " 📡 ${CYAN}Sing-box:${NC}      $SB_RUN | Автозагрузка: $SB_EN"
     echo -e " ⚙️  ${CYAN}Параметры:${NC}    Log: ${CYAN}$LOG_LEVEL${NC} | MTU: ${CYAN}$MTU${NC}"
+    echo -e " 🔀 ${CYAN}Режим:${NC}         $MODE_DISPLAY"
     echo -e ""
     echo -e " 🌐 ${CYAN}DNS (kresd):${NC}   $KR_STAT"
     echo -e " 📁 ${CYAN}Домены:${NC}        $DOM_STAT"
@@ -1327,14 +1664,16 @@ show_main_menu() {
     echo -e " 🔀 ${CYAN}Fake-подсеть:${NC}  ${YELLOW}$SUBNET${NC} — $AZ_STAT"
     echo -e " 🔄 ${CYAN}Автопатч DNS:${NC}  $AP_STAT"
     echo -e " 🔑 ${CYAN}WARP-ключи:${NC}    $WARP_KEYS_SRC"
-    
-    # Показываем предупреждение о WARP-правилах только если есть проблема
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ] && [ -n "$SLAVE_PASSWORD" ]; then
+        echo -e " 🔐 ${CYAN}SS-ключ:${NC}       ${YELLOW}${SLAVE_PASSWORD:0:8}...${NC}"
+    fi
+
     if needs_down_sh; then
         echo -e ""
         echo -e " ${RED}⚠️  ВНИМАНИЕ:${NC}     ${RED}Требуется перезапуск правил AntiZapret!${NC}"
-        echo -e "                  ${YELLOW}Выполн��те: down.sh && up.sh${NC}"
+        echo -e "                  ${YELLOW}Выполните: down.sh && up.sh${NC}"
     fi
-    
+
     echo -e ""
     echo -e "${CYAN}------------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} ➕ Добавить домен в WARP"
@@ -1346,40 +1685,44 @@ show_main_menu() {
     echo -e " ${CYAN}7.${NC} 📄 Показать логи sing-box"
     echo -e " ${CYAN}D.${NC} 🩺 Диагностика (doctor)"
     echo -e " ${CYAN}S.${NC} 📊 Краткий статус"
+    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
+        echo -e " ${CYAN}K.${NC} 🔐 Показать полный SS-ключ"
+    fi
     echo -e "${CYAN}------------------------------------------------${NC}"
-    
+
     if systemctl is-active --quiet sing-box || grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
         echo -e " ${RED}8.${NC} ⏹️  Отключить WARPER"
     else
         echo -e " ${GREEN}8.${NC} ▶️  Включить WARPER"
     fi
-    
-    echo -e " ${CYAN}9.${NC} 🛠️  Настройки (Автопатч, Подсеть, Списки, Log, MTU)"
-    
+
+    echo -e " ${CYAN}9.${NC} 🛠️  Настройки (Автопатч, Подсеть, Списки, Log, MTU, Режим)"
+
     if [ "$UPDATE_AVAILABLE" = true ]; then
         echo -e " ${YELLOW}10.${NC} ⚡ Обновить WARPER до ${GREEN}$REMOTE_VER${NC}"
     else
         echo -e " ${CYAN}10.${NC} 🔄 Проверить обновления списков доменов"
     fi
-    
+
     echo -e "${CYAN}------------------------------------------------${NC}"
     echo -e " ${RED}U.${NC} 🗑️  Удалить WARPER полностью"
     echo -e " ${CYAN}0.${NC} 🚪 Выход"
     echo -e "${CYAN}================================================${NC}"
-    
+
     MENU_UPDATE_AVAILABLE=$UPDATE_AVAILABLE
     MENU_REMOTE_VER=$REMOTE_VER
 }
 
+# ===== CLI-команды =====
+
 cli_add_domain() {
     local raw="$1"
     local domain
-    domain=$(validate_domain "$raw") || { echo -e "${RED}Некорректный домен: $raw${NC}"; return 1; }
+    domain=$(validate_domain "$raw") || { echo -e "${RED}Некорректный домен: $raw${NC}" >&2; return 1; }
     if grep -qxF "$domain" "$MASTER_FILE"; then
         echo -e "${YELLOW}Домен уже есть: $domain${NC}"; return 0
     fi
     insert_user_domain "$domain"
-    # Применяем патч только если WARPER активен
     if is_warper_active; then
         patch_kresd >/dev/null 2>&1 || true
     else
@@ -1392,13 +1735,12 @@ cli_add_domain() {
 cli_remove_domain() {
     local raw="$1"
     local domain
-    domain=$(validate_domain "$raw") || { echo -e "${RED}Некорректный домен: $raw${NC}"; return 1; }
+    domain=$(validate_domain "$raw") || { echo -e "${RED}Некорректный домен: $raw${NC}" >&2; return 1; }
     if grep -qxF "$domain" "$MASTER_FILE"; then
         local escaped
         escaped=$(escape_regex "$domain")
         sed -i "/^${escaped}$/d" "$MASTER_FILE"
         rebuild_master_file
-        # Применяем патч только если WARPER активен
         if is_warper_active; then
             patch_kresd >/dev/null 2>&1 || true
         else
@@ -1416,14 +1758,13 @@ cli_enable_list() {
     case "$list_name" in
         gemini|chatgpt)
             enable_disable_list enable "$list_name" || return 1
-            # Применяем патч только если WARPER активен
             if is_warper_active; then
                 patch_kresd >/dev/null 2>&1 || true
             else
                 sync_domains
             fi
             ;;
-        *) echo -e "${RED}Неизвестный список: $list_name${NC}"; return 1 ;;
+        *) echo -e "${RED}Неизвестный список: $list_name${NC}" >&2; return 1 ;;
     esac
 }
 
@@ -1432,22 +1773,23 @@ cli_disable_list() {
     case "$list_name" in
         gemini|chatgpt)
             enable_disable_list disable "$list_name" || return 1
-            # Применяем патч только если WARPER активен
             if is_warper_active; then
                 patch_kresd >/dev/null 2>&1 || true
             else
                 sync_domains
             fi
             ;;
-        *) echo -e "${RED}Неизвестный список: $list_name${NC}"; return 1 ;;
+        *) echo -e "${RED}Неизвестный список: $list_name${NC}" >&2; return 1 ;;
     esac
 }
 
+# ===== Инициализация =====
+
 load_config
 rebuild_master_file
-
-# Проверяем и синхронизируем ключи WARP при каждом запуске (с проверкой down.sh)
 check_and_sync_warp_keys
+
+# ===== CLI-обработка =====
 
 case "${1:-}" in
     patch) patch_kresd >/dev/null 2>&1; exit $? ;;
@@ -1467,6 +1809,8 @@ case "${1:-}" in
     enable) [ -n "${2:-}" ] || { echo "Использование: warper enable gemini|chatgpt"; exit 1; }; cli_enable_list "$2"; exit $? ;;
     disable) [ -n "${2:-}" ] || { echo "Использование: warper disable gemini|chatgpt"; exit 1; }; cli_disable_list "$2"; exit $? ;;
 esac
+
+# ===== Интерактивное меню =====
 
 MENU_UPDATE_AVAILABLE=false
 MENU_REMOTE_VER="$LOCAL_VER"
@@ -1566,6 +1910,16 @@ while true; do
             ;;
         d|D) doctor; read -r -p "Нажмите Enter..." ;;
         s|S) status_cmd; read -r -p "Нажмите Enter..." ;;
+        k|K)
+            load_slave_config
+            if [ "$CURRENT_OUTBOUND_MODE" = "slave" ] && [ -n "$SLAVE_PASSWORD" ]; then
+                echo -e "\n${CYAN}Полный ключ Shadowsocks:${NC} ${YELLOW}${SLAVE_PASSWORD}${NC}"
+                echo -e "${CYAN}Сервер:${NC} ${YELLOW}${SLAVE_SERVER}:${SLAVE_PORT}${NC}"
+            else
+                echo -e "${YELLOW}Режим Slave не активен.${NC}"
+            fi
+            read -r -p "Нажмите Enter..."
+            ;;
         u|U)
             if [ -f "$WARPER_DIR/uninstaller.sh" ]; then
                 exec bash "$WARPER_DIR/uninstaller.sh"

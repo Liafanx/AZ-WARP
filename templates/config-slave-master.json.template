@@ -1,0 +1,39 @@
+{
+  "log": { "level": "info" },
+  "dns": {
+    "servers": [
+      { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "server-slave" },
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "__SUBNET__" }
+    ],
+    "rules": [
+      { "query_type": ["A"], "server": "fakeip-dns" }
+    ],
+    "independent_cache": true,
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "auto_route": false, "strict_route": false, "stack": "system" }
+  ],
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "server-slave",
+      "server": "__SLAVE_SERVER__",
+      "server_port": __SLAVE_PORT__,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "__SLAVE_PASSWORD__"
+    },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "inbound": "dns-in", "action": "hijack-dns" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "inbound": "tun-in", "outbound": "server-slave" }
+    ],
+    "default_domain_resolver": "real-dns",
+    "auto_detect_interface": true,
+    "final": "direct"
+  }
+}

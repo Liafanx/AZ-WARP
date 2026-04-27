@@ -1,0 +1,42 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "direct-dns",
+        "type": "udp",
+        "server": "1.1.1.1"
+      }
+    ],
+    "strategy": "ipv4_only",
+    "independent_cache": true
+  },
+  "inbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "ss-in",
+      "listen": "0.0.0.0",
+      "listen_port": __SLAVE_PORT__,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "__SLAVE_PASSWORD__"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": "ss-in",
+        "outbound": "direct"
+      }
+    ],
+    "default_domain_resolver": "direct-dns",
+    "final": "direct"
+  }
+}

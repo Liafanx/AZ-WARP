@@ -384,6 +384,65 @@ done
 chmod 600 "$CONF_FILE"
 echo -e "${GREEN}✔ Подсеть $SUBNET установлена.${NC}"
 
+# ===== Выбор режима работы =====
+
+echo -e "\n${YELLOW}⚙️  Выбор режима маршрутизации${NC}"
+echo -e ""
+echo -e " ${GREEN}1.${NC} WARP — трафик доменов идёт через локальный Cloudflare WARP"
+echo -e "    ${CYAN}(стандартный режим, требуются WARP-ключи)${NC}"
+echo -e ""
+echo -e " ${GREEN}2.${NC} Slave — трафик идёт через внешний донор-сервер"
+echo -e "    ${CYAN}(нужен второй сервер с установленным warperslave)${NC}"
+
+INSTALL_MODE="warp"
+while true; do
+    read -r -p "Выбор [1-2] (по умолчанию 1): " install_mode_choice < /dev/tty
+    if [[ -z "$install_mode_choice" || "$install_mode_choice" == "1" ]]; then
+        INSTALL_MODE="warp"
+        break
+    elif [[ "$install_mode_choice" == "2" ]]; then
+        INSTALL_MODE="slave"
+        break
+    else
+        echo -e "${RED}Введите 1 или 2.${NC}"
+    fi
+done
+
+SLAVE_SERVER_INSTALL=""
+SLAVE_PORT_INSTALL="8444"
+SLAVE_PASSWORD_INSTALL=""
+
+if [ "$INSTALL_MODE" = "slave" ]; then
+    echo -e "\n${CYAN}Настройка подключения к донор-серверу${NC}"
+    echo -e "${YELLOW}На донор-сервере должен быть установлен warperslave.${NC}"
+
+    while true; do
+        read -r -p "IP или домен slave-сервера: " SLAVE_SERVER_INSTALL < /dev/tty
+        if [ -z "$SLAVE_SERVER_INSTALL" ]; then
+            echo -e "${RED}Адрес не может быть пустым!${NC}"
+            continue
+        fi
+        if [[ "$SLAVE_SERVER_INSTALL" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
+            break
+        fi
+        echo -e "${RED}Некорректный адрес!${NC}"
+    done
+
+    read -r -p "Порт [по умолчанию 8444]: " SLAVE_PORT_INSTALL < /dev/tty
+    [ -z "$SLAVE_PORT_INSTALL" ] && SLAVE_PORT_INSTALL="8444"
+
+    while true; do
+        read -r -p "Ключ Shadowsocks: " SLAVE_PASSWORD_INSTALL < /dev/tty
+        if [ -z "$SLAVE_PASSWORD_INSTALL" ]; then
+            echo -e "${RED}Ключ не может быть пустым!${NC}"
+            continue
+        fi
+        break
+    done
+
+    echo -e " - ${GREEN}Режим: Slave ($SLAVE_SERVER_INSTALL:$SLAVE_PORT_INSTALL)${NC}"
+fi
+
 echo -e "\n${CYAN}Начинаем процесс установки...${NC}"
 
 echo -e "\n${YELLOW}[1/8] Установка ядра sing-box...${NC}"
@@ -403,74 +462,107 @@ fi
 echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC}"
 cd "$WGCF_DIR" || exit 1
 
-# Поиск существующих ключей
 WARP_ADDRESS=""
 WARP_PRIVATE_KEY=""
 WARP_SOURCE=""
 
-if existing_keys=$(find_existing_warp_keys); then
-    WARP_ADDRESS=$(echo "$existing_keys" | sed -n '1p')
-    WARP_PRIVATE_KEY=$(echo "$existing_keys" | sed -n '2p')
-    WARP_SOURCE=$(echo "$existing_keys" | sed -n '3p')
-    echo -e " - ${GREEN}Найдены существующие WARP-ключи в: $WARP_SOURCE${NC}"
-    echo -e " - ${GREEN}Используем существующий аккаунт WARP.${NC}"
+if [ "$INSTALL_MODE" = "slave" ]; then
+    echo -e " - ${CYAN}Режим Slave — ключи WARP не требуются для установки.${NC}"
+    echo -e " - ${CYAN}Ключи будут получены автоматически при переключении на режим WARP.${NC}"
 else
-    # Ключи не найдены — генерируем новые
-    echo -e " - ${CYAN}Существующие WARP-ключи не найдены. Генерируем новые...${NC}"
-    
-    if [ ! -f "/usr/local/bin/wgcf" ]; then
-        echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
-        WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
-        if ! wget -qO wgcf "$WGCF_URL"; then
-            echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
+    if existing_keys=$(find_existing_warp_keys); then
+        WARP_ADDRESS=$(echo "$existing_keys" | sed -n '1p')
+        WARP_PRIVATE_KEY=$(echo "$existing_keys" | sed -n '2p')
+        WARP_SOURCE=$(echo "$existing_keys" | sed -n '3p')
+        echo -e " - ${GREEN}Найдены существующие WARP-ключи в: $WARP_SOURCE${NC}"
+        echo -e " - ${GREEN}Используем существующий аккаунт WARP.${NC}"
+    else
+        echo -e " - ${CYAN}Существующие WARP-ключи не найдены. Генерируем новые...${NC}"
+
+        if [ ! -f "/usr/local/bin/wgcf" ]; then
+            echo -e " - ${CYAN}Скачивание утилиты wgcf (архитектура: ${SYSTEM_ARCH})...${NC}"
+            WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
+            if ! wget -qO wgcf "$WGCF_URL"; then
+                echo -e " - ${RED}Ошибка загрузки wgcf для архитектуры ${SYSTEM_ARCH}!${NC}"
+                exit 1
+            fi
+            chmod +x wgcf
+            mv wgcf /usr/local/bin/wgcf
+        fi
+
+        echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP (подождите)...${NC}"
+        wgcf register --accept-tos > /dev/null 2>&1
+        wgcf generate > /dev/null 2>&1
+
+        if [ ! -f "wgcf-profile.conf" ]; then
+            echo -e "\n${RED}================================================${NC}"
+            echo -e "${RED}КРИТИЧЕСКАЯ ОШИБКА: Файл wgcf-profile.conf не был создан!${NC}"
+            echo -e "${YELLOW}Скорее всего Cloudflare заблокировал регистрацию с IP-адреса вашего сервера.${NC}"
+            echo -e "${CYAN}Решение:${NC}"
+            echo -e "1. Сгенерируйте файл wgcf-profile.conf на своем домашнем ПК (Windows/Mac/Linux)."
+            echo -e "2. Положите этот файл в директорию ${YELLOW}${WGCF_DIR}/${NC} на сервере."
+            echo -e "3. Запустите скрипт установки заново."
+            echo -e "${RED}================================================${NC}"
             exit 1
         fi
-        chmod +x wgcf
-        mv wgcf /usr/local/bin/wgcf
+
+        chmod 600 "$WGCF_DIR"/wgcf-profile.conf 2>/dev/null || true
+        chmod 600 "$WGCF_DIR"/wgcf-account.toml 2>/dev/null || true
+
+        WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
+        WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
+        WARP_SOURCE="$WGCF_DIR/wgcf-profile.conf"
     fi
 
-    echo -e " - ${CYAN}Регистрация аккаунта Cloudflare WARP (подождите)...${NC}"
-    wgcf register --accept-tos > /dev/null 2>&1
-    wgcf generate > /dev/null 2>&1
-
-    if [ ! -f "wgcf-profile.conf" ]; then
-        echo -e "\n${RED}================================================${NC}"
-        echo -e "${RED}КРИТИЧЕСКАЯ ОШИБКА: Файл wgcf-profile.conf не был создан!${NC}"
-        echo -e "${YELLOW}Скорее всего Cloudflare заблокировал регистрацию с IP-адреса вашего сервера.${NC}"
-        echo -e "${CYAN}Решение:${NC}"
-        echo -e "1. Сгенерируйте файл wgcf-profile.conf на своем домашнем ПК (Windows/Mac/Linux)."
-        echo -e "2. Положите этот файл в директорию ${YELLOW}${WGCF_DIR}/${NC} на сервере."
-        echo -e "3. Запустите скрипт установки заново."
-        echo -e "${RED}================================================${NC}"
+    if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
+        echo -e " - ${RED}Ошибка: Не удалось извлечь ключи WARP.${NC}"
         exit 1
     fi
-
-    chmod 600 "$WGCF_DIR"/wgcf-profile.conf 2>/dev/null || true
-    chmod 600 "$WGCF_DIR"/wgcf-account.toml 2>/dev/null || true
-
-    WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
-    WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
-    WARP_SOURCE="$WGCF_DIR/wgcf-profile.conf"
+    echo -e " - ${GREEN}Ключи успешно получены!${NC}"
 fi
-
-if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
-    echo -e " - ${RED}Ошибка: Не удалось извлечь ключи WARP.${NC}"
-    exit 1
-fi
-echo -e " - ${GREEN}Ключи успешно получены!${NC}"
 
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
 echo -e " - ${CYAN}Загрузка шаблона и генерация $SINGBOX_CONF...${NC}"
 mkdir -p /etc/sing-box
 
-download_file "$REPO_URL/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json" || exit 1
+if [ "$INSTALL_MODE" = "slave" ]; then
+    download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
 
-sed \
-    -e "s|__WARP_ADDRESS__|$WARP_ADDRESS|g" \
-    -e "s|__WARP_PRIVATE_KEY__|$WARP_PRIVATE_KEY|g" \
-    -e "s|__SUBNET__|$SUBNET|g" \
-    -e "s|__TUN_IP__|$TUN_IP|g" \
-    "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
+    sed \
+        -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__TUN_IP__|$TUN_IP|g" \
+        -e "s|__SLAVE_SERVER__|$SLAVE_SERVER_INSTALL|g" \
+        -e "s|__SLAVE_PORT__|$SLAVE_PORT_INSTALL|g" \
+        -e "s|__SLAVE_PASSWORD__|$SLAVE_PASSWORD_INSTALL|g" \
+        "$WARPER_DIR/config-slave-master.json.template" > "$SINGBOX_CONF"
+
+    # Сохраняем slave-настройки
+    {
+        echo "OUTBOUND_MODE=slave"
+        echo "SLAVE_SERVER=$SLAVE_SERVER_INSTALL"
+        echo "SLAVE_PORT=$SLAVE_PORT_INSTALL"
+        echo "SLAVE_PASSWORD=$SLAVE_PASSWORD_INSTALL"
+    } > "$WARPER_DIR/slave_mode.conf"
+    chmod 600 "$WARPER_DIR/slave_mode.conf"
+else
+    download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json" || exit 1
+
+    sed \
+        -e "s|__WARP_ADDRESS__|$WARP_ADDRESS|g" \
+        -e "s|__WARP_PRIVATE_KEY__|$WARP_PRIVATE_KEY|g" \
+        -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__TUN_IP__|$TUN_IP|g" \
+        "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
+
+    # Сохраняем warp-режим
+    {
+        echo "OUTBOUND_MODE=warp"
+        echo "SLAVE_SERVER="
+        echo "SLAVE_PORT=8444"
+        echo "SLAVE_PASSWORD="
+    } > "$WARPER_DIR/slave_mode.conf"
+    chmod 600 "$WARPER_DIR/slave_mode.conf"
+fi
 
 chmod 600 "$SINGBOX_CONF"
 
@@ -481,8 +573,8 @@ fi
 echo -e " - ${GREEN}Конфигурация sing-box создана с подсетью $SUBNET.${NC}"
 
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
-download_file "$REPO_URL/sing-box.service" "/etc/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
-download_file "$REPO_URL/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
+download_file "$REPO_URL/templates/sing-box.service" "/etc/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
+download_file "$REPO_URL/templates/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
 systemctl daemon-reload
 
 if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
@@ -546,6 +638,8 @@ echo -e " - ${CYAN}Скачивание исполняемых файлов ут
 download_file "$REPO_URL/warper.sh" "$WARPER_DIR/warper.sh" "утилита warper.sh" || exit 1
 download_file "$REPO_URL/uninstaller.sh" "$WARPER_DIR/uninstaller.sh" "деинсталлятор uninstaller.sh" || exit 1
 download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" || exit 1
+download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
+download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 
 chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
 ln -sf "$WARPER_DIR/warper.sh" /usr/local/bin/warper
