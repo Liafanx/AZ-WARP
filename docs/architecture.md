@@ -96,7 +96,7 @@ AZ-WARP/
 
    └── chatgpt.txt
 
-└── docs/
+├── docs/
 
     ├── architecture.md
     
