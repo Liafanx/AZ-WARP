@@ -755,7 +755,11 @@ rebuild_config() {
         "$template" > "$SINGBOX_CONF"
     chmod 600 "$SINGBOX_CONF"
     if ! validate_singbox_config; then return 1; fi
-    echo -e "${GREEN}Конфигурация sing-box успешно обновлена.${NC}"
+    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+        echo -e "${GREEN}Конфигурация sing-box (WARP) успешно обновлена.${NC}"
+    else
+        echo -e "${GREEN}Конфигурация sing-box успешно обновлена.${NC}"
+    fi
     return 0
 }
 
@@ -1239,6 +1243,31 @@ switch_outbound_mode() {
 
             CURRENT_OUTBOUND_MODE="warp"
             save_slave_config
+
+            # Показываем источник WARP-ключей
+            local warp_creds_info
+            if [ -f "$WARP_SYSTEM_CONF" ]; then
+                local sys_pk
+                sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+                if [ -n "$sys_pk" ]; then
+                    warp_creds_info="$WARP_SYSTEM_CONF"
+                fi
+            fi
+            if [ -z "$warp_creds_info" ] && [ -f "$SINGBOX_CONF" ] && command -v jq >/dev/null 2>&1; then
+                local existing_pk
+                existing_pk=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
+                if [ -n "$existing_pk" ] && [ "$existing_pk" != "__WARP_PRIVATE_KEY__" ]; then
+                    warp_creds_info="существующий конфиг sing-box"
+                fi
+            fi
+            if [ -z "$warp_creds_info" ] && [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
+                warp_creds_info="$WGCF_DIR/wgcf-profile.conf"
+            fi
+            if [ -n "$warp_creds_info" ]; then
+                echo -e " - ${GREEN}Источник WARP-ключей: ${warp_creds_info}${NC}"
+            else
+                echo -e " - ${YELLOW}WARP-ключи будут получены при пересборке конфига...${NC}"
+            fi
 
             if rebuild_config "$SINGBOX_TEMPLATE"; then
                 if restart_singbox_full; then
