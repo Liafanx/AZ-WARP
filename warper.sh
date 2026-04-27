@@ -753,7 +753,7 @@ rebuild_config_slave() {
     fi
 
     if [ ! -f "$SLAVE_TEMPLATE" ]; then
-        download_file_safe "$REPO_URL/config-slave-master.json.template" "$SLAVE_TEMPLATE" "шаблон slave-master" || return 1
+        download_file_safe "$REPO_URL/templates/config-slave-master.json.template" "$SLAVE_TEMPLATE" "шаблон slave-master" || return 1
     fi
 
     sed \
@@ -1347,11 +1347,11 @@ update_warper() {
     mkdir -p "$DOWNLOAD_DIR"
     download_file_safe "$REPO_URL/warper.sh" "$WARPER_DIR/warper.sh" "warper.sh" || return 1
     download_file_safe "$REPO_URL/uninstaller.sh" "$WARPER_DIR/uninstaller.sh" "uninstaller.sh" || return 1
-    download_file_safe "$REPO_URL/sing-box.service" "/etc/systemd/system/sing-box.service" "sing-box.service" || return 1
-    download_file_safe "$REPO_URL/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "warper-autopatch.service" || return 1
+    download_file_safe "$REPO_URL/templates/sing-box.service" "/etc/systemd/system/sing-box.service" "sing-box.service" || return 1
+    download_file_safe "$REPO_URL/templates/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "warper-autopatch.service" || return 1
     download_file_safe "$REPO_URL/version" "$WARPER_DIR/version" "version" || return 1
-    download_file_safe "$REPO_URL/config.json.template" "$SINGBOX_TEMPLATE" "config.json.template" || return 1
-    download_file_safe "$REPO_URL/config-slave-master.json.template" "$SLAVE_TEMPLATE" "config-slave-master.json.template" || true
+    download_file_safe "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "config.json.template" || return 1
+    download_file_safe "$REPO_URL/templates/config-slave-master.json.template" "$SLAVE_TEMPLATE" "config-slave-master.json.template" || true
     download_file_safe "$REPO_URL/download/gemini.txt" "$DOWNLOAD_DIR/gemini.txt" "gemini.txt" || return 1
     download_file_safe "$REPO_URL/download/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt" "chatgpt.txt" || return 1
     chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
