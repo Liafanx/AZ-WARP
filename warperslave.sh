@@ -223,9 +223,9 @@ update_warperslave() {
     download_file_safe "$REPO_URL/warperslave.sh" "$SLAVE_DIR/warperslave.sh" "warperslave.sh" || return 1
     download_file_safe "$REPO_URL/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" "uninstall-slave.sh" || return 1
     download_file_safe "$REPO_URL/versionslave" "$SLAVE_DIR/versionslave" "versionslave" || return 1
-    download_file_safe "$REPO_URL/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service" "sing-box-slave.service" || return 1
-    download_file_safe "$REPO_URL/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" "шаблон direct" || true
-    download_file_safe "$REPO_URL/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" "шаблон warp" || true
+    download_file_safe "$REPO_URL/templates/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service" "sing-box-slave.service" || return 1
+    download_file_safe "$REPO_URL/templates/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" "шаблон direct" || true
+    download_file_safe "$REPO_URL/templates/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" "шаблон warp" || true
 
     chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
     systemctl daemon-reload
