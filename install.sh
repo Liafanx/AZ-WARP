@@ -666,12 +666,6 @@ else
     widx=1
 
     if [ -f "/etc/wireguard/warp.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-
-    warp_sources=()
-    warp_labels=()
-    widx=1
-
-    if [ -f "/etc/wireguard/warp.conf" ]; then
         sys_pk=""
         sys_addr=""
         sys_pk=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
@@ -780,7 +774,6 @@ else
         exit 1
     fi
     echo -e " - ${GREEN}Ключи получены! Источник: $WARP_SOURCE${NC}"
-  fi
 fi
 
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
