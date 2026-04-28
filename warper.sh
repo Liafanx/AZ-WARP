@@ -1844,7 +1844,7 @@ manage_warp_keys() {
         fi
     fi
 
-    if [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
+    if [ -f "$WGCF_DIR/wgcf-profile.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WGCF_DIR/wgcf-profile.conf" 2>/dev/null; then
         local wgcf_pk=""
         local wgcf_addr=""
         wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
@@ -1857,7 +1857,7 @@ manage_warp_keys() {
         fi
     fi
 
-    if [ -f "/root/wgcf-profile.conf" ]; then
+    if [ -f "/root/wgcf-profile.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/root/wgcf-profile.conf" 2>/dev/null; then
         local root_pk=""
         local root_addr=""
         root_pk=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
