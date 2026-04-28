@@ -596,9 +596,6 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                     ;;
             esac
 
-            if [ "$WG_SELECTED" = false ] && [ "${wg_choice:-}" = "b" -o "${wg_choice:-}" = "B" ]; then
-                break
-            fi
         else
             echo -e "${YELLOW}WireGuard-конфиги не найдены.${NC}"
             echo -e ""
@@ -656,10 +653,6 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                     echo -e "${RED}Неверный выбор.${NC}"
                     ;;
             esac
-
-            if [ "$WG_SELECTED" = false ] && [ "${wg_choice:-}" = "0" ]; then
-                break
-            fi
         fi
     done
 
