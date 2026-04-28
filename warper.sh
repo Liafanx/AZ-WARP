@@ -1051,7 +1051,7 @@ rebuild_config() {
     fi
 
     # WARP mode
-    local creds
+    local creds=""
     creds=$(get_warp_credentials) || {
         echo -e "${RED}Ошибка: Не удалось извлечь WARP-ключи!${NC}"
         return 1
@@ -1226,7 +1226,7 @@ unpatch_kresd() {
 status_cmd() {
     load_config
     load_slave_config
-    local sb_run sb_en kr_stat dom_stat az_stat ap_stat subnet_conflict log_level mtu az_warp_stat warp_rules_stat
+    local sb_run="" sb_en="" kr_stat="" dom_stat="" az_stat="" ap_stat="" subnet_conflict="" log_level="" mtu="" az_warp_stat="" warp_rules_stat=""
     if systemctl is-active --quiet sing-box; then sb_run="running"; else sb_run="stopped"; fi
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then sb_en="enabled"; else sb_en="disabled"; fi
     if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then kr_stat="patched"; else kr_stat="not patched"; fi
@@ -1573,7 +1573,7 @@ switch_outbound_mode() {
             save_slave_config
 
             # Показываем источник WARP-ключей
-            local warp_creds_info
+            local warp_creds_info=""
             if [ -f "$WARP_SYSTEM_CONF" ]; then
                 local sys_pk
                 sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
@@ -1794,7 +1794,7 @@ manage_warp_keys() {
     # Показываем текущий источник
     local current_source="неизвестно"
     if [ -f "$WARP_SYSTEM_CONF" ]; then
-        local sys_pk
+        local sys_pk=""
         sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$sys_pk" ]; then
             # Сравниваем с текущим ключом в sing-box
@@ -1808,7 +1808,7 @@ manage_warp_keys() {
         fi
     fi
     if [ "$current_source" = "неизвестно" ] && [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
-        local wgcf_pk
+        local wgcf_pk=""
         wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
         local cur_pk=""
         if command -v jq >/dev/null 2>&1 && [ -f "$SINGBOX_CONF" ]; then
@@ -1832,7 +1832,8 @@ manage_warp_keys() {
     local idx=1
 
     if [ -f "$WARP_SYSTEM_CONF" ]; then
-        local sys_pk sys_addr
+        local sys_pk=""
+        local sys_addr=""
         sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         sys_addr=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$sys_pk" ]; then
@@ -1844,7 +1845,8 @@ manage_warp_keys() {
     fi
 
     if [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
-        local wgcf_pk wgcf_addr
+        local wgcf_pk=""
+        local wgcf_addr=""
         wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
         wgcf_addr=$(grep -m 1 '^Address = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
         if [ -n "$wgcf_pk" ]; then
@@ -1856,7 +1858,8 @@ manage_warp_keys() {
     fi
 
     if [ -f "/root/wgcf-profile.conf" ]; then
-        local root_pk root_addr
+        local root_pk=""
+        local root_addr=""
         root_pk=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
         root_addr=$(grep -m 1 '^Address = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
         if [ -n "$root_pk" ]; then
@@ -2255,21 +2258,21 @@ show_main_menu() {
         fi
         WARP_KEYS_SRC="${YELLOW}конфиг sing-box${NC}"
         if [ -n "$cur_pk" ] && [ -f "$WARP_SYSTEM_CONF" ]; then
-            local sys_pk
+            local sys_pk=""
             sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
             if [ "$sys_pk" = "$cur_pk" ]; then
                 WARP_KEYS_SRC="${GREEN}$WARP_SYSTEM_CONF${NC}"
             fi
         fi
         if [ -n "$cur_pk" ] && [ -f "$WGCF_DIR/wgcf-profile.conf" ]; then
-            local wgcf_pk
+            local wgcf_pk=""
             wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
             if [ "$wgcf_pk" = "$cur_pk" ]; then
                 WARP_KEYS_SRC="${GREEN}$WGCF_DIR/wgcf-profile.conf${NC}"
             fi
         fi
         if [ -n "$cur_pk" ] && [ -f "/root/wgcf-profile.conf" ]; then
-            local root_pk
+            local root_pk=""
             root_pk=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
             if [ "$root_pk" = "$cur_pk" ]; then
                 WARP_KEYS_SRC="${GREEN}/root/wgcf-profile.conf${NC}"
