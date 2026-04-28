@@ -988,7 +988,7 @@ check_and_sync_warp_keys() {
         return 0
     fi
 
-    local sys_key sys_addr current_key current_addr
+    local sys_key="" sys_addr="" current_key="" current_addr=""
     sys_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
     sys_addr=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
 
@@ -1056,7 +1056,7 @@ rebuild_config() {
         echo -e "${RED}Ошибка: Не удалось извлечь WARP-ключи!${NC}"
         return 1
     }
-    local warp_address warp_private_key
+    local warp_address="" warp_private_key=""
     warp_address=$(echo "$creds" | sed -n '1p')
     warp_private_key=$(echo "$creds" | sed -n '2p')
     sed \
