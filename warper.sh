@@ -244,7 +244,10 @@ scan_wg_configs() {
             done < <(find "$dir" -maxdepth 1 -name '*.conf' -print0 2>/dev/null)
         fi
     done
-    printf '%s\n' "${found_files[@]}"
+
+    if [ ${#found_files[@]} -gt 0 ]; then
+        printf '%s\n' "${found_files[@]}"
+    fi
 }
 
 # Интерактивный выбор WG-конфига
@@ -256,6 +259,8 @@ select_wg_config() {
         echo -e "\n${CYAN}Поиск WireGuard-конфигов в /root/ и /root/warper/...${NC}"
 
         mapfile -t configs < <(scan_wg_configs)
+        configs=("${configs[@]/#/}")
+        configs=($(printf "%s\n" "${configs[@]}" | sed '/^$/d'))        
 
         if [ ${#configs[@]} -gt 0 ]; then
             echo -e "${GREEN}Найдено конфигов: ${#configs[@]}${NC}"
@@ -275,15 +280,18 @@ select_wg_config() {
             read -r -p "Выбор: " choice
 
             case "$choice" in
+                0)
+                    return 1
+                    ;;
                 [0-9]*)
                     if (( choice >= 1 && choice <= ${#configs[@]} )); then
-                    if parse_wg_conf "${configs[$((choice-1))]}"; then
-                        save_wg_config
-                        echo -e "${GREEN}Выбран: ${configs[$((choice-1))]}${NC}"
-                        return 0
-                    else
-                        echo -e "${YELLOW}Выберите другой файл или введите данные вручную.${NC}"
-                    fi
+                        if parse_wg_conf "${configs[$((choice-1))]}"; then
+                            save_wg_config
+                            echo -e "${GREEN}Выбран: ${configs[$((choice-1))]}${NC}"
+                            return 0
+                        else
+                            echo -e "${YELLOW}Выберите другой файл или введите данные вручную.${NC}"
+                        fi
                     else
                         echo -e "${RED}Неверный номер.${NC}"
                     fi
@@ -295,9 +303,6 @@ select_wg_config() {
                 r|R)
                     echo -e "${CYAN}Повторный поиск...${NC}"
                     continue
-                    ;;
-                0)
-                    return 1
                     ;;
                 *)
                     echo -e "${RED}Неверный выбор.${NC}"
