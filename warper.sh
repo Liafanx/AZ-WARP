@@ -204,7 +204,6 @@ parse_wg_conf() {
     WG_CONF_FILE="$file"
     WG_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
     WG_ADDRESS=$(grep -m 1 '^Address' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    # Берём только первый адрес (IPv4)
     WG_ADDRESS="${WG_ADDRESS%%,*}"
     WG_ADDRESS=$(echo "$WG_ADDRESS" | tr -d ' ')
     WG_PUBLIC_KEY=$(grep -m 1 '^PublicKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
@@ -215,7 +214,21 @@ parse_wg_conf() {
     WG_ENDPOINT_PORT="${endpoint##*:}"
     local keepalive
     keepalive=$(grep -m 1 '^PersistentKeepalive' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    [ -n "$keepalive" ] && WG_KEEPALIVE="$keepalive"
+    WG_KEEPALIVE="${keepalive:-15}"
+
+    # Валидация всех обязательных параметров
+    local missing=()
+    [ -z "$WG_ADDRESS" ]        && missing+=("Address")
+    [ -z "$WG_PRIVATE_KEY" ]    && missing+=("PrivateKey")
+    [ -z "$WG_PUBLIC_KEY" ]     && missing+=("PublicKey")
+    [ -z "$WG_PRESHARED_KEY" ]  && missing+=("PresharedKey")
+    [ -z "$WG_ENDPOINT_HOST" ]  && missing+=("Endpoint")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${RED}В файле отсутствуют обязательные параметры: ${missing[*]}${NC}"
+        return 1
+    fi
+    return 0
 }
 
 # Сканировать папки для WG-конфигов
@@ -264,10 +277,13 @@ select_wg_config() {
             case "$choice" in
                 [0-9]*)
                     if (( choice >= 1 && choice <= ${#configs[@]} )); then
-                        parse_wg_conf "${configs[$((choice-1))]}"
+                    if parse_wg_conf "${configs[$((choice-1))]}"; then
                         save_wg_config
                         echo -e "${GREEN}Выбран: ${configs[$((choice-1))]}${NC}"
                         return 0
+                    else
+                        echo -e "${YELLOW}Выберите другой файл или введите данные вручную.${NC}"
+                    fi
                     else
                         echo -e "${RED}Неверный номер.${NC}"
                     fi
@@ -325,26 +341,30 @@ input_wg_manually() {
 
     while true; do
         read -r -p "Address (например 172.28.8.3/32): " WG_ADDRESS
-        if [ -n "$WG_ADDRESS" ]; then break; fi
-        echo -e "${RED}Не может быть пустым.${NC}"
+        [ -n "$WG_ADDRESS" ] && break
+        echo -e "${RED}Address обязателен!${NC}"
     done
 
     while true; do
         read -r -p "PrivateKey: " WG_PRIVATE_KEY
-        if [ -n "$WG_PRIVATE_KEY" ]; then break; fi
-        echo -e "${RED}Не может быть пустым.${NC}"
+        [ -n "$WG_PRIVATE_KEY" ] && break
+        echo -e "${RED}PrivateKey обязателен!${NC}"
     done
 
     while true; do
         read -r -p "PublicKey (сервера): " WG_PUBLIC_KEY
-        if [ -n "$WG_PUBLIC_KEY" ]; then break; fi
-        echo -e "${RED}Не может быть пустым.${NC}"
+        [ -n "$WG_PUBLIC_KEY" ] && break
+        echo -e "${RED}PublicKey обязателен!${NC}"
     done
 
-    read -r -p "PresharedKey (Enter если нет): " WG_PRESHARED_KEY
+    while true; do
+        read -r -p "PresharedKey: " WG_PRESHARED_KEY
+        [ -n "$WG_PRESHARED_KEY" ] && break
+        echo -e "${RED}PresharedKey обязателен!${NC}"
+    done
 
     read -r -p "PersistentKeepalive [15]: " WG_KEEPALIVE
-    [ -z "$WG_KEEPALIVE" ] && WG_KEEPALIVE="15"
+    WG_KEEPALIVE="${WG_KEEPALIVE:-15}"
 
     WG_CONF_FILE="manual"
     save_wg_config
@@ -363,12 +383,12 @@ rebuild_config_wg() {
         download_file_safe "$REPO_URL/templates/config-wg.json.template" "$WG_TEMPLATE" "шаблон WG" || return 1
     fi
 
-    local psk_line
-    if [ -n "$WG_PRESHARED_KEY" ]; then
-        psk_line="$WG_PRESHARED_KEY"
-    else
-        psk_line=""
+    if [ -z "$WG_PRESHARED_KEY" ]; then
+        echo -e "${RED}Ошибка: PresharedKey не задан!${NC}"
+        rm -f "$tmp"
+        return 1
     fi
+    sed -i "s|__WG_PRESHARED_KEY__|$WG_PRESHARED_KEY|g" "$tmp"
 
     # Сначала подставляем все значения
     local tmp
