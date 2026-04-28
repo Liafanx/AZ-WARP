@@ -31,7 +31,8 @@ ANTIZAPRET_WARP=n
 /root/antizapret/down.sh
 /root/antizapret/up.sh
 ```
-А лучше перезагрузить сервер.
+
+Если не помогло — перезагрузите сервер.
 
 ### sing-box не запускается
 
@@ -58,17 +59,39 @@ warperslave doctor
 
 ### Cloudflare заблокировал регистрацию WARP
 
-**Симптом:** `wgcf-profile.conf` не создан.
+**Симптом:** `wgcf-profile.conf` не создан при установке.
 
 **Решение:** Сгенерируйте файл на домашнем ПК и загрузите на сервер:
 - WARPER: `/root/warper/wgcf/wgcf-profile.conf`
 - WARPERSLAVE: `/root/warperslave/wgcf/wgcf-profile.conf`
 
+Или используйте режим WG / Slave вместо WARP.
+
+### WG-конфиг не появляется в списке
+
+**Причина:** Файл не проходит валидацию — отсутствует `[Peer]`, `Endpoint`, `PublicKey` или `PresharedKey`.
+
+**Также:** файлы Cloudflare WARP (wgcf-profile.conf, warp.conf) намеренно исключаются из списка WG-конфигов.
+
+**Решение:** Убедитесь что файл содержит все обязательные параметры:
+```ini
+[Interface]
+PrivateKey = ...
+Address = ...
+
+[Peer]
+PublicKey = ...
+PresharedKey = ...
+Endpoint = host:port
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 15
+```
+
 ### IPv6 в логах sing-box (WARPERSLAVE)
 
 **Симптом:** DNS-ответы содержат AAAA-записи.
 
-**Решение:** Обновите WARPERSLAVE — в новых конфигах добавлено `"strategy": "ipv4_only"`. Или переключите режим: `warperslave` → 1 (switch).
+**Решение:** Обновите WARPERSLAVE или переключите режим: `warperslave` → 1 (switch) — конфиг пересоберётся с `"strategy": "ipv4_only"`.
 
 ## Логи
 
@@ -83,7 +106,7 @@ journalctl -u sing-box-slave -f
 ## Полный сброс
 
 ```bash
-# WARPER — удаление и переустановка
+# WARPER
 warper   # → U
 curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install.sh | bash
 
@@ -91,3 +114,5 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install.sh | b
 warperslave   # → U
 curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install-slave.sh | bash
 ```
+---
+
