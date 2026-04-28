@@ -487,8 +487,22 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         WG_INSTALL_ENDPOINT_HOST="${ep%:*}"
         WG_INSTALL_ENDPOINT_PORT="${ep##*:}"
         local ka; ka=$(grep -m 1 '^PersistentKeepalive' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        [ -n "$ka" ] && WG_INSTALL_KEEPALIVE="$ka"
-    fi
+        WG_INSTALL_KEEPALIVE="${ka:-15}"
+
+        # Валидация всех обязательных параметров
+        local missing=()
+        [ -z "$WG_INSTALL_ADDRESS" ]        && missing+=("Address")
+        [ -z "$WG_INSTALL_PRIVATE_KEY" ]    && missing+=("PrivateKey")
+        [ -z "$WG_INSTALL_PUBLIC_KEY" ]     && missing+=("PublicKey")
+        [ -z "$WG_INSTALL_PRESHARED_KEY" ]  && missing+=("PresharedKey")
+        [ -z "$WG_INSTALL_ENDPOINT_HOST" ]  && missing+=("Endpoint")
+
+        if [ ${#missing[@]} -gt 0 ]; then
+            echo -e "${RED}В файле отсутствуют обязательные параметры: ${missing[*]}${NC}"
+            return 1
+        fi
+        return 0
+    }
 
     WG_SELECTED=false
     while [ "$WG_SELECTED" = false ]; do
@@ -523,9 +537,12 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
             case "$wg_choice" in
                 [0-9]*)
                     if (( wg_choice >= 1 && wg_choice <= ${#wg_files[@]} )); then
-                        _parse_wg_conf_install "${wg_files[$((wg_choice-1))]}"
-                        WG_SELECTED=true
-                        echo -e "${GREEN}Выбран: ${wg_files[$((wg_choice-1))]}${NC}"
+                        if _parse_wg_conf_install "${wg_files[$((wg_choice-1))]}"; then
+                            WG_SELECTED=true
+                            echo -e "${GREEN}Выбран: ${wg_files[$((wg_choice-1))]}${NC}"
+                        else
+                            echo -e "${YELLOW}Выберите другой файл или введите данные вручную.${NC}"
+                        fi
                     else
                         echo -e "${RED}Неверный номер.${NC}"
                     fi
@@ -541,12 +558,28 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                         fi
                         echo -e "${RED}Формат: IP:порт${NC}"
                     done
-                    read -r -p "Address (например 172.28.8.3/32): " WG_INSTALL_ADDRESS < /dev/tty
-                    read -r -p "PrivateKey: " WG_INSTALL_PRIVATE_KEY < /dev/tty
-                    read -r -p "PublicKey: " WG_INSTALL_PUBLIC_KEY < /dev/tty
-                    read -r -p "PresharedKey (Enter если нет): " WG_INSTALL_PRESHARED_KEY < /dev/tty
+                    while true; do
+                        read -r -p "Address (например 172.28.8.3/32): " WG_INSTALL_ADDRESS < /dev/tty
+                        [ -n "$WG_INSTALL_ADDRESS" ] && break
+                        echo -e "${RED}Address обязателен!${NC}"
+                    done
+                    while true; do
+                        read -r -p "PrivateKey: " WG_INSTALL_PRIVATE_KEY < /dev/tty
+                        [ -n "$WG_INSTALL_PRIVATE_KEY" ] && break
+                        echo -e "${RED}PrivateKey обязателен!${NC}"
+                    done
+                    while true; do
+                        read -r -p "PublicKey: " WG_INSTALL_PUBLIC_KEY < /dev/tty
+                        [ -n "$WG_INSTALL_PUBLIC_KEY" ] && break
+                        echo -e "${RED}PublicKey обязателен!${NC}"
+                    done
+                    while true; do
+                        read -r -p "PresharedKey: " WG_INSTALL_PRESHARED_KEY < /dev/tty
+                        [ -n "$WG_INSTALL_PRESHARED_KEY" ] && break
+                        echo -e "${RED}PresharedKey обязателен!${NC}"
+                    done
                     read -r -p "PersistentKeepalive [15]: " WG_INSTALL_KEEPALIVE < /dev/tty
-                    [ -z "$WG_INSTALL_KEEPALIVE" ] && WG_INSTALL_KEEPALIVE="15"
+                    WG_INSTALL_KEEPALIVE="${WG_INSTALL_KEEPALIVE:-15}"
                     WG_INSTALL_CONF_FILE="manual"
                     WG_SELECTED=true
                     ;;
@@ -625,6 +658,10 @@ WARP_SOURCE=""
 
 if [ "$INSTALL_MODE" = "slave" ]; then
     echo -e " - ${CYAN}Режим Slave — ключи WARP не требуются для установки.${NC}"
+    echo -e " - ${CYAN}Ключи будут получены автоматически при переключении на режим WARP.${NC}"
+elif [ "$INSTALL_MODE" = "wg" ]; then
+    echo -e " - ${CYAN}Режим WG — ключи WARP не требуются.${NC}"
+    echo -e " - ${CYAN}Данные WireGuard уже получены на предыдущем шаге.${NC}"
     echo -e " - ${CYAN}Ключи будут получены автоматически при переключении на режим WARP.${NC}"
 else
     if existing_keys=$(find_existing_warp_keys); then
