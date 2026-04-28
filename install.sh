@@ -752,21 +752,20 @@ else
             fi
 
             echo -e " - ${CYAN}Регистрация нового WARP-аккаунта...${NC}"
-            if ! /usr/local/bin/wgcf register --accept-tos; then
-                echo -e "${RED}Не удалось зарегистрировать новый WARP-аккаунт.${NC}"
-                echo -e "${YELLOW}Cloudflare часто блокирует регистрацию с IP VPS.${NC}"
-                echo -e "${CYAN}Рекомендация:${NC} Сгенерируйте wgcf-profile.conf на домашнем ПК и положите его в ${WGCF_DIR}/"
-                exit 1
-            fi
+            /usr/local/bin/wgcf register --accept-tos > /dev/null 2>&1 || true
 
             echo -e " - ${CYAN}Генерация конфигурации...${NC}"
-            if ! /usr/local/bin/wgcf generate; then
-                echo -e "${RED}Не удалось создать wgcf-profile.conf${NC}"
-                exit 1
-            fi
+            /usr/local/bin/wgcf generate > /dev/null 2>&1 || true
 
             if [ ! -f "wgcf-profile.conf" ]; then
-                echo -e "${RED}Файл wgcf-profile.conf не был создан!${NC}"
+                echo -e "${RED}================================================${NC}"
+                echo -e "${RED}Файл wgcf-profile.conf не создан!${NC}"
+                echo -e "${YELLOW}Cloudflare заблокировал регистрацию с этого IP.${NC}"
+                echo -e "${CYAN}Решение:${NC}"
+                echo -e "1. Сгенерируйте wgcf-profile.conf на домашнем ПК"
+                echo -e "2. Положите его в: ${YELLOW}${WGCF_DIR}/${NC}"
+                echo -e "3. Запустите установку заново"
+                echo -e "${RED}================================================${NC}"
                 exit 1
             fi
 
@@ -779,7 +778,7 @@ else
             if [ -z "$WARP_PRIVATE_KEY" ] || [ -z "$WARP_ADDRESS" ]; then
                 echo -e "${RED}Не удалось извлечь ключи из сгенерированного файла.${NC}"
                 echo -e "${YELLOW}Содержимое файла:${NC}"
-                cat wgcf-profile.conf
+                cat wgcf-profile.conf 2>/dev/null || true
                 exit 1
             fi
 
