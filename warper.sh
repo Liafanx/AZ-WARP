@@ -968,6 +968,50 @@ get_warp_credentials() {
     return 1
 }
 
+get_current_warp_key_source() {
+    local cur_pk=""
+    local src="local"
+
+    if command -v jq >/dev/null 2>&1 && [ -f "$SINGBOX_CONF" ]; then
+        cur_pk=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
+    fi
+
+    [ -z "$cur_pk" ] && { echo "$src"; return 0; }
+
+    # Приоритет 1: системный warp.conf
+    if [ -f "$WARP_SYSTEM_CONF" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WARP_SYSTEM_CONF" 2>/dev/null; then
+        local sys_pk=""
+        sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        if [ -n "$sys_pk" ] && [ "$sys_pk" = "$cur_pk" ]; then
+            echo "$WARP_SYSTEM_CONF"
+            return 0
+        fi
+    fi
+
+    # Приоритет 2: локальный wgcf WARPER
+    if [ -f "$WGCF_DIR/wgcf-profile.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WGCF_DIR/wgcf-profile.conf" 2>/dev/null; then
+        local wgcf_pk=""
+        wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+        if [ -n "$wgcf_pk" ] && [ "$wgcf_pk" = "$cur_pk" ]; then
+            echo "$WGCF_DIR/wgcf-profile.conf"
+            return 0
+        fi
+    fi
+
+    # Приоритет 3: профиль в /root
+    if [ -f "/root/wgcf-profile.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/root/wgcf-profile.conf" 2>/dev/null; then
+        local root_pk=""
+        root_pk=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+        if [ -n "$root_pk" ] && [ "$root_pk" = "$cur_pk" ]; then
+            echo "/root/wgcf-profile.conf"
+            return 0
+        fi
+    fi
+
+    echo "$src"
+    return 0
+}
+
 check_and_sync_warp_keys() {
     if needs_down_sh; then
         if is_interactive; then
@@ -2259,27 +2303,34 @@ show_main_menu() {
             cur_pk=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' "$SINGBOX_CONF" 2>/dev/null || true)
         fi
         WARP_KEYS_SRC="${YELLOW}конфиг sing-box${NC}"
-        if [ -n "$cur_pk" ] && [ -f "$WARP_SYSTEM_CONF" ]; then
-            local sys_pk=""
-            sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            if [ "$sys_pk" = "$cur_pk" ]; then
-                WARP_KEYS_SRC="${GREEN}$WARP_SYSTEM_CONF${NC}"
+        if [ -n "$cur_pk" ]; then
+            # Приоритет 1: системный warp.conf — проверяем первым, при совпадении останавливаемся
+            if [ -f "$WARP_SYSTEM_CONF" ]; then
+                local sys_pk=""
+                sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+                if [ -n "$sys_pk" ] && [ "$sys_pk" = "$cur_pk" ]; then
+                    WARP_KEYS_SRC="${GREEN}$WARP_SYSTEM_CONF${NC}"
+                fi
             fi
-        fi
-        if [ -n "$cur_pk" ] && [ -f "$WGCF_DIR/wgcf-profile.conf" ] && \
-           grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WGCF_DIR/wgcf-profile.conf" 2>/dev/null; then
-            local wgcf_pk=""
-            wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
-            if [ "$wgcf_pk" = "$cur_pk" ]; then
-                WARP_KEYS_SRC="${GREEN}$WGCF_DIR/wgcf-profile.conf${NC}"
+            # Приоритет 2: только если ещё не нашли источник через system
+            if [ "$WARP_KEYS_SRC" = "${YELLOW}конфиг sing-box${NC}" ] && \
+               [ -f "$WGCF_DIR/wgcf-profile.conf" ] && \
+               grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WGCF_DIR/wgcf-profile.conf" 2>/dev/null; then
+                local wgcf_pk=""
+                wgcf_pk=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+                if [ -n "$wgcf_pk" ] && [ "$wgcf_pk" = "$cur_pk" ]; then
+                    WARP_KEYS_SRC="${GREEN}$WGCF_DIR/wgcf-profile.conf${NC}"
+                fi
             fi
-        fi
-        if [ -n "$cur_pk" ] && [ -f "/root/wgcf-profile.conf" ] && \
-           grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/root/wgcf-profile.conf" 2>/dev/null; then
-            local root_pk=""
-            root_pk=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
-            if [ "$root_pk" = "$cur_pk" ]; then
-                WARP_KEYS_SRC="${GREEN}/root/wgcf-profile.conf${NC}"
+            # Приоритет 3: только если ещё не нашли источник
+            if [ "$WARP_KEYS_SRC" = "${YELLOW}конфиг sing-box${NC}" ] && \
+               [ -f "/root/wgcf-profile.conf" ] && \
+               grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/root/wgcf-profile.conf" 2>/dev/null; then
+                local root_pk=""
+                root_pk=$(grep -m 1 '^PrivateKey = ' "/root/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
+                if [ -n "$root_pk" ] && [ "$root_pk" = "$cur_pk" ]; then
+                    WARP_KEYS_SRC="${GREEN}/root/wgcf-profile.conf${NC}"
+                fi
             fi
         fi
     else
