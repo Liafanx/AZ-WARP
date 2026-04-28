@@ -645,16 +645,21 @@ else
 fi
 
 echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC}"
-cd "$WGCF_DIR" || exit 1
 
 WARP_ADDRESS=""
 WARP_PRIVATE_KEY=""
 WARP_SOURCE=""
 
-if [ "$INSTALL_MODE" = "slave" ] || [ "$INSTALL_MODE" = "wg" ]; then
-    echo -e " - ${CYAN}Для выбранного режима WARP-ключи не требуются на этапе установки.${NC}"
+if [ "$INSTALL_MODE" = "slave" ]; then
+    echo -e " - ${CYAN}Режим Slave — ключи WARP не требуются для установки.${NC}"
     echo -e " - ${CYAN}Они будут запрошены позже при переключении на режим WARP.${NC}"
+
+elif [ "$INSTALL_MODE" = "wg" ]; then
+    echo -e " - ${CYAN}Режим WG — ключи WARP не требуются.${NC}"
+    echo -e " - ${CYAN}Данные WireGuard уже получены на предыдущем шаге.${NC}"
+
 else
+    # === Режим WARP ===
     echo -e "\n${YELLOW}Выбор источника WARP-ключей:${NC}"
 
     warp_sources=()
@@ -731,36 +736,53 @@ else
             echo -e " - ${GREEN}Используем ключи из /root/wgcf-profile.conf${NC}"
             ;;
         generate)
-            echo -e " - ${CYAN}Генерация нового ключа WARP...${NC}"
+            echo -e " - ${CYAN}Попытка генерации нового ключа WARP...${NC}"
             mkdir -p "$WGCF_DIR"
-            cd "$WGCF_DIR" || exit 1
+            cd "$WGCF_DIR" || { echo -e "${RED}Не удалось перейти в $WGCF_DIR${NC}"; exit 1; }
 
             if [ ! -f "/usr/local/bin/wgcf" ]; then
                 echo -e " - ${CYAN}Скачивание wgcf (${SYSTEM_ARCH})...${NC}"
                 WGCF_URL="https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_${SYSTEM_ARCH}"
                 if ! wget -qO wgcf "$WGCF_URL"; then
-                    echo -e " - ${RED}Ошибка загрузки wgcf!${NC}"
+                    echo -e "${RED}Ошибка загрузки wgcf!${NC}"
                     exit 1
                 fi
                 chmod +x wgcf
                 mv wgcf /usr/local/bin/wgcf
             fi
 
-            echo -e " - ${CYAN}Регистрация WARP (подождите)...${NC}"
-            wgcf register --accept-tos > /dev/null 2>&1
-            wgcf generate > /dev/null 2>&1
+            echo -e " - ${CYAN}Регистрация нового WARP-аккаунта...${NC}"
+            if ! /usr/local/bin/wgcf register --accept-tos; then
+                echo -e "${RED}Не удалось зарегистрировать новый WARP-аккаунт.${NC}"
+                echo -e "${YELLOW}Cloudflare часто блокирует регистрацию с IP VPS.${NC}"
+                echo -e "${CYAN}Рекомендация:${NC} Сгенерируйте wgcf-profile.conf на домашнем ПК и положите его в ${WGCF_DIR}/"
+                exit 1
+            fi
+
+            echo -e " - ${CYAN}Генерация конфигурации...${NC}"
+            if ! /usr/local/bin/wgcf generate; then
+                echo -e "${RED}Не удалось создать wgcf-profile.conf${NC}"
+                exit 1
+            fi
 
             if [ ! -f "wgcf-profile.conf" ]; then
-                echo -e "${RED}КРИТИЧЕСКАЯ ОШИБКА: wgcf-profile.conf не создан!${NC}"
-                echo -e "${YELLOW}Cloudflare заблокировал регистрацию с этого IP.${NC}"
-                echo -e "${CYAN}Рекомендация: сгенерируйте ключ на домашнем ПК и положите wgcf-profile.conf в ${WGCF_DIR}/${NC}"
+                echo -e "${RED}Файл wgcf-profile.conf не был создан!${NC}"
                 exit 1
             fi
 
             chmod 600 wgcf-profile.conf wgcf-account.toml 2>/dev/null || true
+
             WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
             WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
             WARP_SOURCE="$WGCF_DIR/wgcf-profile.conf"
+
+            if [ -z "$WARP_PRIVATE_KEY" ] || [ -z "$WARP_ADDRESS" ]; then
+                echo -e "${RED}Не удалось извлечь ключи из сгенерированного файла.${NC}"
+                echo -e "${YELLOW}Содержимое файла:${NC}"
+                cat wgcf-profile.conf
+                exit 1
+            fi
+
             echo -e " - ${GREEN}Новый ключ WARP успешно сгенерирован!${NC}"
             ;;
     esac
