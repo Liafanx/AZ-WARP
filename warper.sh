@@ -617,35 +617,6 @@ normalize_include_ips() {
     awk 'NF && !seen[$0]++' "$file" > "$tmp" && mv "$tmp" "$file"
 }
 
-# ===== Определение клиентских подсетей AntiZapret =====
-
-detect_client_subnets() {
-    local setup_file="/root/antizapret/setup"
-    local client_prefix="10"
-
-    if [ -f "$setup_file" ]; then
-        local alt_client_ip=""
-        alt_client_ip=$(grep -E '^ALTERNATIVE_CLIENT_IP=' "$setup_file" 2>/dev/null \
-            | cut -d'=' -f2 | tr -d '"'\''[:space:]')
-
-        local custom_client_ip=""
-        custom_client_ip=$(grep -E '^CLIENT_IP=' "$setup_file" 2>/dev/null \
-            | cut -d'=' -f2 | tr -d '"'\''[:space:]')
-
-        if [ "$alt_client_ip" = "y" ]; then
-            # Если CLIENT_IP явно задан — используем его, иначе 172
-            client_prefix="${custom_client_ip:-172}"
-        else
-            # Если ALTERNATIVE_CLIENT_IP=n — используем CLIENT_IP или 10
-            client_prefix="${custom_client_ip:-10}"
-        fi
-    fi
-
-    AZ_CLIENT_NET="${client_prefix}.29.0.0/16"
-    FULLVPN_CLIENT_NET="${client_prefix}.28.0.0/16"
-    ALL_CLIENT_NET="${client_prefix}.28.0.0/15"
-}
-
 # ===== Работа с IP-подсетями =====
 
 detect_client_subnets() {
@@ -891,6 +862,16 @@ count_ip_ranges() {
 
 count_applied_routes() {
     get_applied_ip_routes | wc -l | tr -d ' '
+}
+
+count_tun_routes() {
+    count_applied_routes
+}
+
+get_current_tun_routes() {
+    local applied_file="$WARPER_DIR/ip-ranges.applied"
+    [ -f "$applied_file" ] || return 0
+    sort -u -t/ -k1,1V "$applied_file"
 }
 
 add_ip_range() {
@@ -2878,7 +2859,7 @@ ip_ranges_menu() {
                 read -r -p "Нажмите Enter..."
                 ;;
             6)
-                echo -e "\n${CYAN}--- Активные маршруты через singbox-tun ---${NC}"
+                echo -e "\n${CYAN}--- Применённые WARPER IP-маршруты ---${NC}"
                 local routes
                 routes=$(get_current_tun_routes)
                 if [ -n "$routes" ]; then
@@ -3381,11 +3362,30 @@ case "${1:-}" in
     remove) [ -n "${2:-}" ] || { echo "Использование: warper remove DOMAIN"; exit 1; }; cli_remove_domain "$2"; exit $? ;;
     enable) [ -n "${2:-}" ] || { echo "Использование: warper enable gemini|chatgpt"; exit 1; }; cli_enable_list "$2"; exit $? ;;
     disable) [ -n "${2:-}" ] || { echo "Использование: warper disable gemini|chatgpt"; exit 1; }; cli_disable_list "$2"; exit $? ;;
-    ipadd) [ -n "${2:-}" ] || { echo "Использование: warper ipadd A.B.C.D/M"; exit 1; } add_ip_range "$2" if is_warper_active; then sync_ip_ranges; fi exit $? ;;
-    ipremove) [ -n "${2:-}" ] || { echo "Использование: warper ipremove A.B.C.D/M"; exit 1; } remove_ip_range "$2" if is_warper_active; then sync_ip_ranges; fi exit $? ;;
-    ipsync) sync_ip_ranges exit $? ;;
-    iplist) extract_ip_ranges exit $? ;;
-    iproutes) get_current_tun_routes exit $? ;;
+    ipadd)
+        [ -n "${2:-}" ] || { echo "Использование: warper ipadd A.B.C.D/M"; exit 1; }
+        add_ip_range "$2"
+        if is_warper_active; then sync_ip_ranges; fi
+        exit $?
+        ;;
+    ipremove)
+        [ -n "${2:-}" ] || { echo "Использование: warper ipremove A.B.C.D/M"; exit 1; }
+        remove_ip_range "$2"
+        if is_warper_active; then sync_ip_ranges; fi
+        exit $?
+        ;;
+    ipsync)
+        sync_ip_ranges
+        exit $?
+        ;;
+    iplist)
+        extract_ip_ranges
+        exit $?
+        ;;
+    iproutes)
+        get_current_tun_routes
+        exit $?
+        ;;
 esac
 
 # ===== Интерактивное меню =====
