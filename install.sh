@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/1.3.0beta"
 SB_VERSION="1.13.5"
 
 RED='\033[0;31m'
@@ -860,7 +860,7 @@ if [ "$INSTALL_MODE" = "slave" ]; then
     
 elif [ "$INSTALL_MODE" = "wg" ]; then
     download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
-
+    
     tmp_wg=$(mktemp)
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
@@ -998,6 +998,30 @@ download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" 
 download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
 download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
+
+# Создаём ip-ranges.txt если не существует
+if [ ! -f "$WARPER_DIR/ip-ranges.txt" ]; then
+cat << 'IPEOF' > "$WARPER_DIR/ip-ranges.txt"
+# Добавление IPv4-адресов для маршрутизации через Warper (Sing-box tun)
+#
+# Формат записи: A.B.C.D/M
+# Где:
+#   A.B.C.D - IPv4-адрес
+#   M       - размер маски подсети (1-32)
+#
+# Примеры записи:
+#   5.255.255.242/32  - один IPv4-адрес
+#   66.22.192.0/18    - подсеть с маской 18 (16382 адреса)
+#   104.24.0.0/14     - подсеть с маской 14 (262142 адреса)
+#   34.3.3.0/24       - подсеть с маской 24 (254 адреса)
+#
+# Строки начинающиеся с # - комментарии, не обрабатываются.
+# Пустые строки игнорируются.
+#
+# После изменения файла выполните: warper ipsync
+# Или в меню: Управление IP-подсетями → Синхронизировать
+IPEOF
+fi
 
 chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"
 ln -sf "$WARPER_DIR/warper.sh" /usr/local/bin/warper
