@@ -259,8 +259,12 @@ select_wg_config() {
         echo -e "\n${CYAN}Поиск WireGuard-конфигов в /root/ и /root/warper/...${NC}"
 
         mapfile -t configs < <(scan_wg_configs)
-        configs=("${configs[@]/#/}")
-        configs=($(printf "%s\n" "${configs[@]}" | sed '/^$/d'))        
+        local filtered_configs=()
+        local cfg_item
+        for cfg_item in "${configs[@]}"; do
+            [[ -n "$cfg_item" ]] && filtered_configs+=("$cfg_item")
+        done
+        configs=("${filtered_configs[@]+"${filtered_configs[@]}"}")
 
         if [ ${#configs[@]} -gt 0 ]; then
             echo -e "${GREEN}Найдено конфигов: ${#configs[@]}${NC}"
@@ -613,6 +617,13 @@ rebuild_master_file() {
     user_tmp=$(mktemp)
     gemini_tmp=$(mktemp)
     chatgpt_tmp=$(mktemp)
+
+    # Гарантируем очистку временных файлов при любом выходе из функции
+    local _cleanup_rebuild() {
+        rm -f "$tmp" "$user_tmp" "$gemini_tmp" "$chatgpt_tmp"
+    }
+    trap '_cleanup_rebuild' RETURN
+
     extract_user_domains "$source_file" > "$user_tmp"
     extract_block "$source_file" "gemini" > "$gemini_tmp"
     extract_block "$source_file" "chatgpt" > "$chatgpt_tmp"
@@ -630,8 +641,8 @@ EOF
         if [ -s "$gemini_tmp" ]; then echo ""; cat "$gemini_tmp"; fi
         if [ -s "$chatgpt_tmp" ]; then echo ""; cat "$chatgpt_tmp"; fi
     } > "$tmp"
+
     mv "$tmp" "$output_file"
-    rm -f "$user_tmp" "$gemini_tmp" "$chatgpt_tmp"
 }
 
 canonical_master_hash() {
