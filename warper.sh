@@ -732,12 +732,10 @@ sync_ip_ranges() {
     detect_client_subnets
 
     local desired_tmp applied_tmp add_tmp del_tmp
-    desired_tmp=$(mktemp) || desired_tmp="/tmp/desired.$$"
-    applied_tmp=$(mktemp) || applied_tmp="/tmp/applied.$$"
-    add_tmp=$(mktemp)     || add_tmp="/tmp/add.$$"
-    del_tmp=$(mktemp)     || del_tmp="/tmp/del.$$"
-
-    trap 'rm -f "$desired_tmp" "$applied_tmp" "$add_tmp" "$del_tmp" 2>/dev/null || true' RETURN
+    desired_tmp=$(mktemp)
+    applied_tmp=$(mktemp)
+    add_tmp=$(mktemp)
+    del_tmp=$(mktemp)
 
     extract_ip_ranges > "$desired_tmp"
     get_applied_ip_routes > "$applied_tmp"
@@ -748,13 +746,13 @@ sync_ip_ranges() {
     local added=0 removed=0 errors=0
     local source_net
     source_net=$(get_rule_source_net)
-    
+
     local use_ipset=false
     if command -v ipset >/dev/null 2>&1 && ipset list antizapret-forward >/dev/null 2>&1; then
         use_ipset=true
     fi
 
-    # Удаляем лишние
+    # Удаляем лишние маршруты
     while IFS= read -r cidr; do
         [ -z "$cidr" ] && continue
         if [ -z "$source_net" ]; then
@@ -767,19 +765,13 @@ sync_ip_ranges() {
         fi
     done < "$del_tmp"
 
-    # Добавляем новые
+    # Добавляем новые маршруты
     while IFS= read -r cidr; do
         [ -z "$cidr" ] && continue
         if [ -z "$source_net" ]; then
-            ip route replace "$cidr" dev singbox-tun 2>/dev/null && ((added++)) || {
-                echo -e "${YELLOW}Не удалось добавить маршрут: $cidr${NC}"
-                ((errors++))
-            }
+            ip route replace "$cidr" dev singbox-tun 2>/dev/null && ((added++)) || ((errors++))
         else
-            ip route replace "$cidr" dev singbox-tun table "$IP_ROUTE_TABLE" 2>/dev/null && ((added++)) || {
-                echo -e "${YELLOW}Не удалось добавить маршрут: $cidr${NC}"
-                ((errors++))
-            }
+            ip route replace "$cidr" dev singbox-tun table "$IP_ROUTE_TABLE" 2>/dev/null && ((added++)) || ((errors++))
         fi
         if [ "$use_ipset" = true ]; then
             ipset add antizapret-forward "$cidr" -exist 2>/dev/null || true
@@ -798,25 +790,14 @@ sync_ip_ranges() {
 
     save_applied_ip_routes
 
+    rm -f "$desired_tmp" "$applied_tmp" "$add_tmp" "$del_tmp"
+
     if (( added == 0 && removed == 0 )); then
         echo -e "${GREEN}IP-маршруты синхронизированы (${total} подсетей, изменений нет).${NC}"
     else
         echo -e "${GREEN}IP-маршруты синхронизированы: +${added} -${removed} (всего ${total}).${NC}"
-        if [ "$use_ipset" = true ]; then
-            echo -e "${CYAN}ipset antizapret-forward обновлен.${NC}"
-        fi
     fi
 
-    if [ -n "$source_net" ]; then
-        echo -e "${CYAN}Режим: ${IP_ROUTE_MODE} (source: ${source_net})${NC}"
-    else
-        echo -e "${CYAN}Режим: all (весь трафик сервера)${NC}"
-    fi
-
-    if (( errors > 0 )); then
-        echo -e "${YELLOW}Ошибок: ${errors}${NC}"
-        return 1
-    fi
     return 0
 }
 
