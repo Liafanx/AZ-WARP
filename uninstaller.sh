@@ -138,17 +138,25 @@ else
 fi
 
 echo -e "\n${YELLOW}4.5. Удаление пользовательских IP-маршрутов...${NC}"
-if ip link show singbox-tun >/dev/null 2>&1; then
-    ip route show dev singbox-tun 2>/dev/null | awk '{print $1}' | while IFS= read -r route; do
-        [[ "$route" =~ ^198\.20\. ]] && continue
-        [[ "$route" =~ ^169\.254\. ]] && continue
-        [ "$route" = "$SUBNET" ] && continue
-        ip route del "$route" dev singbox-tun 2>/dev/null || true
-    done
-    echo -e " - ${GREEN}IP-маршруты через singbox-tun удалены.${NC}"
-else
-    echo -e " - ${GREEN}Интерфейс singbox-tun не активен.${NC}"
+# Удаляем маршруты из таблицы 100
+if [ -f "/root/warper/ip-ranges.applied" ]; then
+    while IFS= read -r cidr; do
+        [ -z "$cidr" ] && continue
+        ip route del "$cidr" dev singbox-tun table 100 2>/dev/null || true
+        ip route del "$cidr" dev singbox-tun 2>/dev/null || true
+    done < "/root/warper/ip-ranges.applied"
+    rm -f "/root/warper/ip-ranges.applied"
 fi
+# Удаляем все ip rule от WARPER
+for prefix in 10 172; do
+    while ip rule show 2>/dev/null | grep -q "from ${prefix}.29.0.0/16 lookup 100"; do
+        ip rule del from "${prefix}.29.0.0/16" lookup 100 priority 500 2>/dev/null || break
+    done
+    while ip rule show 2>/dev/null | grep -q "from ${prefix}.28.0.0/15 lookup 100"; do
+        ip rule del from "${prefix}.28.0.0/15" lookup 100 priority 500 2>/dev/null || break
+    done
+done
+echo -e " - ${GREEN}IP-маршруты и правила маршрутизации удалены.${NC}"
 
 echo -e "\n${YELLOW}5. Удаление правил firewall...${NC}"
 remove_iptables_rule FORWARD -o singbox-tun
