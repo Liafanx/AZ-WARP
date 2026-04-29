@@ -934,14 +934,6 @@ extract_block() {
     ' "$input"
 }
 
-_rebuild_master_tmpfiles=""
-
-_cleanup_rebuild() {
-    # shellcheck disable=SC2086
-    rm -f $_rebuild_master_tmpfiles
-    _rebuild_master_tmpfiles=""
-}
-
 rebuild_master_file() {
     local source_file="${1:-$MASTER_FILE}"
     local output_file="${2:-$MASTER_FILE}"
@@ -950,13 +942,11 @@ rebuild_master_file() {
     user_tmp=$(mktemp)
     gemini_tmp=$(mktemp)
     chatgpt_tmp=$(mktemp)
-    _rebuild_master_tmpfiles="$tmp $user_tmp $gemini_tmp $chatgpt_tmp"
-
-    trap '_cleanup_rebuild' RETURN
 
     extract_user_domains "$source_file" > "$user_tmp"
     extract_block "$source_file" "gemini" > "$gemini_tmp"
     extract_block "$source_file" "chatgpt" > "$chatgpt_tmp"
+
     {
         cat << 'EOF'
 # ==========================================
@@ -973,6 +963,7 @@ EOF
     } > "$tmp"
 
     mv "$tmp" "$output_file"
+    rm -f "$user_tmp" "$gemini_tmp" "$chatgpt_tmp"
 }
 
 canonical_master_hash() {
