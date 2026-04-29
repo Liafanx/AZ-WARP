@@ -1,10 +1,10 @@
 [Unit]
 Description=WARPER Auto-Patch Kresd on Boot
-After=network-online.target kresd@1.service kresd@2.service
+After=network-online.target kresd@1.service kresd@2.service sing-box.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/warper patch
+ExecStart=/bin/bash -c '/usr/local/bin/warper patch; sleep 2; /usr/local/bin/warper ipsync || true'
 RemainAfterExit=yes
 
 [Install]
