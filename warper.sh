@@ -732,11 +732,12 @@ sync_ip_ranges() {
     detect_client_subnets
 
     local desired_tmp applied_tmp add_tmp del_tmp
-    desired_tmp=$(mktemp)
-    applied_tmp=$(mktemp)
-    add_tmp=$(mktemp)
-    del_tmp=$(mktemp)
-    trap 'rm -f "$desired_tmp" "$applied_tmp" "$add_tmp" "$del_tmp"' RETURN
+    desired_tmp=$(mktemp) || desired_tmp="/tmp/desired.$$"
+    applied_tmp=$(mktemp) || applied_tmp="/tmp/applied.$$"
+    add_tmp=$(mktemp)     || add_tmp="/tmp/add.$$"
+    del_tmp=$(mktemp)     || del_tmp="/tmp/del.$$"
+
+    trap 'rm -f "$desired_tmp" "$applied_tmp" "$add_tmp" "$del_tmp" 2>/dev/null || true' RETURN
 
     extract_ip_ranges > "$desired_tmp"
     get_applied_ip_routes > "$applied_tmp"
@@ -753,7 +754,7 @@ sync_ip_ranges() {
         use_ipset=true
     fi
 
-    # Удаляем лишние маршруты и записи ipset
+    # Удаляем лишние
     while IFS= read -r cidr; do
         [ -z "$cidr" ] && continue
         if [ -z "$source_net" ]; then
@@ -766,7 +767,7 @@ sync_ip_ranges() {
         fi
     done < "$del_tmp"
 
-    # Добавляем недостающие маршруты и записи ipset
+    # Добавляем новые
     while IFS= read -r cidr; do
         [ -z "$cidr" ] && continue
         if [ -z "$source_net" ]; then
@@ -846,14 +847,16 @@ remove_all_ip_routes() {
 
 ip_ranges_in_sync() {
     local desired_tmp applied_tmp
-    desired_tmp=$(mktemp)
-    applied_tmp=$(mktemp)
-    trap 'rm -f "$desired_tmp" "$applied_tmp"' RETURN
+    desired_tmp=$(mktemp) || desired_tmp="/tmp/desired.$$"
+    applied_tmp=$(mktemp) || applied_tmp="/tmp/applied.$$"
+
+    trap 'rm -f "$desired_tmp" "$applied_tmp" 2>/dev/null || true' RETURN
 
     extract_ip_ranges > "$desired_tmp"
     get_applied_ip_routes > "$applied_tmp"
 
     cmp -s "$desired_tmp" "$applied_tmp"
+    return $?
 }
 
 count_ip_ranges() {
