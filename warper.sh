@@ -609,6 +609,14 @@ extract_block() {
     ' "$input"
 }
 
+_rebuild_master_tmpfiles=""
+
+_cleanup_rebuild() {
+    # shellcheck disable=SC2086
+    rm -f $_rebuild_master_tmpfiles
+    _rebuild_master_tmpfiles=""
+}
+
 rebuild_master_file() {
     local source_file="${1:-$MASTER_FILE}"
     local output_file="${2:-$MASTER_FILE}"
@@ -617,11 +625,8 @@ rebuild_master_file() {
     user_tmp=$(mktemp)
     gemini_tmp=$(mktemp)
     chatgpt_tmp=$(mktemp)
+    _rebuild_master_tmpfiles="$tmp $user_tmp $gemini_tmp $chatgpt_tmp"
 
-    # Гарантируем очистку временных файлов при любом выходе из функции
-    local _cleanup_rebuild() {
-        rm -f "$tmp" "$user_tmp" "$gemini_tmp" "$chatgpt_tmp"
-    }
     trap '_cleanup_rebuild' RETURN
 
     extract_user_domains "$source_file" > "$user_tmp"
