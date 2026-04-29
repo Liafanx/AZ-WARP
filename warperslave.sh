@@ -7,7 +7,7 @@ SLAVE_CONF="$SLAVE_DIR/slave.conf"
 WGCF_DIR="$SLAVE_DIR/wgcf"
 SINGBOX_SLAVE_CONF="/etc/sing-box-slave/config.json"
 SERVICE_NAME="sing-box-slave"
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/1.3.0beta"
 LOCAL_VER=$(cat "$SLAVE_DIR/versionslave" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 
 RED='\033[0;31m'
