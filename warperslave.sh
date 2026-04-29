@@ -4,6 +4,7 @@ set -uo pipefail
 
 SLAVE_DIR="/root/warperslave"
 SLAVE_CONF="$SLAVE_DIR/slave.conf"
+WGCF_DIR="$SLAVE_DIR/wgcf"
 SINGBOX_SLAVE_CONF="/etc/sing-box-slave/config.json"
 SERVICE_NAME="sing-box-slave"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
@@ -356,30 +357,227 @@ download_file_safe() {
     return 0
 }
 
+syntax_check_bash_file() {
+    local file="$1"
+    local desc="$2"
+    if ! bash -n "$file"; then
+        echo -e "${RED}Ошибка синтаксиса в ${desc}${NC}"
+        return 1
+    fi
+    return 0
+}
+
+validate_template_marker() {
+    local file="$1"
+    local marker="$2"
+    local desc="$3"
+    if ! grep -qF "$marker" "$file" 2>/dev/null; then
+        echo -e "${RED}Файл ${desc} повреждён или неполон.${NC}"
+        return 1
+    fi
+    return 0
+}
+
+slave_backup_if_exists() {
+    local src="$1"
+    local dst="$2"
+    if [ -e "$src" ]; then
+        mkdir -p "$(dirname "$dst")"
+        cp -a "$src" "$dst"
+    fi
+}
+
+slave_restore_if_exists() {
+    local src="$1"
+    local dst="$2"
+    if [ -e "$src" ]; then
+        mkdir -p "$(dirname "$dst")"
+        cp -a "$src" "$dst"
+    fi
+}
+
+rollback_warperslave_update() {
+    local backupdir="$1"
+
+    slave_restore_if_exists "$backupdir/warperslave.sh" "$SLAVE_DIR/warperslave.sh"
+    slave_restore_if_exists "$backupdir/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh"
+    slave_restore_if_exists "$backupdir/versionslave" "$SLAVE_DIR/versionslave"
+
+    slave_restore_if_exists "$backupdir/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service"
+    slave_restore_if_exists "$backupdir/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template"
+    slave_restore_if_exists "$backupdir/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template"
+
+    chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh" 2>/dev/null || true
+    ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
 update_warperslave() {
+    load_config
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
 
-    download_file_safe "$REPO_URL/warperslave.sh" "$SLAVE_DIR/warperslave.sh" "warperslave.sh" || return 1
-    download_file_safe "$REPO_URL/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" "uninstall-slave.sh" || return 1
-    download_file_safe "$REPO_URL/versionslave" "$SLAVE_DIR/versionslave" "versionslave" || return 1
-    download_file_safe "$REPO_URL/templates/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service" "sing-box-slave.service" || return 1
-    download_file_safe "$REPO_URL/templates/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" "шаблон direct" || true
-    download_file_safe "$REPO_URL/templates/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" "шаблон warp" || true
+    local tmpdir backupdir
+    local had_service=false
 
-    chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
-    systemctl daemon-reload
+    tmpdir=$(mktemp -d /tmp/warperslave-update.XXXXXX) || {
+        echo -e "${RED}Не удалось создать временную директорию.${NC}"
+        return 1
+    }
+
+    backupdir=$(mktemp -d /tmp/warperslave-backup.XXXXXX) || {
+        rm -rf "$tmpdir"
+        echo -e "${RED}Не удалось создать директорию для backup.${NC}"
+        return 1
+    }
+
+    # ===== Скачиваем всё во временную директорию =====
+    download_file_safe "$REPO_URL/warperslave.sh" "$tmpdir/warperslave.sh" "warperslave.sh" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    download_file_safe "$REPO_URL/uninstall-slave.sh" "$tmpdir/uninstall-slave.sh" "uninstall-slave.sh" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    download_file_safe "$REPO_URL/versionslave" "$tmpdir/versionslave" "versionslave" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    download_file_safe "$REPO_URL/templates/sing-box-slave.service" "$tmpdir/sing-box-slave.service" "sing-box-slave.service" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    download_file_safe "$REPO_URL/templates/config-slave-direct.json.template" "$tmpdir/config-slave-direct.json.template" "шаблон direct" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    download_file_safe "$REPO_URL/templates/config-slave-warp.json.template" "$tmpdir/config-slave-warp.json.template" "шаблон warp" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    # ===== Проверяем синтаксис bash-скриптов =====
+    syntax_check_bash_file "$tmpdir/warperslave.sh" "warperslave.sh" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    syntax_check_bash_file "$tmpdir/uninstall-slave.sh" "uninstall-slave.sh" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    # ===== Проверяем шаблоны =====
+    validate_template_marker "$tmpdir/config-slave-direct.json.template" "__SLAVE_PORT__" "config-slave-direct.json.template" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    validate_template_marker "$tmpdir/config-slave-direct.json.template" "__SLAVE_PASSWORD__" "config-slave-direct.json.template" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    validate_template_marker "$tmpdir/config-slave-warp.json.template" "__WARP_ADDRESS__" "config-slave-warp.json.template" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+    validate_template_marker "$tmpdir/config-slave-warp.json.template" "__SLAVE_PASSWORD__" "config-slave-warp.json.template" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    # Проверяем unit-файл, если есть systemd-analyze
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        systemd-analyze verify "$tmpdir/sing-box-slave.service" >/dev/null 2>&1 || {
+            echo -e "${RED}Некорректный unit-файл sing-box-slave.service${NC}"
+            rm -rf "$tmpdir" "$backupdir"
+            return 1
+        }
+    fi
+
+    # ===== Backup текущих файлов =====
+    slave_backup_if_exists "$SLAVE_DIR/warperslave.sh" "$backupdir/warperslave.sh"
+    slave_backup_if_exists "$SLAVE_DIR/uninstall-slave.sh" "$backupdir/uninstall-slave.sh"
+    slave_backup_if_exists "$SLAVE_DIR/versionslave" "$backupdir/versionslave"
+
+    slave_backup_if_exists "/etc/systemd/system/${SERVICE_NAME}.service" "$backupdir/sing-box-slave.service"
+    slave_backup_if_exists "$SLAVE_DIR/config-slave-direct.json.template" "$backupdir/config-slave-direct.json.template"
+    slave_backup_if_exists "$SLAVE_DIR/config-slave-warp.json.template" "$backupdir/config-slave-warp.json.template"
 
     if systemctl is-active --quiet "$SERVICE_NAME"; then
+        had_service=true
+    fi
+
+    # ===== Устанавливаем новые файлы =====
+    install -m 755 "$tmpdir/warperslave.sh" "$SLAVE_DIR/warperslave.sh" || {
+        echo -e "${RED}Ошибка установки warperslave.sh, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    install -m 755 "$tmpdir/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" || {
+        echo -e "${RED}Ошибка установки uninstall-slave.sh, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    install -m 644 "$tmpdir/versionslave" "$SLAVE_DIR/versionslave" || {
+        echo -e "${RED}Ошибка установки versionslave, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    install -m 644 "$tmpdir/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service" || {
+        echo -e "${RED}Ошибка установки sing-box-slave.service, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    install -m 644 "$tmpdir/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" || {
+        echo -e "${RED}Ошибка установки шаблона direct, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    install -m 644 "$tmpdir/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" || {
+        echo -e "${RED}Ошибка установки шаблона warp, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
+    ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
+
+    if ! systemctl daemon-reload; then
+        echo -e "${RED}Ошибка systemctl daemon-reload, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    fi
+
+    # ===== Если служба была активна — проверяем, что она поднимется после обновления =====
+    if [ "$had_service" = true ]; then
         echo -e "${CYAN}Перезапуск $SERVICE_NAME...${NC}"
         systemctl restart "$SERVICE_NAME"
         sleep 2
-        if systemctl is-active --quiet "$SERVICE_NAME"; then
-            echo -e "${GREEN}Служба перезапущена.${NC}"
-        else
-            echo -e "${YELLOW}Предупреждение: служба не запустилась после обновления.${NC}"
-            journalctl -u "$SERVICE_NAME" -n 10 --no-pager 2>/dev/null || true
+
+        if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo -e "${RED}Служба не запустилась после обновления, выполняется откат.${NC}"
+            rollback_warperslave_update "$backupdir"
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+            rm -rf "$tmpdir" "$backupdir"
+            return 1
         fi
+
+        echo -e "${GREEN}Служба перезапущена.${NC}"
     fi
+
+    rm -rf "$tmpdir" "$backupdir"
 
     local new_ver
     new_ver=$(cat "$SLAVE_DIR/versionslave" 2>/dev/null | tr -d '\r\n' || echo "?")
