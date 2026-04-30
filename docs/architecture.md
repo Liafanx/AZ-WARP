@@ -1,6 +1,6 @@
 # 🏗 Архитектура WARPER
 
-## Общая схема доменов
+## Общая схема для доменов
 
 ```
 AntiZapret-клиенты → kresd@1 → WARPER-домены → sing-box → WARP / Slave / WG
@@ -22,36 +22,11 @@ FullVPN-клиенты → kresd@2 → всё → встроенный WARP ав
 | warper.conf | /root/warper/ | Настройки (подсеть, TUN IP) |
 | slave_mode.conf | /root/warper/ | Настройки режима (WARP/Slave/WG) |
 | wg_mode.conf | /root/warper/ | Параметры WG-соединения |
-
-## Режим WARP
-
-```
-kresd@1 → fake-ip (198.20.0.0/24) → singbox-tun → WireGuard endpoint → Cloudflare WARP
-```
-
-## Режим Slave
-
-```
-kresd@1 → fake-ip → singbox-tun → Shadowsocks outbound → slave-сервер:8444
-```
-
-## Режим WG
-
-```
-kresd@1 → fake-ip → singbox-tun → WireGuard endpoint → WG-сервер
-```
+| ip-ranges.txt | /root/warper/ | Желаемые CIDR (редактируется пользователем) |
+| ip-ranges.applied | /root/warper/ |Последнее применённое состояние |
+| warper-include-ips.txt | /root/antizapret/config/ | Экспорт в AntiZapret |
 
 ## Маршрутизация по IP-подсетям
-
-### Файлы
-
-| Файл | Назначение |
-|---|---|
-| ip-ranges.txt | Желаемые CIDR (редактируется пользователем) |
-| ip-ranges.applied | Последнее применённое состояние |
-| warper-include-ips.txt | Экспорт в AntiZapret (в `/root/antizapret/config/`) |
-
-### Режимы
 
 | Режим | Механизм |
 |---|---|
@@ -74,6 +49,24 @@ ip-ranges.txt → extract_ip_ranges()
          save → ip-ranges.applied
                     ↓
          sync_ip_ranges_to_antizapret() → warper-include-ips.txt → doall.sh ip
+```
+
+## Режим WARP
+
+```
+kresd@1/ip route → fake-ip (198.20.0.0/24) → singbox-tun → WireGuard endpoint → Cloudflare WARP
+```
+
+## Режим Slave
+
+```
+kresd@1/ip route → fake-ip → singbox-tun → Shadowsocks outbound → slave-сервер:8444
+```
+
+## Режим WG
+
+```
+kresd@1/ip route → fake-ip → singbox-tun → WireGuard endpoint → WG-сервер
 ```
 
 ### Интеграция с AntiZapret
