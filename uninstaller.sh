@@ -138,6 +138,7 @@ else
 fi
 
 echo -e "\n${YELLOW}4.5. Удаление пользовательских IP-маршрутов...${NC}"
+
 # Удаляем маршруты из таблицы 100
 if [ -f "/root/warper/ip-ranges.applied" ]; then
     while IFS= read -r cidr; do
@@ -147,6 +148,7 @@ if [ -f "/root/warper/ip-ranges.applied" ]; then
     done < "/root/warper/ip-ranges.applied"
     rm -f "/root/warper/ip-ranges.applied"
 fi
+
 # Удаляем все ip rule от WARPER
 for prefix in 10 172; do
     while ip rule show 2>/dev/null | grep -q "from ${prefix}.29.0.0/16 lookup 100"; do
@@ -157,6 +159,19 @@ for prefix in 10 172; do
     done
 done
 echo -e " - ${GREEN}IP-маршруты и правила маршрутизации удалены.${NC}"
+
+echo -e "\n${YELLOW}4.6. Очистка экспорта WARPER в AntiZapret...${NC}"
+if [ -f "/root/antizapret/config/warper-include-ips.txt" ]; then
+    rm -f "/root/antizapret/config/warper-include-ips.txt"
+    echo -e " - ${CYAN}Файл warper-include-ips.txt удалён.${NC}"
+    echo -e " - ${CYAN}Обновление маршрутов AntiZapret (doall.sh ip)...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
+    export SYSTEMD_PAGER=""
+    bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1 || true
+    echo -e " - ${GREEN}Маршруты AntiZapret обновлены.${NC}"
+else
+    echo -e " - ${GREEN}Файл warper-include-ips.txt не найден, пропускаем.${NC}"
+fi
 
 echo -e "\n${YELLOW}5. Удаление правил firewall...${NC}"
 remove_iptables_rule FORWARD -o singbox-tun
@@ -169,7 +184,14 @@ rm -f /etc/knot-resolver/warper-domains.txt
 
 if [ "$KEEP_DOMAINS" = true ]; then
     echo -e " - ${CYAN}Очистка папки /root/warper (с сохранением настроек, доменов и ключей WARP)...${NC}"
-    find /root/warper -type f -not -name 'domains.txt' -not -name 'warper.conf' -not -path '*/wgcf/*' -delete 2>/dev/null
+    find /root/warper -type f \
+        -not -name 'domains.txt' \
+        -not -name 'warper.conf' \
+        -not -name 'ip-ranges.txt' \
+        -not -name 'slave_mode.conf' \
+        -not -name 'wg_mode.conf' \
+        -not -path '*/wgcf/*' \
+        -delete 2>/dev/null
     rm -rf /root/warper/download 2>/dev/null
     echo -e " - ${GREEN}Настройки сохранены!${NC}"
 else
