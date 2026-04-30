@@ -688,6 +688,11 @@ get_applied_ip_routes() {
     LC_ALL=C sort -u "$applied_file"
 }
 
+save_applied_ip_routes() {
+    local applied_file="$WARPER_DIR/ip-ranges.applied"
+    extract_ip_ranges | LC_ALL=C sort -u > "$applied_file"
+}
+
 get_current_kernel_ip_routes() {
     local source_net
     source_net=$(get_rule_source_net)
@@ -3021,7 +3026,7 @@ ip_ranges_menu() {
                 detect_client_subnets
                 echo -e " ${GREEN}1.${NC} Только AntiZapret   (${AZ_CLIENT_NET})"
                 echo -e " ${CYAN}2.${NC} AntiZapret + FullVPN (${ALL_CLIENT_NET})"
-                echo -e " ${YELLOW}3.${NC} Весь трафик сервера  (без ограничений по source)"
+                echo -e " ${YELLOW}3.${NC} Весь трафик сервера (Beta)"
                 echo -e " ${CYAN}0.${NC} Отмена"
                 echo -e ""
                 read -r -e -p "Выбор [0-3]: " mode_choice
