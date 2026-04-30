@@ -858,7 +858,7 @@ sync_ip_ranges() {
     if [ -n "$source_net" ]; then
         echo -e "${CYAN}Режим: ${IP_ROUTE_MODE} (source: ${source_net})${NC}"
     else
-        echo -e "${CYAN}Режим: server/main table${NC}"
+        echo -e "${CYAN}Режим: Весь трафик сервера (Beta)${NC}"
     fi
 
     if (( errors > 0 )); then
