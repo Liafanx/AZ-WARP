@@ -376,6 +376,7 @@ done
     echo "SUBNET=$SUBNET"
     echo "TUN_IP=$TUN_IP"
     echo "IP_ROUTE_MODE=antizapret"
+    echo "IP_EXPORT_TO_ANTIZAPRET=n"
 } > "$CONF_FILE"
 chmod 600 "$CONF_FILE"
 echo -e "${GREEN}✔ Подсеть $SUBNET установлена.${NC}"
