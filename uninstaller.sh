@@ -126,10 +126,10 @@ if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then
     sed -i "\|$SUBNET|d" "$AZ_INC"
     normalize_include_ips "$AZ_INC"
 
-    echo -e " - ${CYAN}Запуск doall.sh (обновление конфигурации AntiZapret, подождите)...${NC}"
+    echo -e " - ${CYAN}Запуск doall.sh ip (обновление конфигурации AntiZapret, подождите)...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     export SYSTEMD_PAGER=""
-    bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
+    bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1
 
     echo -e " - ${GREEN}Конфигурация маршрутов успешно восстановлена!${NC}"
 else
