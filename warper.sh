@@ -3155,7 +3155,7 @@ settings_menu() {
                             chmod 600 "$CONF_FILE"
                             echo -e "${YELLOW}⏳ Обновление маршрутов AntiZapret...${NC}"
                             export DEBIAN_FRONTEND=noninteractive SYSTEMD_PAGER=""
-                            bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
+                            bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1
                             systemctl restart sing-box
                             if ! ensure_singbox_running; then sleep 2; break; fi
                             ensure_iptables_rule FORWARD -o singbox-tun
