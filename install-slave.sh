@@ -3,7 +3,7 @@
 set -uo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
-SB_VERSION="1.13.5"
+SB_VERSION="1.13.11"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
