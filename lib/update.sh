@@ -289,10 +289,10 @@ update_warper() {
         sync_domains >/dev/null 2>&1 || true
     fi
 
-    # Пересинхронизируем IP-маршруты
+    # Пересинхронизируем IP-маршруты уже новым экземпляром warper
     if is_warper_active && [ "$(count_ip_ranges)" -gt 0 ]; then
         echo -e "${CYAN}Синхронизация IP-маршрутов...${NC}"
-        sync_ip_ranges || true
+        /usr/local/bin/warper ipsync >/dev/null 2>&1 || true
     fi
 
     rm -rf "$tmpdir" "$backupdir"
