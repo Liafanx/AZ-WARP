@@ -177,7 +177,7 @@ show_main_menu() {
     else
         fullvpn_resolve_display="${RED}ВЫКЛ${NC}"
     fi
-    echo -e " 🌐 ${CYAN}FullVPN WARP:${NC}  $fullvpn_resolve_display"    
+    echo -e " 🌐 ${CYAN}FullVPN WARP доменов:${NC}  $fullvpn_resolve_display"    
 
     # Предупреждение о правилах up.sh
     if needs_down_sh; then
