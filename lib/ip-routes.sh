@@ -264,10 +264,10 @@ sync_ip_ranges() {
     rm -f "$_raw_tmp"
 
     # Что добавить: есть в файле, нет в kernel
-    comm -23 "$desired_tmp" "$kernel_tmp" > "$add_tmp"
+    LC_ALL=C comm -23 "$desired_tmp" "$kernel_tmp" > "$add_tmp"
 
     # Что удалить: было применено WARPER, но уже удалено из файла
-    comm -23 "$applied_tmp" "$desired_tmp" > "$del_tmp"
+    LC_ALL=C comm -23 "$applied_tmp" "$desired_tmp" > "$del_tmp"
 
     local added=0 removed=0 errors=0
     local source_net
