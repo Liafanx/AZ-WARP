@@ -1001,6 +1001,20 @@ download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_D
 download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
 
+# Скачиваем модули lib/
+echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
+mkdir -p "$WARPER_DIR/lib"
+for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update; do
+    download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
+done
+
+# Скачиваем модули menus/
+echo -e " - ${CYAN}Скачивание модулей menus/...${NC}"
+mkdir -p "$WARPER_DIR/menus"
+for _menufile in main settings singbox-menu ip-menu; do
+    download_file "$REPO_URL/menus/${_menufile}.sh" "$WARPER_DIR/menus/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
+done
+
 # Создаём ip-ranges.txt если не существует
 if [ ! -f "$WARPER_DIR/ip-ranges.txt" ]; then
 cat << 'IPEOF' > "$WARPER_DIR/ip-ranges.txt"
