@@ -13,9 +13,12 @@
 extract_ip_ranges() {
     local file="${1:-$IP_RANGES_FILE}"
     [ -f "$file" ] || return 0
-    grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$file" | while IFS= read -r line; do
+    # удаляем \r (windows line endings), затем убираем комментарии и пустые строки
+    sed 's/\r$//' "$file" | grep -vE '^\s*#|^\s*$' | while IFS= read -r line; do
         local trimmed
         trimmed=$(echo "$line" | tr -d '[:space:]')
+        # пропускаем строки, ставшие пустыми после очистки
+        [ -z "$trimmed" ] && continue
         if validate_cidr "$trimmed" >/dev/null 2>&1; then
             echo "$trimmed"
         fi
