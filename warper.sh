@@ -1,4 +1,6 @@
 #!/bin/bash
+# WARPER – точечная маршрутизация доменов и IP-подсетей через WARP/Slave/WG
+# Подробности: https://github.com/Liafanx/AZ-WARP
 
 set -uo pipefail
 
@@ -34,7 +36,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# ===== Переменные состояния =====
+# ===== Глобальные переменные состояния =====
 SUBNET="198.20.0.0/24"
 TUN_IP="198.20.0.1/24"
 CURRENT_OUTBOUND_MODE="warp"
@@ -59,7 +61,7 @@ REMOTE_VER_TIME=0
 MENU_UPDATE_AVAILABLE=false
 MENU_REMOTE_VER="$LOCAL_VER"
 
-# ===== Lock =====
+# ===== Lock-файл =====
 acquire_lock() {
     exec 9>"$LOCK_FILE"
     if ! flock -n 9; then
@@ -84,6 +86,7 @@ for _lib in \
     "$WARPER_LIB/warp-keys.sh" \
     "$WARPER_LIB/wg.sh" \
     "$WARPER_LIB/ip-routes.sh" \
+    "$WARPER_LIB/diagnostics.sh" \
     "$WARPER_LIB/update.sh" \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
@@ -99,7 +102,7 @@ do
 done
 unset _lib
 
-# ===== Инициализация domains.txt =====
+# ===== Инициализация файлов =====
 if [ ! -f "$MASTER_FILE" ]; then
 cat << 'EOF' > "$MASTER_FILE"
 # ==========================================
@@ -112,7 +115,6 @@ cat << 'EOF' > "$MASTER_FILE"
 EOF
 fi
 
-# ===== Инициализация ip-ranges.txt =====
 if [ ! -f "$IP_RANGES_FILE" ]; then
 cat << 'IPEOF' > "$IP_RANGES_FILE"
 # Добавление IPv4-адресов для маршрутизации через Warper (Sing-box tun)
@@ -125,7 +127,7 @@ cat << 'IPEOF' > "$IP_RANGES_FILE"
 IPEOF
 fi
 
-# ===== Загрузка конфигурации =====
+# ===== Загрузка настроек =====
 load_config
 load_wg_config
 rebuild_master_file
@@ -162,5 +164,5 @@ case "${1:-}" in
     iproutes) get_current_tun_routes; exit $? ;;
 esac
 
-# ===== Интерактивное меню =====
+# ===== Главное меню =====
 run_main_menu
