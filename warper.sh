@@ -84,18 +84,23 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
     echo -e "${YELLOW}Обнаружена старая версия WARPER. Загружаю модули...${NC}"
     mkdir -p "$WARPER_LIB" "$WARPER_MENUS"
 
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update; do
-        if ! download_file_safe "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh"; then
-            echo -e "${RED}Не удалось загрузить модуль lib/${_libfile}.sh. Обновление не завершено.${NC}" >&2
-            exit 1
+    _fetch_module() {
+        local url="$1" dest="$2" desc="$3"
+        if curl -fsSL --retry 3 --connect-timeout 10 "${url}?t=$(date +%s)" -o "$dest"; then
+            if [ -s "$dest" ]; then
+                return 0
+            fi
         fi
+        echo -e "${RED}Не удалось загрузить ${desc}${NC}" >&2
+        return 1
+    }
+
+    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update; do
+        _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
     for _menufile in main settings singbox-menu ip-menu; do
-        if ! download_file_safe "$REPO_URL/menus/${_menufile}.sh" "$WARPER_MENUS/${_menufile}.sh" "menus/${_menufile}.sh"; then
-            echo -e "${RED}Не удалось загрузить модуль menus/${_menufile}.sh. Обновление не завершено.${NC}" >&2
-            exit 1
-        fi
+        _fetch_module "$REPO_URL/menus/${_menufile}.sh" "$WARPER_MENUS/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
     done
 
     echo -e "${GREEN}Модули успешно загружены. Перезапустите WARPER.${NC}"
