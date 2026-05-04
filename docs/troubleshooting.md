@@ -93,6 +93,24 @@ PersistentKeepalive = 15
 
 **Решение:** Обновите WARPERSLAVE или переключите режим: `warperslave` → 1 (switch) — конфиг пересоберётся с `"strategy": "ipv4_only"`.
 
+### Ошибка «Отсутствует модуль ...» при запуске WARPER
+
+**Симптом:** после обновления появляется сообщение `Отсутствует модуль: /root/warper/lib/utils.sh`.
+
+**Решение:**  
+Запустите WARPER ещё раз — он автоматически скачает недостающие модули.  
+Если ошибка повторяется, выполните вручную:
+```bash
+mkdir -p /root/warper/lib /root/warper/menus
+cd /root/warper
+for lib in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update; do
+    curl -fsSL "https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/lib/${lib}.sh" -o "lib/${lib}.sh"
+done
+for menu in main settings singbox-menu ip-menu; do
+    curl -fsSL "https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/menus/${menu}.sh" -o "menus/${menu}.sh"
+done
+```
+
 ## Логи
 
 ```bash
