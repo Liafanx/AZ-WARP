@@ -10,7 +10,7 @@ apt-get install -y curl wget jq iptables openssl
 ## Шаг 2. Установка sing-box
 
 ```bash
-curl -fsSL https://sing-box.app/install.sh | bash -s -- --version 1.13.5
+curl -fsSL https://sing-box.app/install.sh | bash -s -- --version 1.13.11
 ```
 
 ## Шаг 3. Генерация ключа Shadowsocks
