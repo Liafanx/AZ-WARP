@@ -1,22 +1,21 @@
 """
 AZ-WARP Web Panel
-Главный Flask-приложение с роутами и HTMX endpoints.
+Главное Flask-приложение с роутами и HTMX endpoints.
 """
 
+import json as _json
 import logging
 import os
 import sys
-from functools import wraps
 from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import (
-    Flask, abort, flash, jsonify, make_response,
+    Flask, abort, flash, make_response,
     redirect, render_template, request, url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
 
-# Добавляем текущую директорию в path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import warper_api as api
@@ -38,11 +37,10 @@ app = Flask(
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(32).hex())
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB на загрузку WG конфига
+app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 
 init_auth(app)
 
-# Логирование
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -50,40 +48,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ===== Утилиты ответов =====
+# ===== Помощники =====
 
-def _is_htmx() -> bool:
-    return request.headers.get("HX-Request") == "true"
-
-
-def _flash_partial(message: str, category: str = "success"):
-    """Возвращает HTML-фрагмент с уведомлением для HTMX (через HX-Trigger)."""
-    resp = make_response("")
-    # Используем HX-Trigger для показа toast через JS
-    import json as _json
-    payload = _json.dumps({"showToast": {"message": message, "category": category}})
-    resp.headers["HX-Trigger"] = payload
-    return resp
-
-
-def _result_partial(ok: bool, message: str, refresh_target: str | None = None):
+def _result_partial(ok, message, refresh_target=None):
     """
-    Универсальный ответ на HTMX-действие.
-    Возвращает 204 No Content + триггеры для toast и обновления.
-    HTMX при 204 НЕ заменяет содержимое
+    Возвращает 204 No Content + HX-Trigger для toast и обновления UI.
     """
-    import json as _json
     category = "success" if ok else "error"
-    triggers: dict = {"showToast": {"message": message, "category": category}}
+    triggers = {"showToast": {"message": message or ("Готово" if ok else "Ошибка"), "category": category}}
     if ok and refresh_target:
         triggers[refresh_target] = True
 
     resp = make_response("", 204)
-    resp.headers["HX-Trigger"] = _json.dumps(triggers)
+    resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=False)
     return resp
 
 
-# ===== Роуты страниц =====
+# ===== Страницы =====
 
 @app.route("/")
 @login_required
@@ -133,7 +114,8 @@ def domains_page():
 @app.route("/ip-ranges")
 @login_required
 def ip_ranges_page():
-    return render_template("ip_ranges.html")
+    status = api.get_status()
+    return render_template("ip_ranges.html", status=status)
 
 
 @app.route("/singbox")
@@ -168,7 +150,7 @@ def settings_page():
     )
 
 
-# ===== HTMX endpoints: статус =====
+# ===== HTMX: статус =====
 
 @app.route("/htmx/status-summary")
 @login_required
@@ -177,7 +159,21 @@ def htmx_status_summary():
     return render_template("partials/status_summary.html", status=status)
 
 
-# ===== HTMX endpoints: домены =====
+@app.route("/htmx/toggle-warper", methods=["POST"])
+@login_required
+def htmx_toggle_warper():
+    ok, msg = api.toggle_warper()
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/patch-kresd", methods=["POST"])
+@login_required
+def htmx_patch_kresd():
+    ok, msg = api.patch_kresd()
+    return _result_partial(ok, msg, "refreshAll")
+
+
+# ===== HTMX: домены =====
 
 @app.route("/htmx/domains-list")
 @login_required
@@ -186,14 +182,23 @@ def htmx_domains_list():
     if filter_type == "all":
         filter_type = None
     search = request.args.get("q") or None
-    domains = api.get_domains(filter_type=filter_type, search=search)
 
-    # Также узнаём состояние списков
+    # Получаем все домены ОДИН раз и сами фильтруем (быстрее)
     all_domains = api.get_domains()
-    gemini_enabled = any(d["enabled"] for d in all_domains if d["type"] == "gemini")
-    chatgpt_enabled = any(d["enabled"] for d in all_domains if d["type"] == "chatgpt")
+
+    # Состояние списков для карточек Gemini/ChatGPT
     has_gemini = any(d["type"] == "gemini" for d in all_domains)
     has_chatgpt = any(d["type"] == "chatgpt" for d in all_domains)
+    gemini_enabled = has_gemini and any(d["enabled"] for d in all_domains if d["type"] == "gemini")
+    chatgpt_enabled = has_chatgpt and any(d["enabled"] for d in all_domains if d["type"] == "chatgpt")
+
+    # Фильтрация
+    domains = all_domains
+    if filter_type:
+        domains = [d for d in domains if d["type"] == filter_type]
+    if search:
+        s = search.lower()
+        domains = [d for d in domains if s in d["name"].lower()]
 
     return render_template(
         "partials/domains_list.html",
@@ -225,10 +230,8 @@ def htmx_domain_bulk_add():
     if not domains:
         return _result_partial(False, "Список пуст")
     result = api.add_domains_bulk(domains)
-    msg = (
-        f"Добавлено: {result['added_count']}, "
-        f"пропущено: {result['skipped_count']}, "
-        f"ошибок: {result['error_count']}"
+    msg = "Добавлено: %d, пропущено: %d, ошибок: %d" % (
+        result["added_count"], result["skipped_count"], result["error_count"]
     )
     return _result_partial(True, msg, "refreshDomains")
 
@@ -261,7 +264,7 @@ def htmx_domain_sync():
     return _result_partial(ok, msg or "Синхронизация завершена", "refreshDomains")
 
 
-# ===== HTMX endpoints: IP-подсети =====
+# ===== HTMX: IP-подсети =====
 
 @app.route("/htmx/ip-ranges-list")
 @login_required
@@ -295,10 +298,8 @@ def htmx_ip_bulk_add():
     if not cidrs:
         return _result_partial(False, "Список пуст")
     result = api.add_ip_ranges_bulk(cidrs)
-    msg = (
-        f"Добавлено: {result['added_count']}, "
-        f"пропущено: {result['skipped_count']}, "
-        f"ошибок: {result['error_count']}"
+    msg = "Добавлено: %d, пропущено: %d, ошибок: %d" % (
+        result["added_count"], result["skipped_count"], result["error_count"]
     )
     return _result_partial(True, msg, "refreshIpRanges")
 
@@ -336,7 +337,7 @@ def htmx_ip_export_toggle():
     return _result_partial(ok, msg, "refreshIpRanges")
 
 
-# ===== HTMX endpoints: sing-box =====
+# ===== HTMX: sing-box =====
 
 @app.route("/htmx/singbox-status")
 @login_required
@@ -347,28 +348,14 @@ def htmx_singbox_status():
 
 @app.route("/htmx/singbox/<action>", methods=["POST"])
 @login_required
-def htmx_singbox_action(action: str):
+def htmx_singbox_action(action):
     if action not in ("start", "stop", "restart", "enable", "disable"):
         abort(400)
     ok, msg = api.singbox_action(action)
-    return _result_partial(ok, msg or f"sing-box {action}", "refreshSingbox")
+    return _result_partial(ok, msg or "sing-box %s" % action, "refreshSingbox")
 
 
-@app.route("/htmx/toggle-warper", methods=["POST"])
-@login_required
-def htmx_toggle_warper():
-    ok, msg = api.toggle_warper()
-    return _result_partial(ok, msg, "refreshAll")
-
-
-@app.route("/htmx/patch-kresd", methods=["POST"])
-@login_required
-def htmx_patch_kresd():
-    ok, msg = api.patch_kresd()
-    return _result_partial(ok, msg, "refreshAll")
-
-
-# ===== HTMX endpoints: логи =====
+# ===== HTMX: логи =====
 
 @app.route("/htmx/logs")
 @login_required
@@ -384,7 +371,7 @@ def htmx_logs():
     return render_template("partials/logs_content.html", logs=logs)
 
 
-# ===== HTMX endpoints: диагностика =====
+# ===== HTMX: диагностика =====
 
 @app.route("/htmx/doctor")
 @login_required
@@ -393,14 +380,14 @@ def htmx_doctor():
     return render_template("partials/doctor_results.html", results=results)
 
 
-# ===== HTMX endpoints: настройки =====
+# ===== HTMX: настройки =====
 
 @app.route("/htmx/settings/autopatch", methods=["POST"])
 @login_required
 def htmx_settings_autopatch():
     enable = request.form.get("enable", "0") == "1"
     ok, msg = api.set_autopatch(enable)
-    return _result_partial(ok, msg, "refreshSettings")
+    return _result_partial(ok, msg, "refreshAll")
 
 
 @app.route("/htmx/settings/fullvpn", methods=["POST"])
@@ -408,7 +395,7 @@ def htmx_settings_autopatch():
 def htmx_settings_fullvpn():
     enable = request.form.get("enable", "0") == "1"
     ok, msg = api.set_fullvpn(enable)
-    return _result_partial(ok, msg, "refreshSettings")
+    return _result_partial(ok, msg, "refreshAll")
 
 
 @app.route("/htmx/settings/log-level", methods=["POST"])
@@ -416,7 +403,7 @@ def htmx_settings_fullvpn():
 def htmx_settings_log_level():
     level = request.form.get("level", "")
     ok, msg = api.set_log_level(level)
-    return _result_partial(ok, msg, "refreshSettings")
+    return _result_partial(ok, msg, "refreshAll")
 
 
 @app.route("/htmx/settings/mtu", methods=["POST"])
@@ -427,7 +414,7 @@ def htmx_settings_mtu():
     except ValueError:
         return _result_partial(False, "MTU должен быть числом")
     ok, msg = api.set_mtu(mtu)
-    return _result_partial(ok, msg, "refreshSettings")
+    return _result_partial(ok, msg, "refreshAll")
 
 
 @app.route("/htmx/settings/subnet", methods=["POST"])
@@ -435,7 +422,7 @@ def htmx_settings_mtu():
 def htmx_settings_subnet():
     subnet = request.form.get("subnet", "").strip()
     ok, msg = api.set_subnet(subnet)
-    return _result_partial(ok, msg, "refreshSettings")
+    return _result_partial(ok, msg, "refreshAll")
 
 
 @app.route("/htmx/settings/mode/warp", methods=["POST"])
@@ -475,17 +462,16 @@ def htmx_wg_upload():
     try:
         content = file.read().decode("utf-8")
     except UnicodeDecodeError:
-        return _result_partial(False, "Файл не является текстовым")
+        return _result_partial(False, "Файл не текстовый")
 
     ok, msg, path = api.upload_wg_config(file.filename, content)
     if not ok:
         return _result_partial(False, msg)
 
-    # Сразу применяем
     ok2, msg2 = api.switch_to_wg(path)
     if ok2:
-        return _result_partial(True, f"{msg}; {msg2}", "refreshAll")
-    return _result_partial(False, f"Загружено, но не применено: {msg2}")
+        return _result_partial(True, "%s; %s" % (msg, msg2), "refreshAll")
+    return _result_partial(False, "Загружено, но не применено: %s" % msg2)
 
 
 @app.route("/htmx/settings/credentials", methods=["POST"])
@@ -497,11 +483,10 @@ def htmx_credentials():
     return _result_partial(ok, msg)
 
 
-# ===== Контекст шаблонов =====
+# ===== Контекст =====
 
 @app.context_processor
 def inject_globals():
-    """Доступно во всех шаблонах."""
     return {
         "current_user": current_user,
         "site_name": "AZ-WARP",
