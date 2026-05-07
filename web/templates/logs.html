@@ -1,17 +1,109 @@
-
 {% extends "base.html" %}
 
-{% block title %}В разработке{% endblock %}
-
-{% block heading %}В разработке{% endblock %}
+{% block title %}Логи{% endblock %}
+{% block heading %}Логи sing-box{% endblock %}
 
 {% block content %}
 
-<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-8 text-center">
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-4 mb-4">
+    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
 
-    <div class="text-emerald-400/70">Эта страница появится в следующей части.</div>
+        <!-- Фильтр уровня -->
+        <div class="flex gap-1 bg-surface-950 border border-emerald-900/50 rounded-lg p-1">
+            {% for value, label in [('ALL', 'Все'), ('INFO', 'INFO'), ('WARN', 'WARN'), ('ERROR', 'ERROR')] %}
+                <label class="cursor-pointer">
+                    <input type="radio" name="level" value="{{ value }}"
+                           {% if loop.first %}checked{% endif %}
+                           hx-get="{{ url_for('htmx_logs') }}"
+                           hx-trigger="change"
+                           hx-target="#logs-content"
+                           hx-include="[name='lines']"
+                           class="peer sr-only">
+                    <span class="block px-3 py-1.5 text-sm rounded-md transition
+                                 text-emerald-300/70 hover:text-emerald-100
+                                 peer-checked:bg-brand-700 peer-checked:text-white peer-checked:font-medium">
+                        {{ label }}
+                    </span>
+                </label>
+            {% endfor %}
+        </div>
 
+        <!-- Кол-во строк -->
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-emerald-400/70">Строк:</label>
+            <select name="lines"
+                    hx-get="{{ url_for('htmx_logs') }}"
+                    hx-trigger="change"
+                    hx-target="#logs-content"
+                    hx-include="[name='level']"
+                    class="px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                           text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200" selected>200</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+            </select>
+        </div>
+
+        <!-- Интервал обновления -->
+        <div class="flex items-center gap-2 md:ml-auto">
+            <label class="text-sm text-emerald-400/70">Обновлять каждые:</label>
+            <select id="refresh-interval"
+                    onchange="updateRefreshInterval()"
+                    class="px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                           text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                <option value="0">не обновлять</option>
+                <option value="5">5 сек</option>
+                <option value="10" selected>10 сек</option>
+                <option value="15">15 сек</option>
+                <option value="20">20 сек</option>
+                <option value="40">40 сек</option>
+                <option value="60">60 сек</option>
+            </select>
+        </div>
+
+        <!-- Кнопка обновить -->
+        <button hx-get="{{ url_for('htmx_logs') }}"
+                hx-target="#logs-content"
+                hx-include="[name='level'], [name='lines']"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition">
+            ↻ Обновить
+        </button>
+    </div>
 </div>
 
-{% endblock %}
+<div id="logs-content"
+     hx-get="{{ url_for('htmx_logs') }}"
+     hx-trigger="load, every 10s [shouldRefresh()]"
+     hx-include="[name='level'], [name='lines']"
+     hx-swap="innerHTML">
+    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-xl p-12 text-center text-emerald-500/60">
+        Загрузка логов...
+    </div>
+</div>
 
+<script>
+let refreshSec = 10;
+
+function shouldRefresh() {
+    return refreshSec > 0;
+}
+
+function updateRefreshInterval() {
+    const sel = document.getElementById('refresh-interval');
+    refreshSec = parseInt(sel.value, 10) || 0;
+
+    const container = document.getElementById('logs-content');
+    if (!container) return;
+
+    if (refreshSec > 0) {
+        container.setAttribute('hx-trigger', `load, every ${refreshSec}s [shouldRefresh()]`);
+    } else {
+        container.setAttribute('hx-trigger', 'load');
+    }
+    htmx.process(container);
+}
+</script>
+
+{% endblock %}
