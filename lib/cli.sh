@@ -370,12 +370,18 @@ cli_subnet() {
     local new_tun
     new_tun=$(calculate_tun_ip "$new_subnet")
 
+    # Если та же подсеть - ничего не делаем
+    if [ "$new_subnet" = "$old_subnet" ]; then
+        echo "Subnet unchanged: $new_subnet"
+        return 0
+    fi
+
     SUBNET="$new_subnet"
     TUN_IP="$new_tun"
 
     # Пересобираем конфиг
     if [ -f "$SINGBOX_TEMPLATE" ] && [ -s "$SINGBOX_TEMPLATE" ]; then
-        if ! rebuild_config "$SINGBOX_TEMPLATE"; then
+        if ! rebuild_config "$SINGBOX_TEMPLATE" >/dev/null 2>&1; then
             SUBNET="$old_subnet"
             TUN_IP="$old_tun"
             echo "ERROR: failed to rebuild config, rolled back" >&2
@@ -401,10 +407,13 @@ cli_subnet() {
 
     save_main_config
 
-    # Обновляем маршруты AntiZapret
+    # Обновляем маршруты AntiZapret. Запускаем "doall.sh ip" (только маршруты)
+    # вместо полного "doall.sh", который намного дольше и может зависнуть
     export DEBIAN_FRONTEND=noninteractive
     export SYSTEMD_PAGER=""
-    bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1
+    timeout 180 bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1 || {
+        echo "WARNING: doall.sh ip exited non-zero or timed out" >&2
+    }
 
     if systemctl is-active --quiet sing-box; then
         systemctl restart sing-box
