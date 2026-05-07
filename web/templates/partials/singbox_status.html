@@ -1,0 +1,97 @@
+{% set sb = status.singbox %}
+
+<div class="space-y-6">
+
+    <!-- Статус -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="flex items-center gap-3 mb-2">
+                    <div class="relative">
+                        <div class="w-3 h-3 rounded-full {% if sb.running %}bg-brand-400{% else %}bg-red-500{% endif %}"></div>
+                        {% if sb.running %}
+                            <div class="absolute inset-0 w-3 h-3 rounded-full bg-brand-400 animate-ping opacity-75"></div>
+                        {% endif %}
+                    </div>
+                    <h2 class="text-2xl font-bold text-emerald-100">
+                        sing-box {% if sb.running %}запущен{% else %}остановлен{% endif %}
+                    </h2>
+                </div>
+                <div class="text-sm text-emerald-400/70">
+                    Автозагрузка: <span class="text-emerald-200">{% if sb.enabled %}включена{% else %}выключена{% endif %}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Управление -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-4">Управление службой</h3>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+            <button hx-post="{{ url_for('htmx_singbox_action', action='start') }}"
+                    hx-swap="none"
+                    {% if sb.running %}disabled{% endif %}
+                    class="px-3 py-2 bg-brand-700/30 hover:bg-brand-700/50 disabled:opacity-30 disabled:cursor-not-allowed
+                           border border-brand-700/40 text-brand-200 rounded-lg text-sm transition">
+                ▶ Запустить
+            </button>
+            <button hx-post="{{ url_for('htmx_singbox_action', action='stop') }}"
+                    hx-swap="none"
+                    data-confirm="Остановить sing-box?"
+                    {% if not sb.running %}disabled{% endif %}
+                    class="px-3 py-2 bg-red-700/30 hover:bg-red-700/50 disabled:opacity-30 disabled:cursor-not-allowed
+                           border border-red-700/40 text-red-200 rounded-lg text-sm transition">
+                ■ Остановить
+            </button>
+            <button hx-post="{{ url_for('htmx_singbox_action', action='restart') }}"
+                    hx-swap="none"
+                    data-confirm="Перезапустить sing-box?"
+                    class="px-3 py-2 bg-amber-700/30 hover:bg-amber-700/50
+                           border border-amber-700/40 text-amber-200 rounded-lg text-sm transition">
+                ⟳ Перезапустить
+            </button>
+            <button hx-post="{{ url_for('htmx_singbox_action', action='enable') }}"
+                    hx-swap="none"
+                    {% if sb.enabled %}disabled{% endif %}
+                    class="px-3 py-2 bg-emerald-900/30 hover:bg-emerald-900/50 disabled:opacity-30 disabled:cursor-not-allowed
+                           border border-emerald-900/50 text-emerald-200 rounded-lg text-sm transition">
+                ✓ Автозагрузка
+            </button>
+            <button hx-post="{{ url_for('htmx_singbox_action', action='disable') }}"
+                    hx-swap="none"
+                    data-confirm="Отключить автозагрузку?"
+                    {% if not sb.enabled %}disabled{% endif %}
+                    class="px-3 py-2 bg-slate-700/30 hover:bg-slate-700/50 disabled:opacity-30 disabled:cursor-not-allowed
+                           border border-slate-700/40 text-slate-200 rounded-lg text-sm transition">
+                ✕ Отключить автоз.
+            </button>
+        </div>
+    </div>
+
+    <!-- Параметры -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-4">Параметры</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+            <div class="flex justify-between border-b border-emerald-900/30 pb-2">
+                <span class="text-emerald-400/70">Log level</span>
+                <span class="text-emerald-100 font-mono">{{ sb.log_level }}</span>
+            </div>
+            <div class="flex justify-between border-b border-emerald-900/30 pb-2">
+                <span class="text-emerald-400/70">MTU</span>
+                <span class="text-emerald-100 font-mono">{{ sb.mtu }}</span>
+            </div>
+            <div class="flex justify-between border-b border-emerald-900/30 pb-2">
+                <span class="text-emerald-400/70">Режим</span>
+                <span class="text-emerald-100">{{ status.outbound_mode|upper }}</span>
+            </div>
+            <div class="flex justify-between border-b border-emerald-900/30 pb-2">
+                <span class="text-emerald-400/70">Fake-подсеть</span>
+                <span class="text-emerald-100 font-mono">{{ status.subnet.fake }}</span>
+            </div>
+        </div>
+        <div class="mt-4 text-xs text-emerald-500/60">
+            Параметры можно изменить на странице <a href="{{ url_for('settings_page') }}" class="text-brand-400 hover:text-brand-300">Настройки</a>
+        </div>
+    </div>
+
+</div>
