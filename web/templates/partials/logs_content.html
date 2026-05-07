@@ -1,17 +1,5 @@
-{# Сохраняем позицию скролла внутреннего контейнера #}
-<script>
-(function() {
-    const c = document.getElementById('logs-scroll-area');
-    if (c) {
-        // Запоминаем "был ли пользователь у верха" - тогда оставляем у верха
-        // Иначе оставляем где был
-        window._logsAtTop = c.scrollTop < 50;
-    }
-})();
-</script>
-
 <div class="bg-surface-950 border border-emerald-900/40 rounded-xl overflow-hidden">
-    <div class="px-4 py-2 border-b border-emerald-900/40 text-xs text-emerald-500/70 flex items-center justify-between sticky top-0 bg-surface-950 z-10">
+    <div class="px-4 py-2 border-b border-emerald-900/40 text-xs text-emerald-500/70 flex items-center justify-between">
         <span>Записей: {{ logs|length }}</span>
         <span class="text-emerald-700">новые сверху</span>
     </div>
@@ -32,12 +20,3 @@
         <div class="p-12 text-center text-emerald-500/60">Логи пусты</div>
     {% endif %}
 </div>
-
-<script>
-(function() {
-    const c = document.getElementById('logs-scroll-area');
-    if (c && window._logsAtTop !== false) {
-        c.scrollTop = 0;
-    }
-})();
-</script>
