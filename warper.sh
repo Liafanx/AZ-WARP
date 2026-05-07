@@ -66,15 +66,17 @@ MENU_REMOTE_VER="$LOCAL_VER"
 acquire_lock() {
 # Lock с ожиданием для CLI команд, без lock для read-only команд
 case "${1:-}" in
-    # Read-only команды - lock не нужен
-    status|doctor|iplist|iproutes|logs|domainslist|warpkey|wgconfig|config)
-        :  # пропускаем lock
+    # Read-only / быстрые команды - lock не нужен
+    status|doctor|iplist|iproutes|logs|domainslist|warpkey|wgconfig|config|\
+    add|remove|enable|disable|ipadd|ipremove|autopatch|fullvpn|iproutemode|\
+    ipexport|loglevel|mtu)
+        :  # без блокировки — эти команды быстрые, или сами защищаются
         ;;
     *)
-        # Для остальных - ждём освобождения lock до 10 секунд
+        # Только для тяжёлых: toggle, sync, ipsync, mode, subnet, patch
         exec 9>"$LOCK_FILE"
-        if ! flock -w 10 9; then
-            echo -e "${RED}Не удалось получить блокировку (другая операция выполняется > 10 сек)${NC}" >&2
+        if ! flock -w 30 9; then
+            echo -e "${RED}Не удалось получить блокировку (другая операция выполняется > 30 сек)${NC}" >&2
             exit 1
         fi
         ;;
