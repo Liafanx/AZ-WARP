@@ -1,5 +1,3 @@
-{# Список доменов с обновлением статусов карточек Gemini/ChatGPT #}
-
 <script>
 (function() {
     const updates = {
@@ -8,7 +6,7 @@
         'has_gemini': {{ 'true' if has_gemini else 'false' }},
         'has_chatgpt': {{ 'true' if has_chatgpt else 'false' }}
     };
-    ['gemini', 'chatgpt'].forEach(name => {
+    ['gemini', 'chatgpt'].forEach(function(name) {
         const el = document.getElementById(name + '-status');
         if (!el) return;
         const has = updates['has_' + name];
@@ -26,57 +24,3 @@
     });
 })();
 </script>
-
-<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
-
-    <div class="px-5 py-3 border-b border-emerald-900/40 flex items-center justify-between text-sm">
-        <span class="text-emerald-200">
-            Найдено: <span class="font-mono font-bold text-emerald-100">{{ domains|length }}</span>
-            {% if current_search %}
-                <span class="text-emerald-500/70">по запросу «{{ current_search }}»</span>
-            {% endif %}
-        </span>
-        <span class="text-xs text-emerald-500/70">
-            фильтр:
-            {% if current_filter == 'all' %}все
-            {% elif current_filter == 'user' %}свои
-            {% elif current_filter == 'gemini' %}Gemini
-            {% elif current_filter == 'chatgpt' %}ChatGPT
-            {% endif %}
-        </span>
-    </div>
-
-    {% if domains %}
-        <div class="divide-y divide-emerald-900/30 max-h-[60vh] overflow-y-auto scroll-thin">
-            {% for d in domains %}
-                <div class="px-5 py-3 flex items-center justify-between hover:bg-emerald-900/10 group">
-                    <div class="flex items-center gap-3 min-w-0">
-                        <span class="w-2 h-2 rounded-full flex-shrink-0
-                                     {% if d.enabled %}bg-brand-400{% else %}bg-slate-600{% endif %}"></span>
-                        <span class="font-mono text-sm text-emerald-100 truncate">{{ d.name }}</span>
-                        {% if d.type == 'gemini' %}
-                            <span class="text-xs px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 flex-shrink-0">Gemini</span>
-                        {% elif d.type == 'chatgpt' %}
-                            <span class="text-xs px-2 py-0.5 rounded bg-sky-900/40 text-sky-300 flex-shrink-0">ChatGPT</span>
-                        {% else %}
-                            <span class="text-xs px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-300 flex-shrink-0">свой</span>
-                        {% endif %}
-                    </div>
-                    {% if d.type == 'user' %}
-                        <button hx-post="{{ url_for('htmx_domain_delete') }}"
-                                hx-swap="none"
-                                hx-vals='{"domain":"{{ d.name }}"}'
-                                data-confirm="Удалить домен {{ d.name }}?"
-                                class="opacity-0 group-hover:opacity-100 transition text-red-400 hover:text-red-300 text-sm px-3 py-1 rounded hover:bg-red-900/30">
-                            Удалить
-                        </button>
-                    {% endif %}
-                </div>
-            {% endfor %}
-        </div>
-    {% else %}
-        <div class="p-12 text-center text-emerald-500/60">
-            Домены не найдены
-        </div>
-    {% endif %}
-</div>
