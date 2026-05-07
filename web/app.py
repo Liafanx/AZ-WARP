@@ -353,6 +353,20 @@ def htmx_ip_export_toggle():
     ok, msg = api.set_ip_export(enable)
     return _result_partial(ok, msg, "refreshIpRanges")
 
+@app.route("/htmx/ip-ranges/file-content")
+@login_required
+def htmx_ip_ranges_file_content():
+    text = api.get_ip_ranges_content()
+    return text, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/htmx/ip-ranges/file-save", methods=["POST"])
+@login_required
+def htmx_ip_ranges_file_save():
+    text = request.form.get("content", "")
+    ok, msg = api.save_ip_ranges_content(text)
+    return _result_partial(ok, msg, "refreshIpRanges")
+
 
 # ===== HTMX: sing-box =====
 
