@@ -1,0 +1,36 @@
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
+
+    <div class="px-5 py-3 border-b border-emerald-900/40 flex items-center justify-between text-sm">
+        <span class="text-emerald-200">
+            Подсетей: <span class="font-mono font-bold text-emerald-100">{{ ranges|length }}</span>,
+            маршрутов в ядре: <span class="font-mono font-bold text-emerald-100">{{ routes_count }}</span>
+            {% if current_search %}
+                <span class="text-emerald-500/70">по запросу «{{ current_search }}»</span>
+            {% endif %}
+        </span>
+    </div>
+
+    {% if ranges %}
+        <div class="divide-y divide-emerald-900/30 max-h-[60vh] overflow-y-auto scroll-thin">
+            {% for r in ranges %}
+                <div class="px-5 py-3 flex items-center justify-between hover:bg-emerald-900/10 group">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <span class="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0"></span>
+                        <span class="font-mono text-sm text-emerald-100">{{ r.cidr }}</span>
+                    </div>
+                    <button hx-post="{{ url_for('htmx_ip_delete') }}"
+                            hx-swap="none"
+                            hx-vals='{"cidr":"{{ r.cidr }}"}'
+                            data-confirm="Удалить подсеть {{ r.cidr }}?"
+                            class="opacity-0 group-hover:opacity-100 transition text-red-400 hover:text-red-300 text-sm px-3 py-1 rounded hover:bg-red-900/30">
+                        Удалить
+                    </button>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="p-12 text-center text-emerald-500/60">
+            Подсети не добавлены
+        </div>
+    {% endif %}
+</div>
