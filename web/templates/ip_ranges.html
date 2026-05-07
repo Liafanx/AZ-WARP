@@ -68,99 +68,51 @@
     </div>
 </div>
 
-<!-- ===== Добавление ===== -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+<!-- ===== Редактор ip-ranges.txt ===== -->
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
 
-    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-emerald-200 mb-3">Добавить подсеть</h3>
-        <form hx-post="{{ url_for('htmx_ip_add') }}"
-              hx-swap="none"
-              hx-on::after-request="if(event.detail.successful) this.reset()"
-              class="flex gap-2">
-            <input type="text" name="cidr" required
-                   placeholder="91.108.4.0/22 или 1.1.1.1"
-                   class="flex-1 px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                          text-emerald-100 placeholder-emerald-700 text-sm font-mono
-                          focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none">
-            <button type="submit"
-                    class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition">
-                Добавить
-            </button>
-        </form>
-        <p class="text-xs text-emerald-500/60 mt-2">
-            Без маски подсчитается как /32 (один хост)
-        </p>
-    </div>
-
-    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-emerald-200 mb-3">Групповое добавление</h3>
-        <button onclick="openModal('modal-bulk-ips')"
-                class="w-full px-4 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 text-emerald-200 rounded-lg text-sm font-medium transition">
-            ⊕ Добавить много подсетей
-        </button>
-        <p class="text-xs text-emerald-500/60 mt-2">
-            Импортируйте список CIDR разом
-        </p>
-    </div>
-</div>
-
-<!-- ===== Поиск ===== -->
-<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-4 mb-4">
-    <input type="search" name="q" placeholder="Поиск по CIDR..."
-           hx-get="{{ url_for('htmx_ip_ranges_list') }}"
-           hx-trigger="input changed delay:300ms, search"
-           hx-target="#ip-ranges-list"
-           class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                  text-emerald-100 placeholder-emerald-700 text-sm font-mono
-                  focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none">
-</div>
-
-<!-- ===== Список ===== -->
-<div id="ip-ranges-list"
-     hx-get="{{ url_for('htmx_ip_ranges_list') }}"
-     hx-trigger="load, refreshIpRanges from:body"
-     hx-swap="innerHTML">
-    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-xl p-12 text-center text-emerald-500/60">
-        Загрузка...
-    </div>
-</div>
-
-<!-- ===== Модальное окно: групповое добавление ===== -->
-<div id="modal-bulk-ips" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
-    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
-    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-2xl">
-        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-emerald-100">Групповое добавление подсетей</h3>
-            <button onclick="closeModal('modal-bulk-ips')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+    <div class="px-5 py-3 border-b border-emerald-900/40 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-emerald-200">Подсети (CIDR)</h3>
+            <p class="text-xs text-emerald-500/60 mt-0.5">
+                Один CIDR на строку. Без маски — будет /32. Сохранение запускает sync.
+            </p>
         </div>
-        <form hx-post="{{ url_for('htmx_ip_bulk_add') }}"
-              hx-swap="none"
-              hx-on::after-request="if(event.detail.successful){closeModal('modal-bulk-ips'); this.reset();}"
-              class="p-6 space-y-4">
-            <div>
-                <label class="block text-sm text-emerald-200 mb-2">CIDR (по одному на строку)</label>
-                <textarea name="cidrs" rows="12" required
-                          placeholder="91.108.4.0/22&#10;91.108.8.0/22&#10;149.154.160.0/20&#10;1.1.1.1&#10;# строки с # будут пропущены"
-                          class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                                 text-emerald-100 placeholder-emerald-700 text-sm font-mono
-                                 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"></textarea>
-                <p class="text-xs text-emerald-500/60 mt-2">
-                    Невалидные записи и дубликаты будут пропущены
-                </p>
-            </div>
-            <div class="flex justify-end gap-2 pt-2 border-t border-emerald-900/40">
-                <button type="button" onclick="closeModal('modal-bulk-ips')"
-                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">
-                    Отмена
-                </button>
-                <button type="submit"
-                        class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
-                    <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                    Добавить все
-                </button>
-            </div>
-        </form>
+        <button hx-get="{{ url_for('htmx_ip_ranges_file_content') }}"
+                hx-target="#ip-ranges-textarea"
+                hx-swap="innerHTML"
+                class="px-3 py-1.5 text-xs bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 text-emerald-300 rounded transition">
+            ↻ Перечитать
+        </button>
     </div>
+
+    <form hx-post="{{ url_for('htmx_ip_ranges_file_save') }}"
+          hx-swap="none"
+          class="p-5">
+        <textarea id="ip-ranges-textarea"
+                  name="content"
+                  rows="20"
+                  hx-get="{{ url_for('htmx_ip_ranges_file_content') }}"
+                  hx-trigger="load"
+                  hx-swap="innerHTML"
+                  spellcheck="false"
+                  class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                         text-emerald-100 placeholder-emerald-700 text-sm font-mono
+                         focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
+                  placeholder="91.108.4.0/22&#10;91.108.8.0/22&#10;1.1.1.1"></textarea>
+
+        <div class="flex justify-between items-center mt-3">
+            <p class="text-xs text-emerald-500/60">
+                В файле: <span id="ip-count" class="font-mono text-emerald-300">{{ status.ip_ranges.count }}</span>,
+                в маршрутах: <span class="font-mono text-emerald-300">{{ status.ip_ranges.routes_count }}</span>
+            </p>
+            <button type="submit"
+                    class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+                <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                💾 Сохранить и применить
+            </button>
+        </div>
+    </form>
 </div>
 
 {% endblock %}
