@@ -1,277 +1,561 @@
 {# Фрагмент со всем дашбордом, обновляется каждые 60 сек или по событию refreshAll #}
 
+
+
 {% if status.error %}
+
     <div class="bg-red-900/40 border border-red-700/50 rounded-xl p-6 text-red-200">
+
         <div class="font-semibold mb-2">⚠ Не удалось получить статус</div>
+
         <div class="text-sm">{{ status.error }}</div>
+
     </div>
+
 {% else %}
 
+
+
 {% set sb = status.singbox %}
+
 {% set kr = status.kresd %}
+
 {% set sub = status.subnet %}
+
 {% set ip = status.ip_ranges %}
+
 {% set warper_active = sb.running and kr.patched %}
 
+
+
 <!-- ===== Топ: статус WARPER + быстрые действия ===== -->
+
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
+
+
     <!-- Статус WARPER -->
+
     <div class="lg:col-span-2 bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="flex items-start justify-between gap-4 mb-4">
+
             <div>
+
                 <div class="flex items-center gap-3 mb-1">
+
                     <div class="relative">
+
                         <div class="w-3 h-3 rounded-full {% if warper_active %}bg-brand-400{% else %}bg-red-500{% endif %}"></div>
+
                         {% if warper_active %}
+
                             <div class="absolute inset-0 w-3 h-3 rounded-full bg-brand-400 animate-ping opacity-75"></div>
+
                         {% endif %}
+
                     </div>
+
                     <h2 class="text-xl font-bold text-emerald-100">
+
                         WARPER {% if warper_active %}активен{% else %}остановлен{% endif %}
+
                     </h2>
+
                 </div>
+
                 <div class="text-sm text-emerald-400/70">
+
                     Версия <span class="text-emerald-300 font-mono">{{ status.version }}</span>
+
                     {% if status.update_available %}
+
                         <span class="ml-2 inline-block px-2 py-0.5 bg-amber-900/40 text-amber-300 text-xs rounded font-medium">
+
                             доступно обновление до {{ status.remote_version }}
+
                         </span>
+
                     {% endif %}
+
                 </div>
+
             </div>
+
+
 
             <button hx-post="{{ url_for('htmx_toggle_warper') }}"
+            
+                    hx-swap="none"
+
                     data-confirm="{% if warper_active %}Выключить WARPER?{% else %}Включить WARPER?{% endif %}"
+
                     class="px-4 py-2 rounded-lg font-medium text-sm flex-shrink-0 transition
+
                     {% if warper_active %}
+
                         bg-red-700/30 hover:bg-red-700/50 text-red-200 border border-red-700/40
+
                     {% else %}
+
                         bg-brand-700 hover:bg-brand-600 text-white shadow-lg shadow-brand-900/50
+
                     {% endif %}">
+
                 {% if warper_active %}■ Выключить{% else %}▶ Включить{% endif %}
+
             </button>
+
         </div>
+
+
 
         <!-- Предупреждения -->
+
         {% if status.antizapret_warp %}
+
             <div class="mt-3 p-3 bg-red-900/30 border border-red-700/50 rounded-lg text-sm text-red-200">
+
                 <div class="font-semibold">⚠ ANTIZAPRET_WARP=y — конфликт</div>
+
                 <div class="text-xs mt-1 text-red-300/80">WARPER не может работать. Установите ANTIZAPRET_WARP=n в /root/antizapret/setup и выполните down.sh && up.sh</div>
+
             </div>
+
         {% endif %}
+
+
 
         {% if status.warp_rules_active %}
+
             <div class="mt-3 p-3 bg-amber-900/30 border border-amber-700/50 rounded-lg text-sm text-amber-200">
+
                 <div class="font-semibold">⚠ Активны правила от up.sh</div>
+
                 <div class="text-xs mt-1 text-amber-300/80">Выполните /root/antizapret/down.sh && /root/antizapret/up.sh</div>
+
             </div>
+
         {% endif %}
+
     </div>
+
+
 
     <!-- Быстрые действия -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="text-sm font-semibold text-emerald-200 mb-3">Быстрые действия</div>
+
         <div class="space-y-2">
+
             <button hx-post="{{ url_for('htmx_domain_sync') }}"
+            
+                    hx-swap="none"
+
                     class="w-full text-left px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-sm text-emerald-200 transition">
+
                 ↻ Синхронизировать домены
+
             </button>
+
             <button hx-post="{{ url_for('htmx_patch_kresd') }}"
+            
+                    hx-swap="none"
+
                     class="w-full text-left px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-sm text-emerald-200 transition">
+
                 ⚡ Патч DNS (kresd)
+
             </button>
+
             <button hx-post="{{ url_for('htmx_singbox_action', action='restart') }}"
+            
+                    hx-swap="none"
+
                     data-confirm="Перезапустить sing-box?"
+
                     class="w-full text-left px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-sm text-emerald-200 transition">
+
                 ⟳ Перезапустить sing-box
+
             </button>
+
         </div>
+
     </div>
+
 </div>
+
+
 
 <!-- ===== Сетка карточек статуса ===== -->
+
 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
 
+
+
     <!-- Sing-box -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="flex items-center justify-between mb-3">
+
             <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold">Sing-box</div>
+
             <div class="w-2 h-2 rounded-full {% if sb.running %}bg-brand-400{% else %}bg-red-500{% endif %}"></div>
+
         </div>
+
         <div class="text-lg font-bold text-emerald-100 mb-3">
+
             {% if sb.running %}запущен{% else %}остановлен{% endif %}
+
         </div>
+
         <div class="space-y-1.5 text-sm">
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">Автозагрузка</span>
+
                 <span class="text-emerald-200">{% if sb.enabled %}включена{% else %}выключена{% endif %}</span>
+
             </div>
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">Log level</span>
+
                 <span class="text-emerald-200 font-mono">{{ sb.log_level }}</span>
+
             </div>
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">MTU</span>
+
                 <span class="text-emerald-200 font-mono">{{ sb.mtu }}</span>
+
             </div>
+
         </div>
+
     </div>
+
+
 
     <!-- Режим маршрутизации -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Режим маршрутизации</div>
+
         <div class="text-lg font-bold text-emerald-100 mb-3">
+
             {% if status.outbound_mode == 'warp' %}WARP (Cloudflare)
+
             {% elif status.outbound_mode == 'slave' %}Slave (донор)
+
             {% elif status.outbound_mode == 'wg' %}WireGuard
+
             {% else %}{{ status.outbound_mode }}{% endif %}
+
         </div>
+
         <div class="space-y-1.5 text-sm">
+
             {% if status.outbound_mode == 'slave' %}
+
                 <div class="flex justify-between">
+
                     <span class="text-emerald-400/70">Сервер</span>
+
                     <span class="text-emerald-200 font-mono text-xs">{{ status.slave.server }}:{{ status.slave.port }}</span>
+
                 </div>
+
             {% elif status.outbound_mode == 'wg' %}
+
                 <div class="flex justify-between">
+
                     <span class="text-emerald-400/70">Endpoint</span>
+
                     <span class="text-emerald-200 font-mono text-xs">{{ status.wg.endpoint_host }}:{{ status.wg.endpoint_port }}</span>
+
                 </div>
+
                 <div class="flex justify-between">
+
                     <span class="text-emerald-400/70">Address</span>
+
                     <span class="text-emerald-200 font-mono text-xs">{{ status.wg.address }}</span>
+
                 </div>
+
             {% else %}
+
                 <div class="flex justify-between">
+
                     <span class="text-emerald-400/70">Источник ключей</span>
+
                     <span class="text-emerald-200 text-xs truncate ml-2" title="{{ status.warp_keys_source }}">
+
                         {{ status.warp_keys_source.split('/')[-1] if status.warp_keys_source != 'local' else 'локальные' }}
+
                     </span>
+
                 </div>
+
             {% endif %}
+
         </div>
+
     </div>
+
+
 
     <!-- DNS / kresd -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="flex items-center justify-between mb-3">
+
             <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold">DNS (kresd)</div>
+
             <div class="w-2 h-2 rounded-full {% if kr.patched %}bg-brand-400{% else %}bg-red-500{% endif %}"></div>
+
         </div>
+
         <div class="text-lg font-bold text-emerald-100 mb-3">
+
             {% if kr.patched %}пропатчен{% else %}не пропатчен{% endif %}
+
         </div>
+
         <div class="space-y-1.5 text-sm">
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">FullVPN режим</span>
+
                 <span class="text-emerald-200">{% if kr.fullvpn_patched %}включён{% else %}выключен{% endif %}</span>
+
             </div>
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">Автопатч</span>
+
                 <span class="text-emerald-200">{% if status.autopatch_enabled %}включён{% else %}выключен{% endif %}</span>
+
             </div>
+
         </div>
+
     </div>
+
+
 
     <!-- Fake-подсеть -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Fake-подсеть</div>
+
         <div class="text-lg font-bold text-emerald-100 font-mono mb-3">{{ sub.fake }}</div>
+
         <div class="space-y-1.5 text-sm">
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">В AntiZapret</span>
+
                 <span class="text-emerald-200">
+
                     {% if sub.in_antizapret %}<span class="text-brand-400">✓ добавлена</span>{% else %}<span class="text-red-400">✗ отсутствует</span>{% endif %}
+
                 </span>
+
             </div>
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">Конфликт</span>
+
                 <span class="text-emerald-200">
+
                     {% if sub.conflict %}<span class="text-amber-400">⚠ возможен</span>{% else %}<span class="text-brand-400">✓ нет</span>{% endif %}
+
                 </span>
+
             </div>
+
         </div>
+
     </div>
+
+
 
     <!-- Домены -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Домены</div>
+
         <div class="text-lg font-bold text-emerald-100 mb-3">
+
             {% if status.domains.synced %}<span class="text-brand-400">✓ синхронизированы</span>{% else %}<span class="text-amber-400">⚠ требуется sync</span>{% endif %}
+
         </div>
+
         <a href="{{ url_for('domains_page') }}"
+
            class="text-sm text-brand-400 hover:text-brand-300">Управление доменами →</a>
+
     </div>
+
+
 
     <!-- IP-подсети -->
+
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
         <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">IP-подсети</div>
+
         <div class="text-lg font-bold text-emerald-100 mb-3">
+
             <span class="font-mono">{{ ip.count }}</span>
+
             <span class="text-sm font-normal text-emerald-400/70">в файле,</span>
+
             <span class="font-mono">{{ ip.routes_count }}</span>
+
             <span class="text-sm font-normal text-emerald-400/70">маршрутов</span>
+
         </div>
+
         <div class="space-y-1.5 text-sm">
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">Режим</span>
+
                 <span class="text-emerald-200 text-xs">
+
                     {% if ip.mode == 'antizapret' %}только AZ
+
                     {% elif ip.mode == 'all_vpn' %}AZ + FullVPN
+
                     {% elif ip.mode == 'all' %}весь трафик
+
                     {% else %}{{ ip.mode }}{% endif %}
+
                 </span>
+
             </div>
+
             <div class="flex justify-between">
+
                 <span class="text-emerald-400/70">Экспорт в AZ</span>
+
                 <span class="text-emerald-200">{% if ip.export_to_antizapret == 'y' %}включён{% else %}выключен{% endif %}</span>
+
             </div>
+
         </div>
+
     </div>
 
+
+
 </div>
+
+
 
 <!-- ===== Доп. информация ===== -->
+
 <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
-        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Дополнительно</div>
-        <div class="space-y-2 text-sm">
-            <div class="flex justify-between">
-                <span class="text-emerald-400/70">FullVPN WARP-резолвинг</span>
-                <span class="text-emerald-200">
-                    {% if status.fullvpn_warp_resolve == 'y' %}
-                        {% if status.vpn_warp %}
-                            <span class="text-red-400">включён (конфликт VPN_WARP=y)</span>
-                        {% else %}
-                            <span class="text-brand-400">включён</span>
-                        {% endif %}
-                    {% else %}
-                        выключен
-                    {% endif %}
-                </span>
-            </div>
-            <div class="flex justify-between">
-                <span class="text-emerald-400/70">VPN_WARP в AntiZapret</span>
-                <span class="text-emerald-200">{% if status.vpn_warp %}включён{% else %}выключен{% endif %}</span>
-            </div>
-            <div class="flex justify-between">
-                <span class="text-emerald-400/70">ANTIZAPRET_WARP</span>
-                <span class="text-emerald-200">{% if status.antizapret_warp %}<span class="text-red-400">включён ⚠</span>{% else %}выключен{% endif %}</span>
-            </div>
-        </div>
-    </div>
+
 
     <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
-        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Навигация</div>
-        <div class="grid grid-cols-2 gap-2 text-sm">
-            <a href="{{ url_for('logs_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">📄 Логи</a>
-            <a href="{{ url_for('diagnostics_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">⚕ Диагностика</a>
-            <a href="{{ url_for('singbox_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">⚙ sing-box</a>
-            <a href="{{ url_for('settings_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">✱ Настройки</a>
+
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Дополнительно</div>
+
+        <div class="space-y-2 text-sm">
+
+            <div class="flex justify-between">
+
+                <span class="text-emerald-400/70">FullVPN WARP-резолвинг</span>
+
+                <span class="text-emerald-200">
+
+                    {% if status.fullvpn_warp_resolve == 'y' %}
+
+                        {% if status.vpn_warp %}
+
+                            <span class="text-red-400">включён (конфликт VPN_WARP=y)</span>
+
+                        {% else %}
+
+                            <span class="text-brand-400">включён</span>
+
+                        {% endif %}
+
+                    {% else %}
+
+                        выключен
+
+                    {% endif %}
+
+                </span>
+
+            </div>
+
+            <div class="flex justify-between">
+
+                <span class="text-emerald-400/70">VPN_WARP в AntiZapret</span>
+
+                <span class="text-emerald-200">{% if status.vpn_warp %}включён{% else %}выключен{% endif %}</span>
+
+            </div>
+
+            <div class="flex justify-between">
+
+                <span class="text-emerald-400/70">ANTIZAPRET_WARP</span>
+
+                <span class="text-emerald-200">{% if status.antizapret_warp %}<span class="text-red-400">включён ⚠</span>{% else %}выключен{% endif %}</span>
+
+            </div>
+
         </div>
+
     </div>
+
+
+
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-3">Навигация</div>
+
+        <div class="grid grid-cols-2 gap-2 text-sm">
+
+            <a href="{{ url_for('logs_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">📄 Логи</a>
+
+            <a href="{{ url_for('diagnostics_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">⚕ Диагностика</a>
+
+            <a href="{{ url_for('singbox_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">⚙ sing-box</a>
+
+            <a href="{{ url_for('settings_page') }}" class="px-3 py-2 bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 rounded-lg text-emerald-200 transition">✱ Настройки</a>
+
+        </div>
+
+    </div>
+
 </div>
+
+
 
 {% endif %}
