@@ -1,6 +1,11 @@
 #!/bin/bash
 set -uo pipefail
 
+# Если stdin не терминал (запущено через curl|bash), пересоединяем к /dev/tty
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+    exec < /dev/tty
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
