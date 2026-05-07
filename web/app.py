@@ -52,7 +52,8 @@ logger = logging.getLogger(__name__)
 
 def _result_partial(ok, message, refresh_target=None):
     """
-    Возвращает 204 No Content + HX-Trigger для toast и обновления UI.
+    204 + HX-Trigger для toast и обновления.
+    refresh_target = 'refreshAll' триггерит reload страницы.
     """
     category = "success" if ok else "error"
     triggers = {"showToast": {"message": message or ("Готово" if ok else "Ошибка"), "category": category}}
