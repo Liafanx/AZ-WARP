@@ -996,3 +996,4 @@ PYEOF
         echo -e "${YELLOW}СМЕНИТЕ ПАРОЛЬ через настройки или 'warper webpass'!${NC}"
         return 0
     fi
+}
