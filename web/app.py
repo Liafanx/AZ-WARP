@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import warper_api as api
 from auth import (
     AdminUser, init_auth, update_credentials, verify_credentials,
+    get_or_create_secret_key, is_ip_blocked,
 )
 
 
@@ -34,7 +35,8 @@ app = Flask(
     static_folder=str(Path(__file__).parent / "static"),
     static_url_path="/static",
 )
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(32).hex())
+from auth import get_or_create_secret_key
+app.config["SECRET_KEY"] = get_or_create_secret_key()
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
@@ -97,12 +99,13 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        if verify_credentials(username, password):
+
+        ok, error_msg = verify_credentials(username, password)
+        if ok:
             login_user(AdminUser(username), remember=True)
-            logger.info("Успешный вход: %s", username)
             return redirect(url_for("dashboard"))
-        flash("Неверный логин или пароль", "error")
-        logger.warning("Неудачная попытка входа: %s", username)
+
+        flash(error_msg, "error")
 
     return render_template("login.html")
 
@@ -526,7 +529,7 @@ def htmx_wg_upload():
 def htmx_credentials():
     new_user = request.form.get("username", "")
     new_pass = request.form.get("password", "")
-    ok, msg = update_credentials(new_user, new_pass)
+    ok, msg = update_credentials(new_user, new_pass, current_user.username)
     return _result_partial(ok, msg)
 
 
