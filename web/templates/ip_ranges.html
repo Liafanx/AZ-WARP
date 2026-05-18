@@ -86,33 +86,33 @@
         </button>
     </div>
 
-    <form hx-post="{{ url_for('htmx_ip_ranges_file_save') }}"
-          hx-swap="none"
-          class="p-5">
-        <textarea id="ip-ranges-textarea"
-                  name="content"
-                  rows="20"
-                  hx-get="{{ url_for('htmx_ip_ranges_file_content') }}"
-                  hx-trigger="load"
-                  hx-swap="innerHTML"
-                  spellcheck="false"
-                  class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                         text-emerald-100 placeholder-emerald-700 text-sm font-mono
-                         focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
-                  placeholder="91.108.4.0/22&#10;91.108.8.0/22&#10;1.1.1.1"></textarea>
+<form hx-post="{{ url_for('htmx_ip_ranges_file_save') }}"
+      hx-swap="none"
+      class="p-5">
+    <textarea id="ip-ranges-textarea"
+              name="content"
+              rows="20"
+              hx-get="{{ url_for('htmx_ip_ranges_file_content') }}"
+              hx-trigger="load"
+              hx-swap="innerHTML"
+              spellcheck="false"
+              class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                     text-emerald-100 placeholder-emerald-700 text-sm font-mono
+                     focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
+              placeholder="# Telegram&#10;91.108.4.0/22&#10;91.108.8.0/22&#10;&#10;# Cloudflare DNS&#10;1.1.1.1"></textarea>
 
-        <div class="flex justify-between items-center mt-3">
-            <p class="text-xs text-emerald-500/60">
-                В файле: <span id="ip-count" class="font-mono text-emerald-300">{{ status.ip_ranges.count }}</span>,
-                в маршрутах: <span class="font-mono text-emerald-300">{{ status.ip_ranges.routes_count }}</span>
-            </p>
-            <button type="submit"
-                    class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
-                <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                💾 Сохранить и применить
-            </button>
-        </div>
-    </form>
+    <div class="flex justify-between items-center mt-3">
+        <p class="text-xs text-emerald-500/60">
+            Комментарии (<code class="text-emerald-400">#&nbsp;...</code>) и пустые строки сохраняются.
+            Без маски будет /32.
+        </p>
+        <button type="submit"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            💾 Сохранить и применить
+        </button>
+    </div>
+</form>
 </div>
 
 {% endblock %}
