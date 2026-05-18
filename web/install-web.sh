@@ -125,20 +125,19 @@ deactivate
 
 # ===== .env =====
 
-echo -e "${CYAN}4. Создание .env (без секретов)...${NC}"
+echo -e "${CYAN}4. Создание .env...${NC}"
 # В .env храним только не-секретные параметры.
-# SECRET_KEY автоматически создаётся в web/data/secret.key (chmod 600).
-# Учётные данные мигрируются в web/data/users.json при первом запуске.
+# SECRET_KEY создаётся автоматически в web/data/secret.key (chmod 600).
+# Учётные данные хранятся в web/data/users.json (chmod 600).
 cat > "$WEB_DIR/.env" <<EOF
 PORT=$BACKEND_PORT
 DEBUG=false
-# Учётные данные для ПЕРВИЧНОЙ инициализации
-# (после первого запуска переносятся в web/data/users.json
-#  и эти строки можно удалить из .env вручную)
-ADMIN_USER=$ADMIN_USER
-ADMIN_PASSWORD=$ADMIN_PASSWORD
 EOF
 chmod 600 "$WEB_DIR/.env"
+
+# Создаём data/ заранее с правильными правами
+mkdir -p "$WEB_DIR/data"
+chmod 700 "$WEB_DIR/data"
 
 # Создаём data/ заранее с правильными правами
 mkdir -p "$WEB_DIR/data"
@@ -292,17 +291,16 @@ fi
 echo "$ADMIN_PASSWORD" > "$WARPER_DIR/web_admin_pass.txt"
 chmod 600 "$WARPER_DIR/web_admin_pass.txt"
 
-echo -e "${CYAN}9. Запуск инициализации (миграция учётных данных)...${NC}"
-# Даём время сервису запуститься и мигрировать ADMIN_PASSWORD из .env в БД
+
+echo -e "${CYAN}9. Установка начального пароля...${NC}"
+# Дожидаемся пока сервис стартанёт (создастся data/users.json с admin/admin)
 sleep 3
 
-# После миграции — затираем ADMIN_PASSWORD из .env
-if [ -f "$WEB_DIR/data/users.json" ]; then
-    sed -i '/^ADMIN_PASSWORD=/d' "$WEB_DIR/.env"
-    sed -i '/^ADMIN_USER=/d' "$WEB_DIR/.env"
-    sed -i '/^# Учётные данные для ПЕРВИЧНОЙ/,/^#  и эти строки можно удалить из .env вручную)$/d' "$WEB_DIR/.env"
-    echo -e "${GREEN}   Учётные данные перенесены в БД, удалены из .env${NC}"
-fi
+# Устанавливаем пользовательский логин/пароль через CLI
+warper webpass "$ADMIN_USER" "$ADMIN_PASSWORD" >/dev/null 2>&1 || {
+    echo -e "${YELLOW}Не удалось установить начальный пароль. Используйте 'warper webpass' вручную.${NC}"
+}
+
 
 # ===== Итог =====
 
