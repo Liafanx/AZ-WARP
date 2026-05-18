@@ -530,8 +530,20 @@ def htmx_credentials():
     new_user = request.form.get("username", "")
     new_pass = request.form.get("password", "")
     ok, msg = update_credentials(new_user, new_pass, current_user.username)
-    return _result_partial(ok, msg)
 
+    if ok:
+        # Делаем logout текущего пользователя
+        logout_user()
+        # Триггерим клиентский редирект на /login
+        resp = make_response("", 204)
+        triggers = {
+            "showToast": {"message": msg, "category": "success"},
+            "redirectAfter": {"url": "/login", "delay": 1500},
+        }
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+
+    return _result_partial(False, msg)
 
 # ===== Контекст =====
 
