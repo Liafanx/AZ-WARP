@@ -146,27 +146,55 @@ def _save_users(users: dict) -> bool:
 def _ensure_default_user() -> None:
     """
     Создаёт пользователя admin/admin если БД пуста.
-    Выводит warning в лог.
+    Использует file-lock чтобы при параллельном старте воркеров
+    создание было атомарным.
     """
-    users = _load_users()
-    if users:
+    # Проверка без lock - быстрый путь
+    if _load_users():
         return
 
-    hashed = bcrypt.generate_password_hash(DEFAULT_PASSWORD).decode("utf-8")
-    users = {
-        DEFAULT_USER: {
-            "password_hash": hashed,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "last_login": None,
-        }
-    }
-    _save_users(users)
-    logger.warning(
-        "БД пользователей не найдена. Создан пользователь %s/%s. "
-        "СМЕНИТЕ ПАРОЛЬ через настройки веб-панели!",
-        DEFAULT_USER, DEFAULT_PASSWORD,
-    )
+    # Lock через создание файла (POSIX-совместимо)
+    import fcntl
+    _ensure_data_dir()
+    lock_file = DATA_DIR / ".init.lock"
 
+    try:
+        with open(lock_file, "w") as lf:
+            try:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass
+
+            # Повторная проверка под lock
+            if _load_users():
+                return
+
+            try:
+                hashed = bcrypt.generate_password_hash(DEFAULT_PASSWORD).decode("utf-8")
+            except Exception as e:
+                logger.error("Ошибка хеширования дефолтного пароля: %s", e)
+                return
+
+            users = {
+                DEFAULT_USER: {
+                    "password_hash": hashed,
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "last_login": None,
+                }
+            }
+            if _save_users(users):
+                logger.warning(
+                    "БД пользователей создана. Логин: %s / Пароль: %s. СМЕНИТЕ ЧЕРЕЗ 'warper webpass'!",
+                    DEFAULT_USER, DEFAULT_PASSWORD,
+                )
+    except OSError as e:
+        logger.error("Не удалось создать lock-файл для инициализации: %s", e)
+    finally:
+        # Удаляем lock-файл (не критично если не получится)
+        try:
+            lock_file.unlink()
+        except OSError:
+            pass
 
 class AdminUser(UserMixin):
     """Пользователь системы."""
