@@ -917,10 +917,11 @@ cli_webpass() {
 
     # Режим полного сброса
     if [ "${1:-}" = "--reset" ]; then
-        echo -e "${YELLOW}Удаление БД пользователей...${NC}"
+        echo -e "${YELLOW}Удаление БД пользователей и ротация SECRET_KEY...${NC}"
         rm -f "$users_file"
-        echo -e "${GREEN}БД удалена.${NC}"
-        echo -e "${CYAN}При следующем запуске будет создан admin/admin.${NC}"
+        rm -f "$web_dir/data/secret.key"
+        echo -e "${GREEN}БД и SECRET_KEY удалены.${NC}"
+        echo -e "${CYAN}При следующем запуске будет создан admin/admin с новым SECRET_KEY.${NC}"
         if systemctl is-active --quiet warper-web 2>/dev/null; then
             echo -e "${CYAN}Перезапуск warper-web...${NC}"
             systemctl restart warper-web
