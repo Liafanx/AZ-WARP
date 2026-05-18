@@ -891,3 +891,161 @@ IPEOF
     echo "Saved $valid_count CIDR entries"
     return 0
 }
+
+
+# ===== СБРОС ПАРОЛЯ ВЕБ-ПАНЕЛИ =====
+
+# Сбрасывает учётные данные веб-панели.
+# Использование:
+#   warper webpass                          # интерактивно
+#   warper webpass USERNAME PASSWORD        # неинтерактивно
+#   warper webpass --reset                  # удалить БД (создаст admin/admin при следующем старте)
+cli_webpass() {
+    local web_dir="/root/warper/web"
+    local users_file="$web_dir/data/users.json"
+    local venv_python="$web_dir/venv/bin/python3"
+
+    if [ ! -d "$web_dir" ]; then
+        echo -e "${RED}Веб-панель не установлена ($web_dir не найден)${NC}" >&2
+        return 1
+    fi
+
+    if [ ! -x "$venv_python" ]; then
+        echo -e "${RED}Python venv не найден: $venv_python${NC}" >&2
+        return 1
+    fi
+
+    # Режим полного сброса
+    if [ "${1:-}" = "--reset" ]; then
+        echo -e "${YELLOW}Удаление БД пользователей...${NC}"
+        rm -f "$users_file"
+        echo -e "${GREEN}БД удалена.${NC}"
+        echo -e "${CYAN}При следующем запуске будет создан admin/admin.${NC}"
+        if systemctl is-active --quiet warper-web 2>/dev/null; then
+            echo -e "${CYAN}Перезапуск warper-web...${NC}"
+            systemctl restart warper-web
+            sleep 2
+            echo -e "${GREEN}Готово. Логин: admin / Пароль: admin${NC}"
+        else
+            echo -e "${YELLOW}Сервис warper-web не запущен. Запустите вручную.${NC}"
+        fi
+        return 0
+    fi
+
+    local new_user="${1:-}"
+    local new_pass="${2:-}"
+
+    # Интерактивный режим
+    if [ -z "$new_user" ]; then
+        echo -e "${CYAN}Сброс учётных данных веб-панели WARPER${NC}"
+        echo -e ""
+        read -r -p "Новый логин [admin]: " new_user
+        new_user="${new_user:-admin}"
+    fi
+
+    # Валидация логина
+    if ! [[ "$new_user" =~ ^[A-Za-z0-9_-]{3,32}$ ]]; then
+        echo -e "${RED}Логин должен быть 3-32 символа: латиница, цифры, _ или -${NC}" >&2
+        return 1
+    fi
+
+    if [ -z "$new_pass" ]; then
+        while true; do
+            read -r -s -p "Новый пароль (мин. 6 симв.): " new_pass
+            echo ""
+            if [ ${#new_pass} -lt 6 ]; then
+                echo -e "${RED}Пароль слишком короткий${NC}"
+                continue
+            fi
+            read -r -s -p "Подтвердите пароль: " confirm
+            echo ""
+            if [ "$new_pass" != "$confirm" ]; then
+                echo -e "${RED}Пароли не совпадают${NC}"
+                continue
+            fi
+            break
+        done
+    fi
+
+    if [ ${#new_pass} -lt 6 ]; then
+        echo -e "${RED}Пароль должен быть минимум 6 символов${NC}" >&2
+        return 1
+    fi
+
+    if [ ${#new_pass} -gt 256 ]; then
+        echo -e "${RED}Пароль слишком длинный (максимум 256)${NC}" >&2
+        return 1
+    fi
+
+    # Хешируем и сохраняем через Python (используем тот же bcrypt что и приложение)
+    mkdir -p "$web_dir/data"
+    chmod 700 "$web_dir/data"
+
+    "$venv_python" - <<PYEOF
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+try:
+    from flask_bcrypt import Bcrypt
+    from flask import Flask
+except ImportError as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(2)
+
+app = Flask(__name__)
+bcrypt = Bcrypt(app)
+
+username = "$new_user"
+password = """$new_pass"""
+users_file = Path("$users_file")
+
+# Создаём папку
+users_file.parent.mkdir(mode=0o700, exist_ok=True)
+
+# Хешируем
+password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+
+users = {
+    username: {
+        "password_hash": password_hash,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "last_login": None,
+    }
+}
+
+# Атомарная запись
+tmp = users_file.with_suffix(".tmp")
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(users, f, indent=2, ensure_ascii=False)
+os.chmod(tmp, 0o600)
+tmp.replace(users_file)
+os.chmod(users_file, 0o600)
+
+print("OK")
+PYEOF
+
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo -e "${RED}Не удалось сохранить учётные данные${NC}" >&2
+        return 1
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Учётные данные обновлены${NC}"
+    echo -e "  Логин:  ${CYAN}$new_user${NC}"
+    echo -e "  Пароль: ${CYAN}[скрыт]${NC}"
+
+    # Перезапускаем сервис чтобы сбросить активные сессии
+    if systemctl is-active --quiet warper-web 2>/dev/null; then
+        echo -e ""
+        echo -e "${YELLOW}Перезапуск warper-web (сбросит активные сессии)...${NC}"
+        systemctl restart warper-web
+        sleep 1
+        echo -e "${GREEN}Готово. Войдите в веб-панель с новыми данными.${NC}"
+    fi
+
+    return 0
+}
