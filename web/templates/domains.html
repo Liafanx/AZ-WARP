@@ -88,32 +88,33 @@
         </div>
     </div>
 
-    <form hx-post="{{ url_for('htmx_domains_file_save') }}"
-          hx-swap="none"
-          class="p-5">
-        <textarea id="domains-textarea"
-                  name="content"
-                  rows="20"
-                  hx-get="{{ url_for('htmx_domains_file_content') }}"
-                  hx-trigger="load"
-                  hx-swap="innerHTML"
-                  spellcheck="false"
-                  class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                         text-emerald-100 placeholder-emerald-700 text-sm font-mono
-                         focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
-                  placeholder="example.com&#10;openai.com&#10;sub.example.org"></textarea>
+<form hx-post="{{ url_for('htmx_domains_file_save') }}"
+      hx-swap="none"
+      class="p-5">
+    <textarea id="domains-textarea"
+              name="content"
+              rows="20"
+              hx-get="{{ url_for('htmx_domains_file_content') }}"
+              hx-trigger="load"
+              hx-swap="innerHTML"
+              spellcheck="false"
+              class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                     text-emerald-100 placeholder-emerald-700 text-sm font-mono
+                     focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
+              placeholder="# Можно добавлять комментарии&#10;example.com&#10;openai.com&#10;&#10;# Категория: соцсети&#10;facebook.com"></textarea>
 
-        <div class="flex justify-between items-center mt-3">
-            <p class="text-xs text-emerald-500/60">
-                Сохранение автоматически запускает синхронизацию.
-            </p>
-            <button type="submit"
-                    class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
-                <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                💾 Сохранить и применить
-            </button>
-        </div>
-    </form>
+    <div class="flex justify-between items-center mt-3">
+        <p class="text-xs text-emerald-500/60">
+            Комментарии (<code class="text-emerald-400">#&nbsp;...</code>) и пустые строки сохраняются.
+            Сохранение запускает синхронизацию.
+        </p>
+        <button type="submit"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            💾 Сохранить и применить
+        </button>
+    </div>
+</form>
 </div>
 
 <!-- Скрытый запрос для статусов Gemini/ChatGPT -->
