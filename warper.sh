@@ -110,7 +110,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
-    for _menufile in main settings singbox-menu ip-menu; do
+    for _menufile in main settings singbox-menu ip-menu web-menu; do
         _fetch_module "$REPO_URL/menus/${_menufile}.sh" "$WARPER_MENUS/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
     done
 
@@ -133,6 +133,7 @@ for _lib in \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
+    "$WARPER_MENUS/web-menu.sh" \    
     "$WARPER_MENUS/main.sh"
 do
     if [ ! -f "$_lib" ]; then
