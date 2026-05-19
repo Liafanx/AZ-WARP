@@ -1012,7 +1012,7 @@ done
 # Скачиваем модули menus/
 echo -e " - ${CYAN}Скачивание модулей menus/...${NC}"
 mkdir -p "$WARPER_DIR/menus"
-for _menufile in main settings singbox-menu ip-menu; do
+for _menufile in main settings singbox-menu ip-menu web-menu; do
     download_file "$REPO_URL/menus/${_menufile}.sh" "$WARPER_DIR/menus/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
 done
 
