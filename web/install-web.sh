@@ -130,6 +130,11 @@ if [ -f "repo/lib/cli.sh" ]; then
     cp repo/lib/cli.sh "$WARPER_DIR/lib/cli.sh"
 fi
 
+# Копируем web-menu.sh в menus/ если его ещё нет (для совместимости со старыми установками warper)
+if [ -f "repo/menus/web-menu.sh" ] && [ -d "$WARPER_DIR/menus" ]; then
+    cp repo/menus/web-menu.sh "$WARPER_DIR/menus/web-menu.sh"
+fi
+
 cd /
 rm -rf "$TMP_DIR"
 
