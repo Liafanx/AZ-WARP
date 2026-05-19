@@ -57,9 +57,29 @@ BACKEND_PORT="${BACKEND_PORT:-$DEFAULT_BACKEND_PORT}"
 read -r -p "Логин администратора [admin]: " ADMIN_USER
 ADMIN_USER="${ADMIN_USER:-admin}"
 
-DEFAULT_PASSWORD=$(openssl rand -base64 12 2>/dev/null | tr -d '=+/' | cut -c1-12)
-read -r -p "Пароль [сгенерировать автоматически]: " ADMIN_PASSWORD
+# Валидация логина
+while ! [[ "$ADMIN_USER" =~ ^[A-Za-z0-9_-]{3,32}$ ]]; do
+    echo -e "${RED}Логин: 3-32 символа, латиница/цифры/_-${NC}"
+    read -r -p "Логин администратора [admin]: " ADMIN_USER
+    ADMIN_USER="${ADMIN_USER:-admin}"
+done
+
+# Генерация безопасного пароля по умолчанию
+DEFAULT_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '=+/' | cut -c1-12)
+if [ -z "$DEFAULT_PASSWORD" ] || [ ${#DEFAULT_PASSWORD} -lt 10 ]; then
+    DEFAULT_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-12)
+fi
+
+echo ""
+read -r -p "Пароль (Enter = сгенерировать автоматически, мин. 6 симв.): " ADMIN_PASSWORD
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-$DEFAULT_PASSWORD}"
+
+# Валидация пароля
+while [ ${#ADMIN_PASSWORD} -lt 6 ]; do
+    echo -e "${RED}Пароль слишком короткий (минимум 6 символов).${NC}"
+    read -r -p "Пароль [Enter = сгенерировать]: " ADMIN_PASSWORD
+    ADMIN_PASSWORD="${ADMIN_PASSWORD:-$DEFAULT_PASSWORD}"
+done
 
 # ===== HTTPS =====
 
@@ -287,11 +307,6 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         echo -e "${YELLOW}Сертификат не получен — проверьте настройки DNS${NC}"
 fi
 
-# Сохранение пароля
-echo "$ADMIN_PASSWORD" > "$WARPER_DIR/web_admin_pass.txt"
-chmod 600 "$WARPER_DIR/web_admin_pass.txt"
-
-
 echo -e "${CYAN}9. Установка начального пароля...${NC}"
 # Дожидаемся пока сервис стартанёт (создастся data/users.json с admin/admin)
 sleep 3
@@ -324,7 +339,11 @@ fi
 echo -e "  Логин:  ${CYAN}$ADMIN_USER${NC}"
 echo -e "  Пароль: ${CYAN}$ADMIN_PASSWORD${NC}"
 echo ""
-echo -e "  Пароль сохранён в: ${YELLOW}$WARPER_DIR/web_admin_pass.txt${NC}"
+echo ""
+echo -e "  ${RED}⚠ Пароль показан ТОЛЬКО СЕЙЧАС — сохраните его!${NC}"
+echo -e "  ${YELLOW}При утере используйте:${NC}"
+echo -e "  ${CYAN}warper webpass --reset${NC}  (сгенерирует новый пароль для admin)"
+echo -e "  ${CYAN}warper webpass${NC}            (сменить логин/пароль интерактивно)"
 echo ""
 echo -e "  Управление: systemctl status warper-web"
 echo -e "  Логи:       journalctl -u warper-web -f"
