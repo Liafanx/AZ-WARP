@@ -1,9 +1,7 @@
 #!/bin/bash
-
 set -uo pipefail
 
 # Если запущено через "curl ... | bash" — переключаем stdin на терминал
-# чтобы read работал. Делаем это БЕЗОПАСНО.
 if [ ! -t 0 ]; then
     if [ -e /dev/tty ] && [ -r /dev/tty ]; then
         exec </dev/tty
@@ -130,7 +128,7 @@ if [ -f "repo/lib/cli.sh" ]; then
     cp repo/lib/cli.sh "$WARPER_DIR/lib/cli.sh"
 fi
 
-# Копируем web-menu.sh в menus/ если его ещё нет (для совместимости со старыми установками warper)
+# Копируем web-menu.sh в menus/ (для совместимости со старыми установками warper)
 if [ -f "repo/menus/web-menu.sh" ] && [ -d "$WARPER_DIR/menus" ]; then
     cp repo/menus/web-menu.sh "$WARPER_DIR/menus/web-menu.sh"
 fi
@@ -151,20 +149,13 @@ deactivate
 # ===== .env =====
 
 echo -e "${CYAN}4. Создание .env...${NC}"
-# В .env храним только не-секретные параметры.
-# SECRET_KEY создаётся автоматически в web/data/secret.key (chmod 600).
-# Учётные данные хранятся в web/data/users.json (chmod 600).
 cat > "$WEB_DIR/.env" <<EOF
 PORT=$BACKEND_PORT
 DEBUG=false
 EOF
 chmod 600 "$WEB_DIR/.env"
 
-# Создаём data/ заранее с правильными правами
-mkdir -p "$WEB_DIR/data"
-chmod 700 "$WEB_DIR/data"
-
-# Создаём data/ заранее с правильными правами
+# Создаём data/ с правильными правами
 mkdir -p "$WEB_DIR/data"
 chmod 700 "$WEB_DIR/data"
 
@@ -182,16 +173,7 @@ User=root
 Group=root
 WorkingDirectory=$WEB_DIR
 EnvironmentFile=$WEB_DIR/.env
-ExecStart=$WEB_DIR/venv/bin/gunicorn \\
-    --workers 2 \\
-    --threads 8 \\
-    --worker-class gthread \\
-    --bind 127.0.0.1:$BACKEND_PORT \\
-    --access-logfile - \\
-    --error-logfile - \\
-    --timeout 600 \\
-    --graceful-timeout 30 \\
-    app:app
+ExecStart=$WEB_DIR/venv/bin/gunicorn --workers 2 --threads 8 --worker-class gthread --bind 127.0.0.1:$BACKEND_PORT --access-logfile - --error-logfile - --timeout 600 --graceful-timeout 30 app:app
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -200,25 +182,27 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
+
 # ===== nginx =====
 
 echo -e "${CYAN}6. Настройка nginx...${NC}"
 rm -f "$NGINX_LINK" /etc/nginx/sites-enabled/default
 
 if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
-    # Шаг 1: создаём временный HTTP-конфиг для получения сертификата
+    # ===== HTTPS с доменом (Let's Encrypt) =====
+    # Шаг 1: временный HTTP-конфиг для получения сертификата
+    mkdir -p /var/www/html
+
     cat > "$NGINX_AVAIL" <<EOF
 server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
 
-    # Для Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
 
-    # Временно проксируем чтобы можно было войти ещё до получения сертификата
     location / {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_http_version 1.1;
@@ -229,88 +213,9 @@ server {
     }
 }
 EOF
-    mkdir -p /var/www/html
-    ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
-
-    if ! nginx -t >/dev/null 2>&1; then
-        echo -e "${RED}Ошибка в nginx-конфиге (HTTP):${NC}"
-        nginx -t
-        exit 1
-    fi
-    systemctl reload nginx 2>/dev/null || systemctl start nginx
-fi
-
-# Базовая проверка nginx-конфига для не-HTTPS-с-доменом случаев
-if [ "$ENABLE_HTTPS" != "y" ] || [ -z "$DOMAIN" ]; then
-    # HTTPS самоподписанный
-    if [ "$ENABLE_HTTPS" = "y" ]; then
-        SSL_DIR="/etc/nginx/ssl"
-        mkdir -p "$SSL_DIR"
-        if [ ! -f "$SSL_DIR/warper-web.crt" ]; then
-            openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-                -keyout "$SSL_DIR/warper-web.key" \
-                -out "$SSL_DIR/warper-web.crt" \
-                -subj "/CN=warper-web" 2>/dev/null
-        fi
-        cat > "$NGINX_AVAIL" <<EOF
-server {
-    listen $PORT ssl http2 default_server;
-    listen [::]:$PORT ssl http2 default_server;
-    server_name _;
-    ssl_certificate $SSL_DIR/warper-web.crt;
-    ssl_certificate_key $SSL_DIR/warper-web.key;
-    client_max_body_size 2M;
-    access_log /var/log/nginx/warper-web.access.log;
-    error_log /var/log/nginx/warper-web.error.log;
-    location / {
-        proxy_pass http://127.0.0.1:$BACKEND_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-        proxy_buffering off;
-    }
-}
-EOF
-    else
-        # Plain HTTP
-        cat > "$NGINX_AVAIL" <<EOF
-server {
-    listen $PORT default_server;
-    listen [::]:$PORT default_server;
-    server_name _;
-    client_max_body_size 2M;
-    access_log /var/log/nginx/warper-web.access.log;
-    error_log /var/log/nginx/warper-web.error.log;
-    location / {
-        proxy_pass http://127.0.0.1:$BACKEND_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-        proxy_buffering off;
-    }
-}
-EOF
-    fi
-    ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
-fi
-
-# Финальная проверка nginx
-if ! nginx -t >/dev/null 2>&1; then
-    echo -e "${RED}Ошибка в nginx-конфиге!${NC}"
-    nginx -t
-    exit 1
-fi
 
 elif [ "$ENABLE_HTTPS" = "y" ]; then
-    # Самоподписанный
+    # ===== HTTPS самоподписанный =====
     SSL_DIR="/etc/nginx/ssl"
     mkdir -p "$SSL_DIR"
     if [ ! -f "$SSL_DIR/warper-web.crt" ]; then
@@ -319,16 +224,21 @@ elif [ "$ENABLE_HTTPS" = "y" ]; then
             -out "$SSL_DIR/warper-web.crt" \
             -subj "/CN=warper-web" 2>/dev/null
     fi
+
     cat > "$NGINX_AVAIL" <<EOF
 server {
     listen $PORT ssl http2 default_server;
     listen [::]:$PORT ssl http2 default_server;
     server_name _;
+
     ssl_certificate $SSL_DIR/warper-web.crt;
     ssl_certificate_key $SSL_DIR/warper-web.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
     client_max_body_size 2M;
     access_log /var/log/nginx/warper-web.access.log;
     error_log /var/log/nginx/warper-web.error.log;
+
     location / {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_http_version 1.1;
@@ -336,21 +246,25 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
         proxy_buffering off;
     }
 }
 EOF
+
 else
-    # HTTP
+    # ===== HTTP (без HTTPS) =====
     cat > "$NGINX_AVAIL" <<EOF
 server {
     listen $PORT default_server;
     listen [::]:$PORT default_server;
     server_name _;
+
     client_max_body_size 2M;
     access_log /var/log/nginx/warper-web.access.log;
     error_log /var/log/nginx/warper-web.error.log;
+
     location / {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_http_version 1.1;
@@ -358,7 +272,8 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
         proxy_buffering off;
     }
 }
@@ -381,20 +296,27 @@ systemctl enable warper-web nginx >/dev/null 2>&1
 systemctl restart warper-web nginx
 sleep 2
 
-# Получение Let's Encrypt с переписыванием конфига на HTTPS
+# ===== Получение Let's Encrypt + переписывание конфига на HTTPS =====
+
 if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
-    echo -e "${CYAN}8. Получение Let's Encrypt сертификата...${NC}"
-    if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
-        --register-unsafely-without-email --redirect 2>&1 | tail -5; then
-        echo -e "${GREEN}✓ Сертификат получен${NC}"
+    echo -e "${CYAN}8. Получение Let's Encrypt сертификата для $DOMAIN...${NC}"
 
-        # Пересобираем конфиг с правильным портом и нашими настройками
-        # (certbot мог изменить конфиг под себя — приведём к нашему формату)
-        local certbot_cert="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-        local certbot_key="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+    CERT_OK="n"
+    if certbot certonly --webroot --webroot-path /var/www/html \
+        -d "$DOMAIN" --non-interactive --agree-tos \
+        --register-unsafely-without-email 2>&1 | tail -10; then
+        if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+            CERT_OK="y"
+            echo -e "${GREEN}✓ Сертификат получен${NC}"
+        fi
+    fi
 
-        if [ -f "$certbot_cert" ] && [ -f "$certbot_key" ]; then
-            cat > "$NGINX_AVAIL" <<EOF
+    if [ "$CERT_OK" = "y" ]; then
+        # Переписываем конфиг на HTTPS
+        CERTBOT_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+        CERTBOT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+
+        cat > "$NGINX_AVAIL" <<EOF
 server {
     listen 80;
     listen [::]:80;
@@ -414,8 +336,8 @@ server {
     listen [::]:$PORT ssl http2;
     server_name $DOMAIN;
 
-    ssl_certificate $certbot_cert;
-    ssl_certificate_key $certbot_key;
+    ssl_certificate $CERTBOT_CERT;
+    ssl_certificate_key $CERTBOT_KEY;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -436,39 +358,39 @@ server {
     }
 }
 EOF
-            ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
+        ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
 
-            if nginx -t >/dev/null 2>&1; then
-                systemctl reload nginx
-            else
-                echo -e "${YELLOW}Предупреждение: ошибка в финальном конфиге nginx${NC}"
-                nginx -t
-            fi
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx
+            echo -e "${GREEN}✓ HTTPS активирован${NC}"
+        else
+            echo -e "${YELLOW}Предупреждение: ошибка в HTTPS-конфиге nginx${NC}"
+            nginx -t
         fi
     else
         echo -e "${YELLOW}⚠ Сертификат не получен — продолжаем с HTTP${NC}"
         echo -e "${YELLOW}Возможные причины:${NC}"
         echo -e "  - Домен $DOMAIN не указывает на этот сервер"
-        echo -e "  - Порт 80 заблокирован или занят"
+        echo -e "  - Порт 80 заблокирован (firewall/провайдер)"
         echo -e "  - Лимит Let's Encrypt"
-        echo -e "${CYAN}Веб-панель будет работать по HTTP. Попробуйте позже:${NC}"
-        echo -e "  certbot --nginx -d $DOMAIN"
+        echo -e "${CYAN}Веб-панель работает по HTTP. Попробовать получить сертификат позже:${NC}"
+        echo -e "  ${CYAN}certbot --nginx -d $DOMAIN${NC}"
     fi
 fi
 
+# ===== Установка пароля =====
+
 echo -e "${CYAN}9. Установка начального пароля...${NC}"
-# Дожидаемся пока сервис стартанёт (создастся data/users.json с admin/admin)
 sleep 3
 
-# Устанавливаем пользовательский логин/пароль через CLI
-warper webpass "$ADMIN_USER" "$ADMIN_PASSWORD" >/dev/null 2>&1 || {
-    echo -e "${YELLOW}Не удалось установить начальный пароль. Используйте 'warper webpass' вручную.${NC}"
-}
-
+if ! warper webpass "$ADMIN_USER" "$ADMIN_PASSWORD" >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠ Не удалось установить пароль автоматически.${NC}"
+    echo -e "${YELLOW}  Используйте: warper webpass${NC}"
+fi
 
 # ===== Итог =====
 
-EXTERNAL_IP=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+EXTERNAL_IP=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "0.0.0.0")
 
 echo ""
 echo -e "${GREEN}=================================================${NC}"
@@ -478,13 +400,16 @@ echo ""
 
 if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-        echo -e "  URL:    ${CYAN}https://$DOMAIN:$PORT${NC}"
-        [ "$PORT" = "443" ] && echo -e "  URL:    ${CYAN}https://$DOMAIN${NC}"
+        if [ "$PORT" = "443" ]; then
+            echo -e "  URL:    ${CYAN}https://$DOMAIN${NC}"
+        else
+            echo -e "  URL:    ${CYAN}https://$DOMAIN:$PORT${NC}"
+        fi
     else
-        echo -e "  URL:    ${CYAN}http://$DOMAIN:$PORT${NC} ${YELLOW}(без SSL — сертификат не получен)${NC}"
+        echo -e "  URL:    ${CYAN}http://$DOMAIN${NC} ${YELLOW}(без SSL)${NC}"
     fi
 elif [ "$ENABLE_HTTPS" = "y" ]; then
-    echo -e "  URL:    ${CYAN}https://$EXTERNAL_IP:$PORT${NC}  ${YELLOW}(самоподписанный)${NC}"
+    echo -e "  URL:    ${CYAN}https://$EXTERNAL_IP:$PORT${NC}  ${YELLOW}(самоподписанный сертификат)${NC}"
 else
     echo -e "  URL:    ${CYAN}http://$EXTERNAL_IP:$PORT${NC}"
 fi
@@ -492,12 +417,14 @@ fi
 echo -e "  Логин:  ${CYAN}$ADMIN_USER${NC}"
 echo -e "  Пароль: ${CYAN}$ADMIN_PASSWORD${NC}"
 echo ""
-echo ""
 echo -e "  ${RED}⚠ Пароль показан ТОЛЬКО СЕЙЧАС — сохраните его!${NC}"
-echo -e "  ${YELLOW}При утере используйте:${NC}"
-echo -e "  ${CYAN}warper webpass --reset${NC}  (сгенерирует новый пароль для admin)"
-echo -e "  ${CYAN}warper webpass${NC}            (сменить логин/пароль интерактивно)"
 echo ""
-echo -e "  Управление: systemctl status warper-web/ пункт W в warper"
-echo -e "  Логи:       journalctl -u warper-web -f"
+echo -e "  ${YELLOW}При утере пароля:${NC}"
+echo -e "    ${CYAN}warper webpass --reset${NC}   — сгенерирует новый пароль для admin"
+echo -e "    ${CYAN}warper webpass${NC}             — сменить логин/пароль интерактивно"
+echo ""
+echo -e "  ${YELLOW}Управление:${NC}"
+echo -e "    ${CYAN}warper${NC} → пункт ${CYAN}W${NC} — меню веб-панели"
+echo -e "    ${CYAN}systemctl status warper-web${NC}"
+echo -e "    ${CYAN}journalctl -u warper-web -f${NC}"
 echo ""
