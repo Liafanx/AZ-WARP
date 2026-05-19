@@ -936,11 +936,19 @@ cli_webpass() {
         rm -f "$web_dir/data/.init.lock"
         rm -f "$web_dir/data/blocks.json"
 
-        echo -e "${CYAN}Создание пользователя admin/admin...${NC}"
+        # Генерируем случайный безопасный пароль (12 символов, base64-like)
+        local generated_pass
+        generated_pass=$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-12)
+        if [ -z "$generated_pass" ] || [ ${#generated_pass} -lt 10 ]; then
+            # Резерв: если openssl недоступен или дал слишком короткий результат
+            generated_pass=$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-12)
+        fi
+
+        echo -e "${CYAN}Создание пользователя admin со случайным паролем...${NC}"
         mkdir -p "$web_dir/data"
         chmod 700 "$web_dir/data"
 
-        "$venv_python" - <<'PYEOF'
+        NEW_USER="admin" NEW_PASS="$generated_pass" "$venv_python" - <<'PYEOF'
 import json
 import os
 import secrets
@@ -955,6 +963,13 @@ except ImportError as e:
     print(f"ERROR: {e}", file=sys.stderr)
     sys.exit(2)
 
+username = os.environ.get("NEW_USER", "admin")
+password = os.environ.get("NEW_PASS", "")
+
+if not password:
+    print("ERROR: empty password", file=sys.stderr)
+    sys.exit(1)
+
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
 
@@ -964,10 +979,10 @@ secret_file = data_dir / "secret.key"
 
 data_dir.mkdir(mode=0o700, exist_ok=True)
 
-password_hash = bcrypt.generate_password_hash("admin").decode("utf-8")
+password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
 
 users = {
-    "admin": {
+    username: {
         "password_hash": password_hash,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "last_login": None,
@@ -1001,10 +1016,15 @@ PYEOF
         fi
 
         echo ""
-        echo -e "${GREEN}✓ Готово${NC}"
-        echo -e "  Логин:  ${CYAN}admin${NC}"
-        echo -e "  Пароль: ${CYAN}admin${NC}"
-        echo -e "${YELLOW}СМЕНИТЕ ПАРОЛЬ через 'warper webpass'!${NC}"
+        echo -e "${GREEN}═══════════════════════════════════════════════${NC}"
+        echo -e "${GREEN} ✓ Учётные данные сброшены${NC}"
+        echo -e "${GREEN}═══════════════════════════════════════════════${NC}"
+        echo -e "   Логин:  ${CYAN}admin${NC}"
+        echo -e "   Пароль: ${CYAN}${generated_pass}${NC}"
+        echo -e "${GREEN}═══════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}⚠ Сохраните пароль! После закрытия терминала его${NC}"
+        echo -e "${YELLOW}  будет невозможно восстановить.${NC}"
+        echo -e "${YELLOW}  Смените на свой через: warper webpass${NC}"
         return 0
     fi
 
