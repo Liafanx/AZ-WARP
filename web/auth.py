@@ -145,15 +145,12 @@ def _save_users(users: dict) -> bool:
 
 def _ensure_default_user() -> None:
     """
-    Создаёт пользователя admin/admin если БД пуста.
-    Использует file-lock чтобы при параллельном старте воркеров
-    создание было атомарным.
+    Создаёт пользователя admin со случайным паролем если БД пуста.
+    Пароль выводится в лог systemd — администратор увидит его при первом запуске.
     """
-    # Проверка без lock - быстрый путь
     if _load_users():
         return
 
-    # Lock через создание файла (POSIX-совместимо)
     import fcntl
     _ensure_data_dir()
     lock_file = DATA_DIR / ".init.lock"
@@ -165,12 +162,14 @@ def _ensure_default_user() -> None:
             except OSError:
                 pass
 
-            # Повторная проверка под lock
             if _load_users():
                 return
 
+            # Генерируем случайный безопасный пароль
+            generated_pass = secrets.token_urlsafe(9)  # ~12 символов
+
             try:
-                hashed = bcrypt.generate_password_hash(DEFAULT_PASSWORD).decode("utf-8")
+                hashed = bcrypt.generate_password_hash(generated_pass).decode("utf-8")
             except Exception as e:
                 logger.error("Ошибка хеширования дефолтного пароля: %s", e)
                 return
@@ -183,14 +182,17 @@ def _ensure_default_user() -> None:
                 }
             }
             if _save_users(users):
-                logger.warning(
-                    "БД пользователей создана. Логин: %s / Пароль: %s. СМЕНИТЕ ЧЕРЕЗ 'warper webpass'!",
-                    DEFAULT_USER, DEFAULT_PASSWORD,
-                )
+                # Заметное предупреждение в логи systemd
+                logger.warning("=" * 60)
+                logger.warning("БД пользователей не найдена — создан администратор")
+                logger.warning("  Логин:  %s", DEFAULT_USER)
+                logger.warning("  Пароль: %s", generated_pass)
+                logger.warning("Смените пароль командой: warper webpass")
+                logger.warning("Логи: journalctl -u warper-web | grep -i 'Пароль'")
+                logger.warning("=" * 60)
     except OSError as e:
         logger.error("Не удалось создать lock-файл для инициализации: %s", e)
     finally:
-        # Удаляем lock-файл (не критично если не получится)
         try:
             lock_file.unlink()
         except OSError:
