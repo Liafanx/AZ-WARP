@@ -50,7 +50,6 @@ PASSWORD_MAX_LEN = 256
 
 # Дефолтные учётные данные при первом запуске (если БД пуста)
 DEFAULT_USER = "admin"
-DEFAULT_PASSWORD = "admin"
 
 
 def _ensure_data_dir() -> None:
