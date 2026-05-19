@@ -302,13 +302,17 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     echo -e "${CYAN}8. Получение Let's Encrypt сертификата для $DOMAIN...${NC}"
 
     CERT_OK="n"
-    if certbot certonly --webroot --webroot-path /var/www/html \
-        -d "$DOMAIN" --non-interactive --agree-tos \
-        --register-unsafely-without-email 2>&1 | tail -10; then
-        if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-            CERT_OK="y"
-            echo -e "${GREEN}✓ Сертификат получен${NC}"
-        fi
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
+        --register-unsafely-without-email --redirect 2>&1 | tail -10 || true
+
+    # Проверяем что сертификат реально создался (может уже был от прошлой установки)
+    sleep 2
+    if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && \
+       [ -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
+        CERT_OK="y"
+        echo -e "${GREEN}✓ Сертификат готов (получен или уже существовал)${NC}"
+    else
+        echo -e "${YELLOW}⚠ Сертификат не найден${NC}"
     fi
 
     if [ "$CERT_OK" = "y" ]; then
@@ -381,11 +385,77 @@ fi
 # ===== Установка пароля =====
 
 echo -e "${CYAN}9. Установка начального пароля...${NC}"
-sleep 3
 
-if ! warper webpass "$ADMIN_USER" "$ADMIN_PASSWORD" >/dev/null 2>&1; then
-    echo -e "${YELLOW}⚠ Не удалось установить пароль автоматически.${NC}"
-    echo -e "${YELLOW}  Используйте: warper webpass${NC}"
+# Ждём пока сервис создаст data/ и инициализируется
+sleep 2
+
+# Создаём пользователя НАПРЯМУЮ через Python, не зависим от warper webpass
+PASS_OK="n"
+NEW_USER="$ADMIN_USER" NEW_PASS="$ADMIN_PASSWORD" "$WEB_DIR/venv/bin/python3" - <<'PYEOF' && PASS_OK="y"
+import json
+import os
+import secrets
+import sys
+from datetime import datetime
+from pathlib import Path
+
+try:
+    from flask_bcrypt import Bcrypt
+    from flask import Flask
+except ImportError as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(2)
+
+username = os.environ.get("NEW_USER", "admin")
+password = os.environ.get("NEW_PASS", "")
+
+if not password:
+    print("ERROR: empty password", file=sys.stderr)
+    sys.exit(1)
+
+app = Flask(__name__)
+bcrypt = Bcrypt(app)
+
+data_dir = Path("/root/warper/web/data")
+users_file = data_dir / "users.json"
+secret_file = data_dir / "secret.key"
+
+data_dir.mkdir(mode=0o700, exist_ok=True)
+
+password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+
+users = {
+    username: {
+        "password_hash": password_hash,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "last_login": None,
+    }
+}
+
+tmp = users_file.with_suffix(".tmp")
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(users, f, indent=2, ensure_ascii=False)
+os.chmod(tmp, 0o600)
+tmp.replace(users_file)
+os.chmod(users_file, 0o600)
+
+# Ротируем SECRET_KEY
+new_secret = secrets.token_hex(32)
+secret_file.write_text(new_secret + "\n", encoding="utf-8")
+os.chmod(secret_file, 0o600)
+
+print("OK")
+PYEOF
+
+if [ "$PASS_OK" = "y" ]; then
+    # Перезапускаем чтобы подхватить новый SECRET_KEY
+    systemctl restart warper-web
+    sleep 2
+    echo -e "${GREEN}✓ Пользователь $ADMIN_USER создан${NC}"
+else
+    echo -e "${RED}⚠ Не удалось создать пользователя автоматически.${NC}"
+    echo -e "${YELLOW}  Используйте после установки: warper webpass${NC}"
+    echo -e "${YELLOW}  Будет работать пароль по умолчанию (warper webpass --reset)${NC}"
 fi
 
 # ===== Итог =====
