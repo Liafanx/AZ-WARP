@@ -34,7 +34,6 @@ DATA_DIR = Path(__file__).parent / "data"
 USERS_FILE = DATA_DIR / "users.json"
 SECRET_FILE = DATA_DIR / "secret.key"
 AUTH_LOG = DATA_DIR / "auth.log"
-ADMIN_PASS_FILE = Path("/root/warper/web_admin_pass.txt")
 
 # Защита от brute-force
 MAX_ATTEMPTS = 5
@@ -334,13 +333,6 @@ def verify_credentials(username: str, password: str) -> tuple[bool, str]:
 
     _clear_attempts(ip)
     _audit_log("login_success", ip, username)
-
-    if ADMIN_PASS_FILE.exists():
-        try:
-            ADMIN_PASS_FILE.unlink()
-            logger.info("web_admin_pass.txt удалён после первого входа")
-        except OSError:
-            pass
 
     return True, ""
 
