@@ -194,6 +194,7 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     mkdir -p /var/www/html
 
     cat > "$NGINX_AVAIL" <<EOF
+# Минимальный server-блок на 80 - только для Let's Encrypt
 server {
     listen 80;
     listen [::]:80;
@@ -204,12 +205,30 @@ server {
     }
 
     location / {
+        return 404;
+    }
+}
+
+# Веб-панель пока на HTTP — до получения сертификата
+server {
+    listen $PORT default_server;
+    listen [::]:$PORT default_server;
+    server_name _;
+
+    client_max_body_size 2M;
+    access_log /var/log/nginx/warper-web.access.log;
+    error_log /var/log/nginx/warper-web.error.log;
+
+    location / {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_buffering off;
     }
 }
 EOF
@@ -234,6 +253,9 @@ server {
     ssl_certificate $SSL_DIR/warper-web.crt;
     ssl_certificate_key $SSL_DIR/warper-web.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
 
     client_max_body_size 2M;
     access_log /var/log/nginx/warper-web.access.log;
@@ -244,7 +266,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
@@ -261,6 +283,10 @@ server {
     listen [::]:$PORT default_server;
     server_name _;
 
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
     client_max_body_size 2M;
     access_log /var/log/nginx/warper-web.access.log;
     error_log /var/log/nginx/warper-web.error.log;
@@ -270,7 +296,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
@@ -278,6 +304,7 @@ server {
     }
 }
 EOF
+
 fi
 
 ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
@@ -315,26 +342,13 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         echo -e "${YELLOW}⚠ Сертификат не найден${NC}"
     fi
 
-    if [ "$CERT_OK" = "y" ]; then
-        # Переписываем конфиг на HTTPS
-        CERTBOT_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-        CERTBOT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+if [ "$CERT_OK" = "y" ]; then
+    # Переписываем конфиг — ТОЛЬКО на нашем порту, БЕЗ редиректа с 80
+    CERTBOT_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+    CERTBOT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
 
-        cat > "$NGINX_AVAIL" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $DOMAIN;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        return 301 https://\$host:$PORT\$request_uri;
-    }
-}
-
+    cat > "$NGINX_AVAIL" <<EOF
+# AZ-WARP Web Panel — HTTPS на порту $PORT, домен $DOMAIN
 server {
     listen $PORT ssl http2;
     listen [::]:$PORT ssl http2;
@@ -344,6 +358,12 @@ server {
     ssl_certificate_key $CERTBOT_KEY;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_session_cache shared:WarperSSL:5m;
+    ssl_session_timeout 1d;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
 
     client_max_body_size 2M;
     access_log /var/log/nginx/warper-web.access.log;
@@ -354,15 +374,32 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering off;
     }
 }
+
+# Минимальный конфиг для обновления Let's Encrypt сертификата
+# (порт 80 нужен только для acme-challenge, без редиректа на наш порт)
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # На любой другой запрос - 404 (мы не хотим перехватывать порт 80)
+    location / {
+        return 404;
+    }
+}
 EOF
-        ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
+    ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
 
         if nginx -t >/dev/null 2>&1; then
             systemctl reload nginx
