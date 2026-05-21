@@ -118,8 +118,10 @@ def _atomic_write(path: Path, content: str, mode: int = 0o600) -> bool:
 
 
 def get_or_create_secret_key() -> str:
-    """SECRET_KEY из файла или новый."""
+    """SECRET_KEY из файла или новый. Защита от race condition между воркерами."""
     _ensure_data_dir()
+
+    # Быстрый путь — файл уже есть
     if SECRET_FILE.exists():
         try:
             key = SECRET_FILE.read_text(encoding="utf-8").strip()
@@ -128,9 +130,34 @@ def get_or_create_secret_key() -> str:
         except OSError:
             pass
 
-    new_key = secrets.token_hex(32)
-    _atomic_write(SECRET_FILE, new_key + "\n", 0o600)
-    return new_key
+    # Lock через flock чтобы все воркеры использовали один SECRET_KEY
+    import fcntl
+    lock_file = DATA_DIR / ".secret.lock"
+    try:
+        with open(lock_file, "w") as lf:
+            try:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass
+
+            # Повторная проверка под lock
+            if SECRET_FILE.exists():
+                try:
+                    key = SECRET_FILE.read_text(encoding="utf-8").strip()
+                    if len(key) >= 32:
+                        return key
+                except OSError:
+                    pass
+
+            # Создаём
+            new_key = secrets.token_hex(32)
+            _atomic_write(SECRET_FILE, new_key + "\n", 0o600)
+            return new_key
+    finally:
+        try:
+            lock_file.unlink()
+        except OSError:
+            pass
 
 
 def rotate_secret_key() -> str:
