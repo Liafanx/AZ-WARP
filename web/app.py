@@ -55,20 +55,21 @@ init_auth(app)
 
 @app.before_request
 def _csrf_origin_check():
-    """Проверка Origin/Referer для state-changing запросов."""
+    """
+    CSRF защита: проверка Origin/Referer для state-changing запросов.
+    Срабатывает ДО проверки авторизации.
+    """
     if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
         return None
 
-    # /login POST разрешён без проверки origin (это сам логин)
-    # — но проверяем что Origin/Referer указывает на нас (если они есть)
-    # Если совсем нет ни Origin ни Referer — это либо curl, либо браузер
-    # без поддержки этих заголовков. Для curl — мы не делаем cookie-auth
-    # (нет сессии), поэтому атака CSRF в принципе невозможна.
 
     origin = request.headers.get("Origin", "").strip()
     referer = request.headers.get("Referer", "").strip()
 
-    # Если оба отсутствуют — пропускаем (нет cookie-сессии = нет CSRF)
+    # /login разрешён без проверки (пользователь может прийти с любой страницы)
+    if request.path == "/login":
+        return None
+
     if not origin and not referer:
         return None
 
@@ -78,7 +79,6 @@ def _csrf_origin_check():
     def _check_url(url):
         if not url:
             return False
-        # Простая проверка: ищем "://EXPECTED_HOST/"
         from urllib.parse import urlparse
         try:
             parsed = urlparse(url)
@@ -86,9 +86,22 @@ def _csrf_origin_check():
         except Exception:
             return False
 
-    if origin and _check_url(origin):
+    if origin:
+        if not _check_url(origin):
+            logger.warning(
+                "CSRF blocked: bad Origin. method=%s path=%s origin=%r host=%r",
+                request.method, request.path, origin, expected_host,
+            )
+            abort(403, description="CSRF check failed: invalid Origin")
         return None
-    if referer and _check_url(referer):
+
+    if referer:
+        if not _check_url(referer):
+            logger.warning(
+                "CSRF blocked: bad Referer. method=%s path=%s referer=%r host=%r",
+                request.method, request.path, referer, expected_host,
+            )
+            abort(403, description="CSRF check failed: invalid Referer")
         return None
 
     logger.warning(
