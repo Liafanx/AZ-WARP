@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from dotenv import load_dotenv
 from flask import (
@@ -35,14 +36,75 @@ app = Flask(
     static_folder=str(Path(__file__).parent / "static"),
     static_url_path="/static",
 )
-from auth import get_or_create_secret_key
+
+# Доверяем заголовкам от nginx (X-Forwarded-Proto, X-Real-IP).
+# Это нужно чтобы Flask понимал что мы за реверс-прокси.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config["SECRET_KEY"] = get_or_create_secret_key()
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 
+# Cookie настраиваются в auth.init_auth()
 init_auth(app)
+
+
+# ===== CSRF защита (origin check) =====
+# Любой POST/PUT/DELETE/PATCH должен иметь Origin или Referer
+# с того же хоста что и наш сервер. Это блокирует CSRF атаки
+# через сторонние сайты.
+
+@app.before_request
+def _csrf_origin_check():
+    """Проверка Origin/Referer для state-changing запросов."""
+    if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
+        return None
+
+    # /login POST разрешён без проверки origin (это сам логин)
+    # — но проверяем что Origin/Referer указывает на нас (если они есть)
+    # Если совсем нет ни Origin ни Referer — это либо curl, либо браузер
+    # без поддержки этих заголовков. Для curl — мы не делаем cookie-auth
+    # (нет сессии), поэтому атака CSRF в принципе невозможна.
+
+    origin = request.headers.get("Origin", "").strip()
+    referer = request.headers.get("Referer", "").strip()
+
+    # Если оба отсутствуют — пропускаем (нет cookie-сессии = нет CSRF)
+    if not origin and not referer:
+        return None
+
+    # Проверяем что Origin/Referer указывают на наш хост
+    expected_host = request.host  # включает порт если не стандартный
+
+    def _check_url(url):
+        if not url:
+            return False
+        # Простая проверка: ищем "://EXPECTED_HOST/"
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            return parsed.netloc == expected_host
+        except Exception:
+            return False
+
+    if origin and _check_url(origin):
+        return None
+    if referer and _check_url(referer):
+        return None
+
+    logger.warning(
+        "CSRF check failed: method=%s path=%s origin=%r referer=%r host=%r",
+        request.method, request.path, origin, referer, expected_host,
+    )
+    abort(403, description="CSRF check failed: invalid Origin/Referer")
+
+
+# ===== Безопасные cookie при HTTPS =====
+@app.before_request
+def _force_secure_cookies_on_https():
+    """Если запрос пришёл по HTTPS — включаем Secure для cookie."""
+    if request.is_secure:
+        app.config["SESSION_COOKIE_SECURE"] = True
+        app.config["REMEMBER_COOKIE_SECURE"] = True
 
 logging.basicConfig(
     level=logging.INFO,
