@@ -69,7 +69,7 @@ case "${1:-}" in
     # Read-only / быстрые команды - lock не нужен
     status|doctor|iplist|iproutes|logs|domainslist|warpkey|wgconfig|config|\
     add|remove|enable|disable|ipadd|ipremove|autopatch|fullvpn|iproutemode|\
-    ipexport|loglevel|mtu|webpass)
+    ipexport|loglevel|mtu|webpass|websync|ipranges)
         :  # без блокировки — эти команды быстрые, или сами защищаются
         ;;
     *)
@@ -284,6 +284,15 @@ case "${1:-}" in
         shift
         cli_webpass "$@"
         exit $?
+        ;;
+esac
+
+case "${1:-}" in
+    websync|ipranges|webpass)
+        :
+        ;;
+    *)
+        rebuild_master_file
         ;;
 esac
 
