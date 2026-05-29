@@ -251,36 +251,36 @@ def _validate_domain_format(domain: str) -> bool:
 
 def get_user_domains_block() -> str:
     """
-    Возвращает пользовательский блок domains.txt, включая маркер
-    '# Пользовательские домены:' для понятности пользователю.
+    Возвращает только пользовательский блок domains.txt
+    БЕЗ служебного маркера '# Пользовательские домены:'.
+    
     Сохраняет пользовательские комментарии и пустые строки.
-    Исключает только:
+    Исключает:
       - стандартную шапку файла (===== ... =====)
+      - служебный маркер '# Пользовательские домены:'
       - блоки GEMINI/CHATGPT целиком
     """
     domains_file = "/root/warper/domains.txt"
     if not os.path.exists(domains_file):
-        return "# Пользовательские домены:\n"
+        return ""
     try:
         with open(domains_file, "r", encoding="utf-8") as f:
             content = f.read()
     except OSError:
-        return "# Пользовательские домены:\n"
+        return ""
 
     lines = content.splitlines()
     user_lines: list[str] = []
     in_block = False
     skip_header = True
     header_marker = "# Пользовательские домены:"
-    header_found = False
 
     for ln in lines:
-        # Шапка — пропускаем до маркера "# Пользовательские домены:"
+        # Пропускаем шапку до маркера "# Пользовательские домены:"
         if skip_header:
             if ln.strip() == header_marker:
                 skip_header = False
-                header_found = True
-                user_lines.append(ln)  # включаем сам маркер
+                # сам маркер НЕ включаем в результат
             continue
 
         # Блоки GEMINI/CHATGPT — пропускаем целиком
@@ -293,41 +293,34 @@ def get_user_domains_block() -> str:
         if in_block:
             continue
 
-        # Всё остальное - в результат
         user_lines.append(ln)
-
-    # Если маркера в файле не было — добавляем его в начало
-    if not header_found:
-        user_lines.insert(0, header_marker)
 
     # Обрезаем хвостовые пустые строки
     while user_lines and not user_lines[-1].strip():
         user_lines.pop()
 
     return "\n".join(user_lines)
-
+    
 def save_user_domains_block(text: str) -> tuple[bool, str]:
     """
     Сохраняет пользовательский блок domains.txt с комментариями.
     Валидирует только строки-домены.
-    Маркер '# Пользовательские домены:' распознаётся и НЕ дублируется.
+    Служебный маркер '# Пользовательские домены:' добавляется автоматически.
     Блоки GEMINI/CHATGPT остаются нетронутыми.
     """
     domains_file = "/root/warper/domains.txt"
     header_marker = "# Пользовательские домены:"
 
-    # Парсим вход и убираем маркер если он есть (мы добавим его сами при сборке)
-    raw_lines = text.splitlines()
-    user_lines: list[str] = []
-    for raw in raw_lines:
-        if raw.strip() == header_marker:
-            continue  # не дублируем
-        user_lines.append(raw)
+    # На всякий случай отфильтруем строку с маркером если пользователь её ввёл вручную
+    raw_lines = [
+        ln for ln in text.splitlines()
+        if ln.strip() != header_marker
+    ]
 
     # Валидация - только строки-домены, комментарии и пустые пропускаем
     invalid: list[str] = []
     valid_count = 0
-    for raw in user_lines:
+    for raw in raw_lines:
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
@@ -343,8 +336,8 @@ def save_user_domains_block(text: str) -> tuple[bool, str]:
         return False, msg
 
     # Обрезаем хвостовые пустые строки
-    while user_lines and not user_lines[-1].strip():
-        user_lines.pop()
+    while raw_lines and not raw_lines[-1].strip():
+        raw_lines.pop()
 
     # Читаем существующий файл, сохраняем блоки GEMINI/CHATGPT
     gemini_block: list[str] = []
@@ -388,9 +381,9 @@ def save_user_domains_block(text: str) -> tuple[bool, str]:
         "# ⚠️ НЕ удаляйте служебные маркеры блоков GEMINI/CHATGPT",
         "# ==========================================",
         "",
-        header_marker,  # одинокий маркер - его мы добавляем сами
+        header_marker,  # служебный маркер - всегда добавляем сами
     ]
-    out_lines.extend(user_lines)
+    out_lines.extend(raw_lines)
     if gemini_block:
         out_lines.append("")
         out_lines.extend(gemini_block)
