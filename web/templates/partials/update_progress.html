@@ -1,0 +1,141 @@
+{# Консоль прогресса обновления с SSE-стримом #}
+
+<div class="bg-surface-950 border-2 border-brand-700/50 rounded-lg overflow-hidden">
+    <div class="px-4 py-3 border-b border-brand-700/40 flex items-center justify-between bg-brand-900/30">
+        <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full bg-brand-400 animate-pulse" id="update-status-dot"></div>
+            <span class="text-brand-200 font-medium text-sm" id="update-status-text">
+                Подключение к серверу...
+            </span>
+        </div>
+        <span class="text-xs text-emerald-500/60 font-mono" id="update-elapsed">00:00</span>
+    </div>
+
+    <div id="update-console"
+         class="font-mono text-xs leading-relaxed max-h-[400px] overflow-y-auto scroll-thin p-3 text-emerald-300 bg-black/40">
+        <div class="text-emerald-500/60">$ warper update</div>
+    </div>
+
+    <div class="px-4 py-3 border-t border-brand-700/40 bg-surface-900/60" id="update-footer">
+        <div class="text-xs text-emerald-500/70" id="update-footer-text">
+            Не закрывайте страницу до завершения обновления.
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const consoleEl = document.getElementById('update-console');
+    const statusDot = document.getElementById('update-status-dot');
+    const statusText = document.getElementById('update-status-text');
+    const elapsedEl = document.getElementById('update-elapsed');
+    const footerText = document.getElementById('update-footer-text');
+
+    const startTime = Date.now();
+
+    // Таймер
+    const elapsedTimer = setInterval(function() {
+        const sec = Math.floor((Date.now() - startTime) / 1000);
+        const m = String(Math.floor(sec / 60)).padStart(2, '0');
+        const s = String(sec % 60).padStart(2, '0');
+        elapsedEl.textContent = m + ':' + s;
+    }, 1000);
+
+    function appendLine(text, cls) {
+        const div = document.createElement('div');
+        if (cls) div.className = cls;
+        div.textContent = text;
+        consoleEl.appendChild(div);
+        // Авто-скролл вниз
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+
+    function setStatus(text, dotColor, textColor) {
+        statusText.textContent = text;
+        statusText.className = 'font-medium text-sm ' + (textColor || 'text-brand-200');
+        statusDot.className = 'w-3 h-3 rounded-full ' + dotColor;
+    }
+
+    function setFooter(text, color) {
+        footerText.textContent = text;
+        footerText.className = 'text-xs ' + (color || 'text-emerald-500/70');
+    }
+
+    // Подключаемся к SSE
+    const evtSource = new EventSource('/api/update-stream');
+    let succeeded = false;
+
+    evtSource.addEventListener('start', function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            setStatus(d.message, 'bg-brand-400 animate-pulse');
+            appendLine(d.message, 'text-brand-400 font-semibold');
+        } catch (err) {}
+    });
+
+    evtSource.addEventListener('log', function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            // Окраска по содержимому
+            let cls = 'text-emerald-300';
+            const t = d.line;
+            if (t.match(/^\s*✓|^\s*OK|успешно|Готово/i)) cls = 'text-brand-400';
+            else if (t.match(/Ошибка|ERROR|FAIL|⚠/i)) cls = 'text-red-400';
+            else if (t.match(/Внимание|WARN|Предупреждение/i)) cls = 'text-amber-400';
+            else if (t.match(/^===|^---|\[\d+\/\d+\]/)) cls = 'text-cyan-400 font-semibold';
+            else if (t.match(/^\s*-\s/)) cls = 'text-emerald-200';
+            appendLine(t, cls);
+        } catch (err) {}
+    });
+
+    evtSource.addEventListener('done', function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            succeeded = d.success;
+            evtSource.close();
+            clearInterval(elapsedTimer);
+
+            if (d.success) {
+                setStatus('Обновление завершено успешно', 'bg-brand-400', 'text-brand-300');
+                appendLine('', '');
+                appendLine('✓ ОБНОВЛЕНИЕ ЗАВЕРШЕНО', 'text-brand-400 font-bold text-sm');
+                setFooter('Страница автоматически перезагрузится через 5 секунд...', 'text-brand-300');
+                setTimeout(function() {
+                    window.location.href = '/dashboard';
+                }, 5000);
+            } else {
+                setStatus('Обновление завершилось с ошибкой', 'bg-red-500', 'text-red-300');
+                appendLine('', '');
+                appendLine('✕ ОБНОВЛЕНИЕ НЕ УДАЛОСЬ (код: ' + d.rc + ')', 'text-red-400 font-bold text-sm');
+                setFooter('Проверьте логи: journalctl -u warper-web -n 50', 'text-red-300');
+            }
+        } catch (err) {}
+    });
+
+    evtSource.addEventListener('error', function(e) {
+        // Если это просто разрыв соединения после done — игнорируем
+        if (succeeded) return;
+
+        // Иначе - реальная ошибка
+        try {
+            if (e.data) {
+                const d = JSON.parse(e.data);
+                appendLine('ОШИБКА: ' + d.message, 'text-red-400 font-bold');
+                setStatus('Ошибка', 'bg-red-500', 'text-red-300');
+            }
+        } catch (err) {}
+
+        // Если EventSource в состоянии CLOSED — это сервер закрыл стрим
+        if (evtSource.readyState === EventSource.CLOSED) {
+            clearInterval(elapsedTimer);
+            if (!succeeded) {
+                setStatus('Соединение прервано', 'bg-amber-500', 'text-amber-300');
+                setFooter('Возможно сервис перезапустился. Через 15 секунд перезагрузим страницу...', 'text-amber-300');
+                setTimeout(function() {
+                    window.location.href = '/dashboard';
+                }, 15000);
+            }
+        }
+    });
+})();
+</script>

@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки{% endblock %}
+{% block heading %}Настройки{% endblock %}
+
+{% block content %}
+
+<div class="space-y-6">
+
+    <!-- ===== Режим маршрутизации ===== -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-1">Режим маршрутизации</h3>
+        <p class="text-xs text-emerald-500/60 mb-4">Текущий: <span class="font-mono text-emerald-300">{{ status.outbound_mode|upper }}</span></p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+            <!-- WARP -->
+            <button onclick="openModal('modal-mode-warp')"
+                    class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
+                           {% if status.outbound_mode == 'warp' %}ring-2 ring-brand-500/50{% endif %}">
+                <div class="font-bold text-emerald-100 mb-1">WARP</div>
+                <div class="text-xs text-emerald-400/70">Cloudflare WARP с локальными ключами</div>
+            </button>
+
+            <!-- Slave -->
+            <button onclick="openModal('modal-mode-slave')"
+                    class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
+                           {% if status.outbound_mode == 'slave' %}ring-2 ring-brand-500/50{% endif %}">
+                <div class="font-bold text-emerald-100 mb-1">Slave</div>
+                <div class="text-xs text-emerald-400/70">Через донор-сервер (Shadowsocks)</div>
+            </button>
+
+            <!-- WG -->
+            <button onclick="openModal('modal-mode-wg')"
+                    class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
+                           {% if status.outbound_mode == 'wg' %}ring-2 ring-brand-500/50{% endif %}">
+                <div class="font-bold text-emerald-100 mb-1">WireGuard</div>
+                <div class="text-xs text-emerald-400/70">Свой WG-сервер</div>
+            </button>
+        </div>
+    </section>
+
+    <!-- ===== Sing-box параметры ===== -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-4">Параметры sing-box</h3>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            <!-- Log level -->
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Log level</label>
+                <select name="level"
+                        hx-post="{{ url_for('htmx_settings_log_level') }}"
+                        hx-trigger="change"
+                        hx-swap="none"
+                        class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                               text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                    {% for lv in ['debug', 'info', 'warn', 'error'] %}
+                        <option value="{{ lv }}" {% if status.singbox.log_level == lv %}selected{% endif %}>{{ lv }}</option>
+                    {% endfor %}
+                </select>
+                <p class="text-xs text-emerald-500/60 mt-1">Текущий: {{ status.singbox.log_level }}</p>
+            </div>
+
+            <!-- MTU -->
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">MTU (1280-1500)</label>
+                <form hx-post="{{ url_for('htmx_settings_mtu') }}"
+                      hx-swap="none"
+                      class="flex gap-2">
+                    <input type="number" name="mtu" min="1280" max="1500" value="{{ status.singbox.mtu }}"
+                           class="flex-1 px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                                  text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                    <button type="submit"
+                            class="px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm transition">
+                        Применить
+                    </button>
+                </form>
+                <p class="text-xs text-emerald-500/60 mt-1">Текущий: {{ status.singbox.mtu }}</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== Fake-подсеть ===== -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-1">Fake-подсеть</h3>
+        <p class="text-xs text-emerald-500/60 mb-4">
+            Текущая: <span class="font-mono text-emerald-300">{{ status.subnet.fake }}</span>.
+            Операция занимает 30-60 секунд (пересборка + doall.sh ip).
+        </p>
+        <form hx-post="{{ url_for('htmx_settings_subnet') }}"
+              hx-swap="none"
+              hx-on::before-request="this.querySelector('button').disabled=true; this.querySelector('button').innerText='Применяется... (до 60 сек)'"
+              hx-on::after-request="this.querySelector('button').disabled=false; this.querySelector('button').innerText='Изменить'"
+              data-confirm="Изменить fake-подсеть? Это пересоберёт всю маршрутизацию (30-60 сек)."
+              class="flex gap-2 max-w-md">
+            <input type="text" name="subnet" value="{{ status.subnet.fake }}"
+                   placeholder="198.20.0.0/24"
+                   class="flex-1 px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                          text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+            <button type="submit"
+                    class="px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm transition disabled:opacity-50">
+                Изменить
+            </button>
+        </form>
+    </section>
+
+    <!-- ===== Переключатели ===== -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-4">Дополнительные опции</h3>
+
+        <div class="space-y-4">
+
+            <!-- Автопатч -->
+            <div class="flex items-center justify-between border-b border-emerald-900/30 pb-4">
+                <div>
+                    <div class="text-sm text-emerald-100 font-medium">Автопатч DNS при загрузке</div>
+                    <div class="text-xs text-emerald-500/60">Сохранять патч kresd.conf после перезагрузки сервера</div>
+                </div>
+                <div class="flex gap-2">
+                    <button hx-post="{{ url_for('htmx_settings_autopatch') }}"
+                            hx-swap="none"
+                            hx-vals='{"enable":"1"}'
+                            class="px-3 py-1.5 text-xs rounded transition
+                            {% if status.autopatch_enabled %}
+                                bg-brand-700 text-white
+                            {% else %}
+                                bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-brand-700/30
+                            {% endif %}">
+                        Вкл
+                    </button>
+                    <button hx-post="{{ url_for('htmx_settings_autopatch') }}"
+                            hx-swap="none"
+                            hx-vals='{"enable":"0"}'
+                            class="px-3 py-1.5 text-xs rounded transition
+                            {% if not status.autopatch_enabled %}
+                                bg-red-700 text-white
+                            {% else %}
+                                bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-red-700/30
+                            {% endif %}">
+                        Выкл
+                    </button>
+                </div>
+            </div>
+
+            <!-- FullVPN -->
+            <div class="flex items-center justify-between">
+                <div>
+                    <div class="text-sm text-emerald-100 font-medium">FullVPN WARP-резолвинг</div>
+                    <div class="text-xs text-emerald-500/60">
+                        Применять патч и для FullVPN-клиентов (kresd@2)
+                        {% if status.vpn_warp %}<br><span class="text-red-400">⚠ конфликт: VPN_WARP=y в AntiZapret</span>{% endif %}
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button hx-post="{{ url_for('htmx_settings_fullvpn') }}"
+                            hx-swap="none"
+                            hx-vals='{"enable":"1"}'
+                            {% if status.vpn_warp %}disabled{% endif %}
+                            class="px-3 py-1.5 text-xs rounded transition disabled:opacity-30 disabled:cursor-not-allowed
+                            {% if status.fullvpn_warp_resolve == 'y' %}
+                                bg-brand-700 text-white
+                            {% else %}
+                                bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-brand-700/30
+                            {% endif %}">
+                        Вкл
+                    </button>
+                    <button hx-post="{{ url_for('htmx_settings_fullvpn') }}"
+                            hx-swap="none"
+                            hx-vals='{"enable":"0"}'
+                            class="px-3 py-1.5 text-xs rounded transition
+                            {% if status.fullvpn_warp_resolve != 'y' %}
+                                bg-red-700 text-white
+                            {% else %}
+                                bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-red-700/30
+                            {% endif %}">
+                        Выкл
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== Учётные данные ===== -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-emerald-200 mb-1">Учётные данные администратора</h3>
+        <p class="text-xs text-emerald-500/60 mb-4">При смене пароля требуется повторный вход</p>
+
+        <form hx-post="{{ url_for('htmx_credentials') }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful) this.reset()"
+              class="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
+            <input type="text" name="username" placeholder="Новый логин (3-32 симв.)"
+                   class="px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                          text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+            <input type="password" name="password" placeholder="Новый пароль (мин. 6 симв.)"
+                   class="px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                          text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+            <button type="submit"
+                    class="md:col-span-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition">
+                Сохранить
+            </button>
+        </form>
+    </section>
+
+</div>
+
+
+<!-- ===== Модалки режимов ===== -->
+
+<!-- WARP -->
+<div id="modal-mode-warp" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">Режим WARP</h3>
+            <button onclick="closeModal('modal-mode-warp')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+        </div>
+        <form hx-post="{{ url_for('htmx_mode_warp') }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-warp');}"
+              class="p-6 space-y-4">
+
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Источник WARP-ключей</label>
+
+                {% if warp_keys %}
+                    <div class="space-y-2">
+                        {% for k in warp_keys %}
+                            <label class="flex items-start gap-3 p-3 bg-surface-950 border border-emerald-900/40 rounded-lg cursor-pointer hover:bg-emerald-900/20">
+                                <input type="radio" name="key_source" value="{{ k.source }}"
+                                       {% if k.is_current %}checked{% endif %}
+                                       class="mt-0.5">
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm text-emerald-100 font-mono">{{ k.path }}</div>
+                                    <div class="text-xs text-emerald-500/70">
+                                        Источник: {{ k.source }} | Адрес: {{ k.address }}
+                                        {% if k.is_current %}<span class="text-brand-400 ml-1">● текущий</span>{% endif %}
+                                    </div>
+                                </div>
+                            </label>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-sm text-amber-400 p-3 bg-amber-900/20 rounded-lg">
+                        Существующих ключей не найдено. Будет сгенерирован новый.
+                    </div>
+                {% endif %}
+
+                <label class="flex items-center gap-3 p-3 mt-2 bg-surface-950 border border-emerald-900/40 rounded-lg cursor-pointer hover:bg-emerald-900/20">
+                    <input type="radio" name="key_source" value="generate">
+                    <div>
+                        <div class="text-sm text-emerald-100">Сгенерировать новый ключ</div>
+                        <div class="text-xs text-emerald-500/70">Через wgcf (требует доступ к Cloudflare)</div>
+                    </div>
+                </label>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2 border-t border-emerald-900/40">
+                <button type="button" onclick="closeModal('modal-mode-warp')"
+                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Отмена</button>
+                <button type="submit"
+                        class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+                    <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    Применить
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Slave -->
+<div id="modal-mode-slave" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">Режим Slave</h3>
+            <button onclick="closeModal('modal-mode-slave')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+        </div>
+        <form hx-post="{{ url_for('htmx_mode_slave') }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-slave');}"
+              class="p-6 space-y-4">
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">IP/домен донор-сервера</label>
+                <input type="text" name="server" required
+                       value="{{ status.slave.server }}"
+                       placeholder="example.com или 1.2.3.4"
+                       class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                              text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Порт</label>
+                <input type="number" name="port" required min="1" max="65535"
+                       value="{{ status.slave.port or 8444 }}"
+                       class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                              text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Ключ Shadowsocks</label>
+                <input type="text" name="password" required
+                       value="{{ status.slave.password }}"
+                       placeholder="ключ от warperslave"
+                       class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                              text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-emerald-900/40">
+                <button type="button" onclick="closeModal('modal-mode-slave')"
+                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Отмена</button>
+                <button type="submit"
+                        class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+                    <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    Применить
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- WG -->
+<div id="modal-mode-wg" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">Режим WireGuard</h3>
+            <button onclick="closeModal('modal-mode-wg')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+        </div>
+
+        <div class="p-6 space-y-5">
+
+            <!-- Существующие конфиги -->
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Выбрать существующий конфиг</label>
+                {% if wg_configs %}
+                    <form hx-post="{{ url_for('htmx_mode_wg') }}"
+                          hx-swap="none"
+                          hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-wg');}"
+                          class="space-y-2">
+                        {% for cfg in wg_configs %}
+                            <label class="flex items-start gap-3 p-3 bg-surface-950 border border-emerald-900/40 rounded-lg cursor-pointer hover:bg-emerald-900/20">
+                                <input type="radio" name="conf_path" value="{{ cfg.path }}" class="mt-0.5">
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm text-emerald-100 font-mono truncate">{{ cfg.name }}</div>
+                                    <div class="text-xs text-emerald-500/70 truncate">{{ cfg.path }} → {{ cfg.endpoint }}</div>
+                                </div>
+                            </label>
+                        {% endfor %}
+                        <button type="submit"
+                                class="w-full px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+                            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                            Применить выбранный
+                        </button>
+                    </form>
+                {% else %}
+                    <div class="text-sm text-emerald-500/70 p-3 bg-surface-950 rounded-lg border border-emerald-900/40">
+                        Конфиги не найдены в /root/ и /root/warper/
+                    </div>
+                {% endif %}
+            </div>
+
+            <div class="border-t border-emerald-900/40"></div>
+
+            <!-- Загрузить свой -->
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Загрузить свой .conf файл</label>
+                <form hx-post="{{ url_for('htmx_wg_upload') }}"
+                      hx-swap="none"
+                      hx-encoding="multipart/form-data"
+                      hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-wg');}"
+                      class="space-y-3">
+                    <input type="file" name="wg_file" accept=".conf,text/plain" required
+                           class="w-full text-sm text-emerald-100 file:mr-3 file:py-2 file:px-4 file:rounded-lg
+                                  file:border-0 file:bg-brand-700 file:text-white file:cursor-pointer hover:file:bg-brand-600">
+                    <button type="submit"
+                            class="w-full px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+                        <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                        Загрузить и применить
+                    </button>
+                </form>
+                <p class="text-xs text-emerald-500/60 mt-2">
+                    Файл будет сохранён в /root/warper/. Cloudflare WARP-конфиги отклоняются.
+                </p>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-emerald-900/40">
+                <button onclick="closeModal('modal-mode-wg')"
+                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

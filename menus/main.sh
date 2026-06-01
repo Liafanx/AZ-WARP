@@ -236,6 +236,23 @@ show_main_menu() {
         echo -e " ${CYAN}10.${NC} 🔄 Проверить обновления списков доменов"
     fi
 
+    # Веб-панель (только если модуль web-menu.sh загружен)
+    if declare -f web_menu >/dev/null 2>&1; then
+        if [ -d "/root/warper/web" ] && [ -f "/root/warper/web/app.py" ]; then
+            local web_stat
+            if systemctl is-active --quiet warper-web 2>/dev/null; then
+                local web_port
+                web_port=$(grep -oE 'listen\s+[0-9]+' /etc/nginx/sites-available/warper-web 2>/dev/null | head -1 | awk '{print $2}')
+                web_stat="${GREEN}запущена${NC} ${CYAN}(порт ${web_port:-?})${NC}"
+            else
+                web_stat="${RED}остановлена${NC}"
+            fi
+            echo -e " ${CYAN}W.${NC} 🌐 Веб-панель: $web_stat"
+        else
+            echo -e " ${CYAN}W.${NC} 🌐 Веб-панель: ${YELLOW}не установлена${NC}"
+        fi
+    fi
+
     echo -e "${CYAN}------------------------------------------------${NC}"
     echo -e " ${RED}U.${NC} 🗑️  Удалить WARPER полностью (или с сохранением настроек)"
     echo -e " ${CYAN}0.${NC} 🚪 Выход"
@@ -416,6 +433,16 @@ run_main_menu() {
                     echo -e "${YELLOW}Режим Slave не активен.${NC}"
                 fi
                 read -r -p "Нажмите Enter..."
+                ;;
+
+            # ── Веб-панель ────────────────────────────────────────────────
+            w|W)
+                if declare -f web_menu >/dev/null 2>&1; then
+                    web_menu
+                else
+                    echo -e "${YELLOW}Модуль веб-панели не загружен.${NC}"
+                    sleep 1
+                fi
                 ;;
 
             # ── Удаление WARPER ───────────────────────────────────────────

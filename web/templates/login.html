@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Вход{% endblock %}
+
+{% block guest_content %}
+<div class="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-surface-950 via-surface-900 to-emerald-950">
+    <div class="w-full max-w-md">
+
+        <!-- Логотип -->
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-white font-bold text-2xl shadow-2xl shadow-brand-900/50 mb-4">
+                AZ
+            </div>
+            <h1 class="text-3xl font-bold text-emerald-100">AZ-WARP</h1>
+            <p class="text-emerald-400/70 text-sm mt-1">Панель управления WARPER</p>
+        </div>
+
+        <!-- Форма -->
+        <div class="bg-surface-900/80 backdrop-blur border border-emerald-900/40 rounded-2xl p-8 shadow-2xl">
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        {% set color = 'red' if category == 'error' else ('amber' if category == 'warning' else 'sky') %}
+                        <div class="mb-4 px-4 py-3 rounded-lg bg-{{ color }}-900/40 border border-{{ color }}-700/50 text-{{ color }}-200 text-sm">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST" class="space-y-5">
+                <div>
+                    <label class="block text-sm font-medium text-emerald-200 mb-2">Логин</label>
+                    <input type="text" name="username" required autofocus
+                           autocomplete="username"
+                           class="w-full px-4 py-2.5 bg-surface-950 border border-emerald-900/50 rounded-lg
+                                  text-emerald-100 placeholder-emerald-700
+                                  focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none transition">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-emerald-200 mb-2">Пароль</label>
+                    <input type="password" name="password" required
+                           autocomplete="current-password"
+                           class="w-full px-4 py-2.5 bg-surface-950 border border-emerald-900/50 rounded-lg
+                                  text-emerald-100 placeholder-emerald-700
+                                  focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none transition">
+                </div>
+
+                <button type="submit"
+                        class="w-full py-2.5 bg-gradient-to-r from-brand-600 to-brand-700 hover:from-brand-500 hover:to-brand-600
+                               text-white font-medium rounded-lg shadow-lg shadow-brand-900/50
+                               transition-all duration-200 hover:shadow-xl hover:shadow-brand-900/60">
+                    Войти
+                </button>
+            </form>
+
+            <div class="mt-6 pt-6 border-t border-emerald-900/40 text-center">
+                <p class="text-xs text-emerald-500/50">
+                    Забыли пароль?:<br>
+                    <code class="text-emerald-400/80 mt-1 inline-block">Обратитесь к readme</code>
+                </p>
+            </div>
+        </div>
+
+        <p class="text-center text-xs text-emerald-700 mt-6">
+            AZ-WARP Web Panel
+        </p>
+    </div>
+</div>
+{% endblock %}

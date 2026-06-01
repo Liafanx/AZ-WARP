@@ -1,0 +1,40 @@
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
+
+    {% set ok_count = results | selectattr('status', 'equalto', 'ok') | list | length %}
+    {% set warn_count = results | selectattr('status', 'equalto', 'warn') | list | length %}
+    {% set err_count = results | selectattr('status', 'equalto', 'error') | list | length %}
+
+    <div class="px-5 py-3 border-b border-emerald-900/40 flex items-center gap-4 text-sm">
+        <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-brand-400"></span>
+            <span class="text-emerald-200">OK: <strong>{{ ok_count }}</strong></span>
+        </span>
+        <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            <span class="text-emerald-200">Предупреждения: <strong>{{ warn_count }}</strong></span>
+        </span>
+        <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-red-400"></span>
+            <span class="text-emerald-200">Ошибки: <strong>{{ err_count }}</strong></span>
+        </span>
+    </div>
+
+    {% if results %}
+        <div class="divide-y divide-emerald-900/30 max-h-[70vh] overflow-y-auto scroll-thin">
+            {% for r in results %}
+                {% set icon = '✓' %}
+                {% set color = 'text-brand-400' %}
+                {% set bg = 'bg-emerald-900/10' %}
+                {% if r.status == 'error' %}{% set icon = '✕' %}{% set color = 'text-red-400' %}{% set bg = 'bg-red-900/10' %}{% endif %}
+                {% if r.status == 'warn' %}{% set icon = '!' %}{% set color = 'text-amber-400' %}{% set bg = 'bg-amber-900/10' %}{% endif %}
+                {% if r.status == 'info' %}{% set icon = 'ℹ' %}{% set color = 'text-sky-400' %}{% set bg = '' %}{% endif %}
+                <div class="px-5 py-3 flex items-start gap-3 {{ bg }}">
+                    <span class="text-lg leading-none {{ color }} flex-shrink-0 w-5 text-center">{{ icon }}</span>
+                    <span class="text-sm text-emerald-100">{{ r.text }}</span>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="p-12 text-center text-emerald-500/60">Нет результатов</div>
+    {% endif %}
+</div>

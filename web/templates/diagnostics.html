@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Диагностика{% endblock %}
+{% block heading %}Диагностика системы{% endblock %}
+
+{% block content %}
+
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5 mb-4">
+    <div class="flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-emerald-200">warper doctor</h3>
+            <p class="text-xs text-emerald-500/60 mt-1">Проверка всех компонентов системы</p>
+        </div>
+        <button hx-get="{{ url_for('htmx_doctor') }}"
+                hx-target="#doctor-results"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            ↻ Запустить
+        </button>
+    </div>
+</div>
+
+<div id="doctor-results"
+     hx-get="{{ url_for('htmx_doctor') }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-xl p-12 text-center text-emerald-500/60">
+        Запуск диагностики...
+    </div>
+</div>
+
+{% endblock %}

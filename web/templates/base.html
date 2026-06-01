@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="same-origin">
+    <title>{% block title %}{% endblock %} — {{ site_name }}</title>
+
+    <!-- Tailwind (офлайн) -->
+    <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
+    
+    <!-- HTMX (офлайн) -->
+    <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
+    <script>
+        // Глобальный таймаут HTMX = 5 минут (для долгих операций warper)
+        if (window.htmx) {
+            htmx.config.timeout = 300000;
+        }
+    </script>
+
+    <!-- Наши скрипты (с конфигом Tailwind) -->
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #050a08 0%, #0a1410 100%);
+            min-height: 100vh;
+        }
+        .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+        .scroll-thin::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+        .scroll-thin::-webkit-scrollbar-thumb { background: #047857; border-radius: 4px; }
+        .scroll-thin::-webkit-scrollbar-thumb:hover { background: #059669; }
+        .htmx-indicator { opacity: 0; transition: opacity 200ms; }
+        .htmx-request .htmx-indicator { opacity: 1; }
+        .htmx-request.htmx-indicator { opacity: 1; }
+    </style>
+</head>
+<body class="bg-surface-950 text-emerald-50 antialiased">
+
+{% if current_user.is_authenticated %}
+<div class="flex h-screen overflow-hidden">
+
+    <!-- ===== Sidebar ===== -->
+    <aside id="sidebar"
+           class="fixed lg:static inset-y-0 left-0 z-40 w-64 bg-surface-900 border-r border-emerald-900/40
+                  transform -translate-x-full lg:translate-x-0 transition-transform duration-200 flex flex-col">
+
+        <!-- Логотип -->
+        <div class="px-6 py-5 border-b border-emerald-900/40">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-brand-900/50">
+                    AZ
+                </div>
+                <div>
+                    <div class="font-bold text-emerald-100 text-lg leading-none">AZ-WARP</div>
+                    <div class="text-xs text-emerald-400/60 mt-0.5">Панель управления</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Навигация -->
+        <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto scroll-thin">
+            {% set nav_items = [
+                ('dashboard',   'Панель',       '◉'),
+                ('domains_page','Домены',       '⊕'),
+                ('ip_ranges_page','IP-подсети', '⌖'),
+                ('singbox_page','sing-box',     '⚙'),
+                ('logs_page',   'Логи',         '☰'),
+                ('diagnostics_page','Диагностика','⚕'),
+                ('settings_page','Настройки',   '✱'),
+            ] %}
+            {% for endpoint, label, icon in nav_items %}
+                {% set active = request.endpoint == endpoint %}
+                <a href="{{ url_for(endpoint) }}"
+                   class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                   {% if active %}
+                       bg-brand-700/30 text-emerald-200 border border-brand-700/40
+                   {% else %}
+                       text-emerald-300/70 hover:bg-surface-900 hover:text-emerald-100
+                   {% endif %}">
+                    <span class="text-lg w-5 text-center {% if active %}text-brand-300{% else %}text-emerald-500/60{% endif %}">{{ icon }}</span>
+                    <span>{{ label }}</span>
+                </a>
+            {% endfor %}
+        </nav>
+
+        <!-- Юзер -->
+        <div class="px-3 py-4 border-t border-emerald-900/40">
+            <div class="flex items-center gap-3 px-3 py-2 mb-2">
+                <div class="w-8 h-8 rounded-full bg-brand-700 flex items-center justify-center text-white text-sm font-bold">
+                    {{ current_user.username[0]|upper }}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm text-emerald-100 truncate">{{ current_user.username }}</div>
+                    <div class="text-xs text-emerald-500/60">администратор</div>
+                </div>
+            </div>
+            <a href="{{ url_for('logout') }}"
+               class="block w-full text-center px-3 py-2 rounded-lg text-sm text-red-300/80 hover:bg-red-900/30 hover:text-red-200 transition-colors">
+                Выйти
+            </a>
+        </div>
+    </aside>
+
+    <!-- Затемнение для мобильного sidebar -->
+
+    <div id="sidebar-backdrop"
+
+         onclick="toggleSidebar()"
+
+         class="hidden lg:hidden fixed inset-0 bg-black/60 z-30"></div>
+
+
+
+    <!-- ===== Основная область ===== -->
+
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+
+
+        <!-- Topbar -->
+
+        <header class="h-14 bg-surface-900/80 backdrop-blur border-b border-emerald-900/40 flex items-center justify-between px-4 lg:px-6 flex-shrink-0">
+
+            <div class="flex items-center gap-3">
+
+                <button onclick="toggleSidebar()" class="lg:hidden text-emerald-300 hover:text-emerald-100">
+
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+
+                    </svg>
+
+                </button>
+
+                <h1 class="text-lg font-semibold text-emerald-100">{% block heading %}{% endblock %}</h1>
+
+            </div>
+
+
+
+            <div class="flex items-center gap-2">
+
+                <!-- Глобальный индикатор HTMX -->
+
+                <div id="global-loader" class="htmx-indicator">
+
+                    <div class="flex items-center gap-2 text-xs text-brand-400">
+
+                        <div class="w-3 h-3 border-2 border-brand-400 border-t-transparent rounded-full animate-spin"></div>
+
+                        <span class="hidden sm:inline">Загрузка...</span>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </header>
+
+
+
+        <!-- Контент страницы -->
+
+        <div class="flex-1 overflow-y-auto scroll-thin">
+
+            <div class="p-4 lg:p-6 max-w-7xl mx-auto">
+
+                {% with messages = get_flashed_messages(with_categories=true) %}
+
+                    {% if messages %}
+
+                        {% for category, message in messages %}
+
+                            {% set color_map = {'success':'emerald','error':'red','warning':'amber','info':'sky'} %}
+
+                            {% set color = color_map.get(category, 'sky') %}
+
+                            <div class="mb-4 px-4 py-3 rounded-lg border bg-{{ color }}-900/30 border-{{ color }}-700/50 text-{{ color }}-200 text-sm">
+
+                                {{ message }}
+
+                            </div>
+
+                        {% endfor %}
+
+                    {% endif %}
+
+                {% endwith %}
+
+
+
+                {% block content %}{% endblock %}
+
+            </div>
+
+        </div>
+
+    </main>
+
+</div>
+
+
+
+<!-- Toast-контейнер -->
+
+<div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-auto"></div>
+
+
+
+<!-- HTMX глобальный индикатор привязан к body -->
+
+<script>
+
+    document.body.addEventListener('htmx:beforeRequest', function() {
+
+        document.getElementById('global-loader')?.classList.add('htmx-request');
+
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function() {
+
+        document.getElementById('global-loader')?.classList.remove('htmx-request');
+
+    });
+
+</script>
+
+
+
+{% else %}
+
+    {# Гость — без layout, только контент #}
+
+    {% block guest_content %}{% endblock %}
+
+{% endif %}
+
+
+
+</body>
+
+</html>

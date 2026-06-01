@@ -143,12 +143,13 @@ add_ip_range() {
         return 1
     fi
 
-    # Ищем напрямую в файле
+    # Проверка дубликата — ищем точную строку с CIDR (без пробелов вокруг)
     if grep -qE "^[[:space:]]*${cidr}[[:space:]]*$" "$IP_RANGES_FILE" 2>/dev/null; then
         echo -e "${YELLOW}Подсеть $cidr уже есть в списке.${NC}"
         return 0
     fi
 
+    # Просто дописываем в конец файла - комментарии и форматирование не трогаем
     echo "$cidr" >> "$IP_RANGES_FILE"
     echo -e "${GREEN}Подсеть $cidr добавлена.${NC}"
     return 0
@@ -163,13 +164,15 @@ remove_ip_range() {
         return 1
     }
 
-    # Ищем напрямую в файле, игнорируя пробелы
     if ! grep -qE "^[[:space:]]*${cidr}[[:space:]]*$" "$IP_RANGES_FILE" 2>/dev/null; then
         echo -e "${YELLOW}Подсеть $cidr не найдена в списке.${NC}"
         return 0
     fi
 
-    sed -i "/^[[:space:]]*$(echo "$cidr" | sed 's/[[\.*^$()+?{|\\\/]/\\&/g')[[:space:]]*$/d" "$IP_RANGES_FILE"
+    # Удаляем только строку с этим CIDR, комментарии не трогаем
+    local escaped
+    escaped=$(echo "$cidr" | sed 's/[][\\/.^$*+?(){}|]/\\&/g')
+    sed -i "/^[[:space:]]*${escaped}[[:space:]]*$/d" "$IP_RANGES_FILE"
     echo -e "${GREEN}Подсеть $cidr удалена из списка.${NC}"
     return 0
 }

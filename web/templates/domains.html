@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Домены{% endblock %}
+{% block heading %}Управление доменами{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+
+    <!-- Gemini -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5" id="gemini-card">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-1">Список</div>
+                <div class="text-lg font-bold text-emerald-100">Gemini</div>
+            </div>
+            <span id="gemini-status" class="text-xs px-2 py-1 rounded">—</span>
+        </div>
+        <div class="flex gap-2">
+            <button hx-post="{{ url_for('htmx_list_toggle') }}"
+                    hx-swap="none"
+                    hx-vals='{"list":"gemini","enable":"1"}'
+                    class="flex-1 px-3 py-2 bg-brand-700/30 hover:bg-brand-700/50 border border-brand-700/40 text-brand-200 rounded-lg text-sm transition">
+                Включить
+            </button>
+            <button hx-post="{{ url_for('htmx_list_toggle') }}"
+                    hx-swap="none"
+                    hx-vals='{"list":"gemini","enable":"0"}'
+                    class="flex-1 px-3 py-2 bg-red-700/30 hover:bg-red-700/50 border border-red-700/40 text-red-200 rounded-lg text-sm transition">
+                Выключить
+            </button>
+        </div>
+    </div>
+
+    <!-- ChatGPT -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5" id="chatgpt-card">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-1">Список</div>
+                <div class="text-lg font-bold text-emerald-100">ChatGPT</div>
+            </div>
+            <span id="chatgpt-status" class="text-xs px-2 py-1 rounded">—</span>
+        </div>
+        <div class="flex gap-2">
+            <button hx-post="{{ url_for('htmx_list_toggle') }}"
+                    hx-swap="none"
+                    hx-vals='{"list":"chatgpt","enable":"1"}'
+                    class="flex-1 px-3 py-2 bg-brand-700/30 hover:bg-brand-700/50 border border-brand-700/40 text-brand-200 rounded-lg text-sm transition">
+                Включить
+            </button>
+            <button hx-post="{{ url_for('htmx_list_toggle') }}"
+                    hx-swap="none"
+                    hx-vals='{"list":"chatgpt","enable":"0"}'
+                    class="flex-1 px-3 py-2 bg-red-700/30 hover:bg-red-700/50 border border-red-700/40 text-red-200 rounded-lg text-sm transition">
+                Выключить
+            </button>
+        </div>
+    </div>
+
+    <!-- Синхронизация -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-1">Синхронизация</div>
+        <div class="text-lg font-bold text-emerald-100 mb-3">Применить изменения</div>
+        <button hx-post="{{ url_for('htmx_domain_sync') }}"
+                hx-swap="none"
+                class="w-full px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition shadow-lg shadow-brand-900/40">
+            ↻ Синхронизировать
+        </button>
+        <p class="text-xs text-emerald-500/60 mt-2">Применяет домены в DNS (kresd)</p>
+    </div>
+</div>
+
+<!-- ===== Редактор пользовательских доменов ===== -->
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden mb-6">
+
+    <div class="px-5 py-3 border-b border-emerald-900/40 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-emerald-200">Пользовательские домены</h3>
+            <p class="text-xs text-emerald-500/60 mt-0.5">Один домен на строку. Блоки Gemini/ChatGPT редактируются через кнопки выше.</p>
+        </div>
+        <div class="flex gap-2">
+            <button hx-get="{{ url_for('htmx_domains_file_content') }}"
+                    hx-target="#domains-textarea"
+                    hx-swap="innerHTML"
+                    class="px-3 py-1.5 text-xs bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 text-emerald-300 rounded transition">
+                ↻ Перечитать
+            </button>
+        </div>
+    </div>
+
+<form hx-post="{{ url_for('htmx_domains_file_save') }}"
+      hx-swap="none"
+      class="p-5">
+    <textarea id="domains-textarea"
+              name="content"
+              rows="20"
+              hx-get="{{ url_for('htmx_domains_file_content') }}"
+              hx-trigger="load"
+              hx-swap="innerHTML"
+              spellcheck="false"
+              class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                     text-emerald-100 placeholder-emerald-700 text-sm font-mono
+                     focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
+              placeholder="# Можно добавлять комментарии&#10;example.com&#10;openai.com&#10;&#10;# Категория: соцсети&#10;facebook.com"></textarea>
+
+    <div class="flex justify-between items-center mt-3">
+            <p class="text-xs text-emerald-500/60">
+                Один домен на строку. Комментарии (<code class="text-emerald-400">#&nbsp;...</code>) и пустые строки сохраняются.
+                Блоки Gemini/ChatGPT редактируются через кнопки выше.
+            </p>
+        <button type="submit"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            💾 Сохранить и применить
+        </button>
+    </div>
+</form>
+</div>
+
+<!-- Скрытый запрос для статусов Gemini/ChatGPT -->
+<div hx-get="{{ url_for('htmx_domains_list') }}"
+     hx-trigger="load"
+     hx-target="#hidden-status-loader"
+     hx-swap="innerHTML"
+     style="display:none">
+    <div id="hidden-status-loader"></div>
+</div>
+
+{% endblock %}

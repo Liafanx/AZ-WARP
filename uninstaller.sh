@@ -67,6 +67,42 @@ if [ -f "$CONF_FILE" ]; then
     fi
 fi
 
+# ============================================================
+# 0. Удаление веб-панели (если установлена)
+# ============================================================
+WEB_DIR="/root/warper/web"
+WEB_SERVICE="warper-web"
+
+if [ -d "$WEB_DIR" ] || [ -f "/etc/systemd/system/${WEB_SERVICE}.service" ]; then
+    echo -e "\n${YELLOW}0. Удаление веб-панели WARPER...${NC}"
+
+    echo -e " - ${CYAN}Остановка сервиса warper-web...${NC}"
+    systemctl stop "$WEB_SERVICE" 2>/dev/null || true
+    systemctl disable "$WEB_SERVICE" 2>/dev/null || true
+
+    echo -e " - ${CYAN}Удаление systemd-юнита...${NC}"
+    rm -f "/etc/systemd/system/${WEB_SERVICE}.service"
+    systemctl daemon-reload
+
+    echo -e " - ${CYAN}Удаление конфигурации nginx...${NC}"
+    rm -f /etc/nginx/sites-enabled/warper-web
+    rm -f /etc/nginx/sites-available/warper-web
+    rm -f /etc/nginx/ssl/warper-web.crt
+    rm -f /etc/nginx/ssl/warper-web.key
+
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+    fi
+
+    echo -e " - ${CYAN}Удаление файлов веб-панели...${NC}"
+    rm -rf "$WEB_DIR"
+    rm -f "/root/warper/web_admin_pass.txt"
+
+    echo -e " - ${GREEN}✓ Веб-панель удалена.${NC}"
+else
+    echo -e "\n${CYAN}Веб-панель не установлена — пропускаем.${NC}"
+fi
+
 echo -e "\n${YELLOW}1. Остановка и удаление служб...${NC}"
 echo -e " - ${CYAN}Остановка демона sing-box...${NC}"
 systemctl stop sing-box 2>/dev/null

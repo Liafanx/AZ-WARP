@@ -113,7 +113,7 @@ update_warper() {
 
     # Модули menus/
     mkdir -p "$tmpdir/menus"
-    for _menufile in main settings singbox-menu ip-menu; do
+    for _menufile in main settings singbox-menu ip-menu web-menu; do
         download_file_safe "$REPO_URL/menus/${_menufile}.sh" \
             "$tmpdir/menus/${_menufile}.sh" "menus/${_menufile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -297,7 +297,34 @@ update_warper() {
 
     rm -rf "$tmpdir" "$backupdir"
 
+    rm -rf "$tmpdir" "$backupdir"
+
     echo -e "${GREEN}Утилита и списки успешно обновлены!${NC}"
-    read -r -e -p "Нажмите Enter для перезапуска WARPER..."
-    exec /usr/local/bin/warper
+
+    # ===== Обновление веб-панели если она установлена =====
+    if [ -d "/root/warper/web" ] && [ -f "/root/warper/web/app.py" ]; then
+        echo ""
+        echo -e "${CYAN}=== Обновление веб-панели ===${NC}"
+        if cli_web_update; then
+            echo -e "${GREEN}Веб-панель обновлена.${NC}"
+        else
+            echo -e "${YELLOW}⚠ Обновление веб-панели завершилось с ошибкой.${NC}"
+            echo -e "${YELLOW}  Веб-панель может работать некорректно — проверьте логи.${NC}"
+        fi
+    fi
+
+    echo ""
+
+    # Если запущено из CLI (warper update) или из веб-панели - просто выходим.
+    # Если запущено из интерактивного TUI меню - перезапускаем warper чтобы
+    # подхватить обновлённые модули.
+    if [ -t 0 ] && [ -t 1 ]; then
+        # Интерактивный режим (TTY доступен) - спрашиваем и перезапускаем
+        echo ""
+        read -r -e -p "Нажмите Enter для перезапуска WARPER..."
+        exec /usr/local/bin/warper
+    else
+        # Не-интерактивный режим (CLI, веб-панель, скрипт) - просто выходим
+        return 0
+    fi
 }

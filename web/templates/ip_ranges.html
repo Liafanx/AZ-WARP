@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}IP-подсети{% endblock %}
+{% block heading %}IP-подсети{% endblock %}
+
+{% block content %}
+
+<!-- ===== Управление: режим + экспорт + sync ===== -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+
+    <!-- Режим применения -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-2">Режим применения</div>
+        <div class="text-sm text-emerald-100 mb-3 font-bold">
+            {% if status.ip_ranges.mode == 'antizapret' %}Только AntiZapret
+            {% elif status.ip_ranges.mode == 'all_vpn' %}AntiZapret + FullVPN
+            {% elif status.ip_ranges.mode == 'all' %}Весь трафик (Beta)
+            {% else %}{{ status.ip_ranges.mode }}{% endif %}
+        </div>
+        <select name="mode"
+                hx-post="{{ url_for('htmx_ip_mode') }}"
+                hx-trigger="change"
+                hx-swap="none"
+                class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                       text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+            <option value="antizapret" {% if status.ip_ranges.mode == 'antizapret' %}selected{% endif %}>Только AntiZapret</option>
+            <option value="all_vpn" {% if status.ip_ranges.mode == 'all_vpn' %}selected{% endif %}>AntiZapret + FullVPN</option>
+            <option value="all" {% if status.ip_ranges.mode == 'all' %}selected{% endif %}>Весь трафик (Beta)</option>
+        </select>
+    </div>
+
+    <!-- Экспорт в AntiZapret -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-2">Экспорт в AntiZapret</div>
+        <div class="text-sm text-emerald-100 mb-3 font-bold">
+            {% if status.ip_ranges.export_to_antizapret == 'y' %}
+                <span class="text-brand-400">● включён</span>
+            {% else %}
+                <span class="text-red-400">○ выключен</span>
+            {% endif %}
+        </div>
+        <div class="flex gap-2">
+            <button hx-post="{{ url_for('htmx_ip_export_toggle') }}"
+                    hx-swap="none"
+                    hx-vals='{"enable":"1"}'
+                    class="flex-1 px-3 py-2 bg-brand-700/30 hover:bg-brand-700/50 border border-brand-700/40 text-brand-200 rounded-lg text-sm transition">
+                Включить
+            </button>
+            <button hx-post="{{ url_for('htmx_ip_export_toggle') }}"
+                    hx-swap="none"
+                    hx-vals='{"enable":"0"}'
+                    class="flex-1 px-3 py-2 bg-red-700/30 hover:bg-red-700/50 border border-red-700/40 text-red-200 rounded-lg text-sm transition">
+                Выключить
+            </button>
+        </div>
+    </div>
+
+    <!-- Синхронизация -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-2">Синхронизация</div>
+        <div class="text-sm text-emerald-100 mb-3 font-bold">Применить маршруты</div>
+        <button hx-post="{{ url_for('htmx_ip_sync') }}"
+                hx-swap="none"
+                class="w-full px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition shadow-lg shadow-brand-900/40">
+            ↻ Синхронизировать
+        </button>
+        <p class="text-xs text-emerald-500/60 mt-2">Применяет CIDR в kernel routes</p>
+    </div>
+</div>
+
+<!-- ===== Редактор ip-ranges.txt ===== -->
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
+
+    <div class="px-5 py-3 border-b border-emerald-900/40 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-emerald-200">Подсети (CIDR)</h3>
+            <p class="text-xs text-emerald-500/60 mt-0.5">
+                Один CIDR на строку. Без маски — будет /32. Сохранение запускает sync.
+            </p>
+        </div>
+        <button hx-get="{{ url_for('htmx_ip_ranges_file_content') }}"
+                hx-target="#ip-ranges-textarea"
+                hx-swap="innerHTML"
+                class="px-3 py-1.5 text-xs bg-surface-950 hover:bg-emerald-900/30 border border-emerald-900/40 text-emerald-300 rounded transition">
+            ↻ Перечитать
+        </button>
+    </div>
+
+<form hx-post="{{ url_for('htmx_ip_ranges_file_save') }}"
+      hx-swap="none"
+      class="p-5">
+    <textarea id="ip-ranges-textarea"
+              name="content"
+              rows="20"
+              hx-get="{{ url_for('htmx_ip_ranges_file_content') }}"
+              hx-trigger="load"
+              hx-swap="innerHTML"
+              spellcheck="false"
+              class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                     text-emerald-100 placeholder-emerald-700 text-sm font-mono
+                     focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none resize-y"
+              placeholder="# Telegram&#10;91.108.4.0/22&#10;91.108.8.0/22&#10;&#10;# Cloudflare DNS&#10;1.1.1.1"></textarea>
+
+    <div class="flex justify-between items-center mt-3">
+        <p class="text-xs text-emerald-500/60">
+            Комментарии (<code class="text-emerald-400">#&nbsp;...</code>) и пустые строки сохраняются.
+            Без маски будет /32.
+        </p>
+        <button type="submit"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            💾 Сохранить и применить
+        </button>
+    </div>
+</form>
+</div>
+
+{% endblock %}

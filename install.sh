@@ -1005,14 +1005,14 @@ download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-
 # Скачиваем модули lib/
 echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
 mkdir -p "$WARPER_DIR/lib"
-for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update; do
+for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli; do
     download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
 done
 
 # Скачиваем модули menus/
 echo -e " - ${CYAN}Скачивание модулей menus/...${NC}"
 mkdir -p "$WARPER_DIR/menus"
-for _menufile in main settings singbox-menu ip-menu; do
+for _menufile in main settings singbox-menu ip-menu web-menu; do
     download_file "$REPO_URL/menus/${_menufile}.sh" "$WARPER_DIR/menus/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
 done
 
@@ -1082,3 +1082,52 @@ fi
 
 echo -e "Для диагностики используйте: ${CYAN}warper doctor${NC}"
 echo -e "Для краткого статуса используйте: ${CYAN}warper status${NC}"
+
+# ============================================================
+# Установка веб-панели (опционально)
+# ============================================================
+echo ""
+echo -e "${CYAN}================================================${NC}"
+echo -e "    🌐 ${YELLOW}Веб-панель управления WARPER${NC}"
+echo -e "${CYAN}================================================${NC}"
+echo -e "Доступна веб-панель для управления WARPER через браузер."
+echo -e "Возможности: управление доменами, IP-подсетями, sing-box,"
+echo -e "просмотр логов, диагностика, изменение настроек."
+echo ""
+
+INSTALL_WEB="n"
+while true; do
+    read -r -p "Установить веб-панель? (y/N): " prompt_web < /dev/tty
+    if [[ -z "$prompt_web" || "$prompt_web" =~ ^[Nn]$ ]]; then
+        INSTALL_WEB="n"
+        break
+    elif [[ "$prompt_web" =~ ^[Yy]$ ]]; then
+        INSTALL_WEB="y"
+        break
+    else
+        echo -e "${RED}Введите y или n.${NC}"
+    fi
+done
+
+if [ "$INSTALL_WEB" = "y" ]; then
+    echo ""
+    echo -e "${CYAN}Запуск установщика веб-панели...${NC}"
+    if [ -f "/tmp/warper-install-web.sh" ]; then
+        rm -f /tmp/warper-install-web.sh
+    fi
+    if curl -sfSL "$REPO_URL/web/install-web.sh?t=$(date +%s)" -o /tmp/warper-install-web.sh; then
+        chmod +x /tmp/warper-install-web.sh
+        bash /tmp/warper-install-web.sh
+        rm -f /tmp/warper-install-web.sh
+    else
+        echo -e "${RED}Не удалось скачать установщик веб-панели.${NC}"
+        echo -e "${YELLOW}Установите позже вручную:${NC}"
+        echo -e "  bash <(curl -fsSL $REPO_URL/web/install-web.sh)"
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}Веб-панель не установлена.${NC}"
+    echo -e "${CYAN}Установить позже:${NC}"
+    echo -e "  ${GREEN}bash <(curl -fsSL $REPO_URL/web/install-web.sh)${NC}"
+    echo -e "  ${CYAN}или через меню:${NC} ${GREEN}warper${NC} → ${GREEN}W${NC}"
+fi

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Панель{% endblock %}
+{% block heading %}Панель управления{% endblock %}
+
+{% block content %}
+
+<!-- Блок проверки обновлений (грузится при загрузке dashboard) -->
+<div id="updates-container"
+     class="mb-6"
+     hx-get="{{ url_for('htmx_check_updates') }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <!-- placeholder во время загрузки -->
+    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-lg p-3 text-sm text-emerald-500/60">
+        Проверка обновлений...
+    </div>
+</div>
+
+<!-- Основной dashboard -->
+<div class="space-y-6"
+     id="dashboard-content"
+     hx-trigger="load, refreshAll from:body"
+     hx-get="{{ url_for('htmx_status_summary') }}"
+     hx-target="this"
+     hx-swap="innerHTML">
+
+    {% include "partials/status_summary.html" %}
+</div>
+{% endblock %}

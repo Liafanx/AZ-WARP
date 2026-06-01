@@ -39,7 +39,7 @@ NC='\033[0m'
 # ===== Глобальные переменные состояния =====
 SUBNET="198.20.0.0/24"
 TUN_IP="198.20.0.1/24"
-FULLVPN_WARP_RESOLVE="n"           # включать ли WARP-резолвинг для FullVPN
+FULLVPN_WARP_RESOLVE="n"
 CURRENT_OUTBOUND_MODE="warp"
 SLAVE_SERVER=""
 SLAVE_PORT="8444"
@@ -63,18 +63,35 @@ MENU_UPDATE_AVAILABLE=false
 MENU_REMOTE_VER="$LOCAL_VER"
 
 # ===== Lock-файл =====
+# Lock берётся ТОЛЬКО для тяжёлых команд (toggle, sync, ipsync, mode, subnet, patch, update).
+# Все остальные команды (включая TUI-меню без аргументов) работают БЕЗ блокировки,
+# чтобы веб-панель могла параллельно вызывать warper.
+
 acquire_lock() {
     exec 9>"$LOCK_FILE"
-    if ! flock -n 9; then
-        echo -e "${RED}Другой экземпляр warper уже запущен.${NC}" >&2
+    if ! flock -w 30 9; then
+        echo -e "${RED}Не удалось получить блокировку (другая операция > 30 сек)${NC}" >&2
         exit 1
     fi
 }
-release_lock() { rm -f "$LOCK_FILE"; }
-trap 'release_lock' EXIT
-acquire_lock
 
-# ===== Подключение модулей =====
+release_lock() {
+    flock -u 9 2>/dev/null || true
+    rm -f "$LOCK_FILE" 2>/dev/null || true
+}
+
+trap 'release_lock' EXIT
+
+# Lock берём ТОЛЬКО для тяжёлых команд по первому аргументу
+case "${1:-}" in
+    toggle|sync|ipsync|patch|mode|subnet|update)
+        acquire_lock
+        ;;
+    *)
+        :  # без lock - TUI и быстрые команды
+        ;;
+esac
+
 # ===== Подключение модулей =====
 WARPER_LIB="$WARPER_DIR/lib"
 WARPER_MENUS="$WARPER_DIR/menus"
@@ -95,11 +112,11 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         return 1
     }
 
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update; do
+    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli; do
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
-    for _menufile in main settings singbox-menu ip-menu; do
+    for _menufile in main settings singbox-menu ip-menu web-menu; do
         _fetch_module "$REPO_URL/menus/${_menufile}.sh" "$WARPER_MENUS/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
     done
 
@@ -107,6 +124,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
     exit 0
 fi
 
+# Обязательные модули - без них warper не работает
 for _lib in \
     "$WARPER_LIB/utils.sh" \
     "$WARPER_LIB/config.sh" \
@@ -118,6 +136,7 @@ for _lib in \
     "$WARPER_LIB/ip-routes.sh" \
     "$WARPER_LIB/diagnostics.sh" \
     "$WARPER_LIB/update.sh" \
+    "$WARPER_LIB/cli.sh" \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
@@ -131,6 +150,23 @@ do
     source "$_lib"
 done
 unset _lib
+
+# Опциональные модули
+for _opt_module in "$WARPER_MENUS/web-menu.sh"; do
+    if [ ! -f "$_opt_module" ]; then
+        local_name=$(basename "$_opt_module" .sh)
+        if curl -fsSL --connect-timeout 5 \
+            "$REPO_URL/menus/${local_name}.sh?t=$(date +%s)" \
+            -o "$_opt_module" 2>/dev/null; then
+            chmod 644 "$_opt_module"
+        fi
+    fi
+    if [ -f "$_opt_module" ]; then
+        # shellcheck disable=SC1090
+        source "$_opt_module"
+    fi
+done
+unset _opt_module
 
 # ===== Инициализация файлов =====
 if [ ! -f "$MASTER_FILE" ]; then
@@ -167,7 +203,13 @@ check_and_sync_warp_keys
 case "${1:-}" in
     patch)    patch_kresd >/dev/null 2>&1; exit $? ;;
     doctor)   doctor; exit $? ;;
-    status)   status_cmd; exit $? ;;
+    status)
+        if [ "${2:-}" = "json" ]; then
+            cli_status_json; exit $?
+        else
+            status_cmd; exit $?
+        fi
+        ;;
     sync)
         if is_warper_active; then patch_kresd
         else sync_domains; echo -e "${GREEN}Домены синхронизированы.${NC}"; fi
@@ -192,6 +234,70 @@ case "${1:-}" in
     ipsync)   sync_ip_ranges; exit $? ;;
     iplist)   extract_ip_ranges; exit $? ;;
     iproutes) get_current_tun_routes; exit $? ;;
+
+    # ===== Команды для веб-панели =====
+    toggle)   cli_toggle_warper; exit $? ;;
+    mode)
+        case "${2:-}" in
+            warp)  cli_mode_warp "${3:-}"; exit $? ;;
+            slave) cli_mode_slave "${3:-}" "${4:-}" "${5:-}"; exit $? ;;
+            wg)    cli_mode_wg "${3:-}"; exit $? ;;
+            *)
+                echo "Использование: warper mode warp [system|wgcf|root|generate]"
+                echo "               warper mode slave SERVER PORT PASSWORD"
+                echo "               warper mode wg /path/to.conf"
+                exit 1
+                ;;
+        esac
+        ;;
+    update)
+        update_warper
+        exit $?
+        ;;
+    logs)        cli_logs "${2:-100}"; exit $? ;;
+    config)
+        case "${2:-}" in
+            get) cli_config_get "${3:-}"; exit $? ;;
+            *)   echo "Использование: warper config get KEY"; exit 1 ;;
+        esac
+        ;;
+    subnet)      cli_subnet "${2:-}"; exit $? ;;
+    loglevel)    cli_loglevel "${2:-}"; exit $? ;;
+    mtu)         cli_mtu "${2:-}"; exit $? ;;
+    autopatch)   cli_autopatch "${2:-}"; exit $? ;;
+    fullvpn)     cli_fullvpn "${2:-}"; exit $? ;;
+    iproutemode) cli_iproutemode "${2:-}"; exit $? ;;
+    ipexport)    cli_ipexport "${2:-}"; exit $? ;;
+    warpkey)
+        case "${2:-}" in
+            list)     cli_warpkey_list; exit $? ;;
+            generate) cli_generate_warp_key; exit $? ;;
+            *)        echo "Использование: warper warpkey list|generate"; exit 1 ;;
+        esac
+        ;;
+    wgconfig)
+        case "${2:-}" in
+            list) cli_wg_list; exit $? ;;
+            *)    echo "Использование: warper wgconfig list"; exit 1 ;;
+        esac
+        ;;
+    domainslist) cli_domains_list; exit $? ;;
+    ipranges)
+        case "${2:-}" in
+            list) cli_ip_ranges_content; exit $? ;;
+            save) cli_ip_ranges_save; exit $? ;;
+            *)    echo "Использование: warper ipranges list|save"; exit 1 ;;
+        esac
+        ;;
+    webpass)
+        shift
+        cli_webpass "$@"
+        exit $?
+        ;;
+    webupdate)
+        cli_web_update
+        exit $?
+        ;;        
 esac
 
 # ===== Главное меню =====

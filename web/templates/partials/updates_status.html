@@ -1,0 +1,66 @@
+{# Информация об обновлениях #}
+
+{% if upd.error %}
+    <div class="bg-amber-900/30 border border-amber-700/50 rounded-lg p-4 text-sm">
+        <div class="font-semibold text-amber-200 mb-1">⚠ Не удалось проверить обновления</div>
+        <div class="text-amber-300/80 text-xs font-mono break-all">{{ upd.error }}</div>
+        <button hx-get="{{ url_for('htmx_check_updates') }}?force=1"
+                hx-target="#updates-container"
+                hx-swap="innerHTML"
+                class="mt-3 px-3 py-1.5 text-xs bg-amber-700/30 hover:bg-amber-700/50 border border-amber-700/40 text-amber-200 rounded flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-3 h-3 border-2 border-amber-200 border-t-transparent rounded-full animate-spin"></span>
+            ↻ Проверить снова
+        </button>
+    </div>
+
+{% elif upd.update_available %}
+    <div class="bg-brand-900/30 border border-brand-700/50 rounded-lg p-4">
+        <div class="flex items-start justify-between gap-3 mb-3">
+            <div>
+                <div class="font-semibold text-brand-200 mb-1 text-base">⚡ Доступно обновление</div>
+                <div class="text-brand-300/80 text-sm">
+                    Текущая версия: <span class="font-mono text-emerald-200">{{ upd.current }}</span>
+                    →
+                    Новая: <span class="font-mono text-brand-400 font-semibold">{{ upd.remote }}</span>
+                </div>
+                <div class="text-xs text-emerald-500/60 mt-2">
+                    Обновится WARPER и веб-панель (если установлена).<br>
+                    Процесс занимает 1-3 минуты, страница перезагрузится автоматически.
+                </div>
+            </div>
+
+            <button hx-get="{{ url_for('htmx_check_updates') }}?force=1"
+                    hx-target="#updates-container"
+                    hx-swap="innerHTML"
+                    class="text-xs text-emerald-500 hover:text-emerald-300 flex items-center gap-1 flex-shrink-0">
+                <span class="htmx-indicator inline-block w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></span>
+                ↻
+            </button>
+        </div>
+
+        <button hx-post="{{ url_for('htmx_update_warper') }}"
+                hx-target="#updates-container"
+                hx-swap="innerHTML"
+                data-confirm="Запустить обновление до версии {{ upd.remote }}? Процесс займёт 1-3 минуты, вы увидите прогресс в реальном времени."
+                class="w-full sm:w-auto px-5 py-2.5 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shadow-lg shadow-brand-900/40">
+            <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            ⚡ Обновить до {{ upd.remote }}
+        </button>
+    </div>
+
+{% else %}
+    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-lg p-3 text-sm flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+            <span class="text-brand-400">✓</span>
+            <span class="text-emerald-300">У вас актуальная версия:</span>
+            <span class="font-mono text-emerald-200">{{ upd.current }}</span>
+        </div>
+        <button hx-get="{{ url_for('htmx_check_updates') }}?force=1"
+                hx-target="#updates-container"
+                hx-swap="innerHTML"
+                class="text-xs text-emerald-500 hover:text-emerald-300 flex items-center gap-1.5">
+            <span class="htmx-indicator inline-block w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></span>
+            ↻ Проверить
+        </button>
+    </div>
+{% endif %}

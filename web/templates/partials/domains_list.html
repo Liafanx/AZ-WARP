@@ -1,0 +1,26 @@
+<script>
+(function() {
+    const updates = {
+        'gemini': {{ 'true' if gemini_enabled else 'false' }},
+        'chatgpt': {{ 'true' if chatgpt_enabled else 'false' }},
+        'has_gemini': {{ 'true' if has_gemini else 'false' }},
+        'has_chatgpt': {{ 'true' if has_chatgpt else 'false' }}
+    };
+    ['gemini', 'chatgpt'].forEach(function(name) {
+        const el = document.getElementById(name + '-status');
+        if (!el) return;
+        const has = updates['has_' + name];
+        const enabled = updates[name];
+        if (!has) {
+            el.textContent = 'не добавлен';
+            el.className = 'text-xs px-2 py-1 rounded bg-slate-800 text-slate-400';
+        } else if (enabled) {
+            el.textContent = '● включён';
+            el.className = 'text-xs px-2 py-1 rounded bg-brand-900/50 text-brand-300';
+        } else {
+            el.textContent = '○ выключен';
+            el.className = 'text-xs px-2 py-1 rounded bg-red-900/30 text-red-300';
+        }
+    });
+})();
+</script>
