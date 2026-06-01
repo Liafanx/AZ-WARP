@@ -297,6 +297,8 @@ update_warper() {
 
     rm -rf "$tmpdir" "$backupdir"
 
+    rm -rf "$tmpdir" "$backupdir"
+
     echo -e "${GREEN}Утилита и списки успешно обновлены!${NC}"
 
     # ===== Обновление веб-панели если она установлена =====
@@ -312,6 +314,18 @@ update_warper() {
     fi
 
     echo ""
-    read -r -e -p "Нажмите Enter для перезапуска WARPER..."
-    exec /usr/local/bin/warper
+    echo -e "${GREEN}✓ ОБНОВЛЕНИЕ ЗАВЕРШЕНО${NC}"
+
+    # Если запущено из CLI (warper update) или из веб-панели - просто выходим.
+    # Если запущено из интерактивного TUI меню - перезапускаем warper чтобы
+    # подхватить обновлённые модули.
+    if [ -t 0 ] && [ -t 1 ]; then
+        # Интерактивный режим (TTY доступен) - спрашиваем и перезапускаем
+        echo ""
+        read -r -e -p "Нажмите Enter для перезапуска WARPER..."
+        exec /usr/local/bin/warper
+    else
+        # Не-интерактивный режим (CLI, веб-панель, скрипт) - просто выходим
+        return 0
+    fi
 }
