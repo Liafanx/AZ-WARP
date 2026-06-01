@@ -250,6 +250,10 @@ case "${1:-}" in
                 ;;
         esac
         ;;
+    update)
+        update_warper
+        exit $?
+        ;;
     logs)        cli_logs "${2:-100}"; exit $? ;;
     config)
         case "${2:-}" in
