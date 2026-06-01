@@ -242,13 +242,13 @@ mkdir -p "$WEB_DIR/static" "$WEB_DIR/templates/partials"
 
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
-if ! git clone --depth 1 -b "$" "$REPO_GIT" repo 2>/dev/null; then
-    echo -e "${RED}Не удалось скачать репозиторий ветки $${NC}"
+if ! git clone --depth 1 -b "$REPO_BRANCH" "$REPO_GIT" repo 2>/dev/null; then
+    echo -e "${RED}Не удалось скачать репозиторий ветки $REPO_BRANCH${NC}"
     exit 1
 fi
 
 if [ ! -d "repo/web" ]; then
-    echo -e "${RED}В ветке $ нет папки web/${NC}"
+    echo -e "${RED}В ветке $REPO_BRANCH нет папки web/${NC}"
     exit 1
 fi
 
