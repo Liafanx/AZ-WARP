@@ -794,17 +794,13 @@ _VERSION_CACHE_TTL = 60  # 1 минута
 def check_for_updates(force: bool = False) -> dict[str, Any]:
     """
     Проверяет наличие новой версии WARPER на GitHub.
-    Результат кэшируется на 5 минут.
-    Возвращает:
-      {
-        "current": "1.3.2",
-        "remote": "1.4.0",
-        "update_available": True,
-        "error": None
-      }
+    Результат кэшируется на _VERSION_CACHE_TTL секунд.
+    force=True — игнорировать кэш.
     """
     import time
     now = time.time()
+
+    # Используем кэш если можно
     if not force and _version_cache["data"] and \
        (now - _version_cache["checked_at"] < _VERSION_CACHE_TTL):
         return _version_cache["data"]
@@ -816,7 +812,7 @@ def check_for_updates(force: bool = False) -> dict[str, Any]:
         "error": None,
     }
 
-    # Текущая версия из /root/warper/version
+    # Текущая версия из файла (читаем каждый раз заново)
     version_file = "/root/warper/version"
     if os.path.exists(version_file):
         try:
@@ -825,25 +821,36 @@ def check_for_updates(force: bool = False) -> dict[str, Any]:
         except OSError:
             pass
 
-    # Версия с GitHub из той же ветки откуда устанавливались
-    # Берём из REPO_URL в warper.sh — он соответствует ветке
+    # Версия с GitHub
     branch = _detect_warper_branch()
-    url = f"https://raw.githubusercontent.com/Liafanx/AZ-WARP/{branch}/version"
+    # ВАЖНО: добавляем рандомный query чтобы обойти CDN-кэш GitHub
+    url = f"https://raw.githubusercontent.com/Liafanx/AZ-WARP/{branch}/version?_={int(now)}"
 
     try:
         import urllib.request
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "warper-web/1.0",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
             remote = resp.read().decode("utf-8").strip()
             if re.match(r"^\d+\.\d+\.\d+$", remote):
                 result["remote"] = remote
                 result["update_available"] = _version_gt(remote, result["current"])
     except Exception as e:
         result["error"] = str(e)[:200]
+        # При ошибке - не кэшируем ошибку надолго, чтобы пользователь мог быстро повторить
+        _version_cache["checked_at"] = now - _VERSION_CACHE_TTL + 10  # повторить через 10 сек
+        _version_cache["data"] = result
+        return result
 
     _version_cache["checked_at"] = now
     _version_cache["data"] = result
     return result
-
 
 def _detect_warper_branch() -> str:
     """Извлекает ветку из REPO_URL в warper.sh (default: main)."""
