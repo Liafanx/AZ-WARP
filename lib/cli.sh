@@ -1157,3 +1157,122 @@ PYEOF
 
     return 0
 }
+
+# ===== ОБНОВЛЕНИЕ ВЕБ-ПАНЕЛИ =====
+
+# Обновляет файлы веб-панели с GitHub.
+# Сохраняет .env, data/ (пользователи, секреты), venv.
+# Обновляет: Python-код (app.py, auth.py, warper_api.py),
+# шаблоны (templates/), статику (static/).
+# При необходимости перезапускает сервис.
+cli_web_update() {
+    local web_dir="/root/warper/web"
+
+    if [ ! -d "$web_dir" ]; then
+        echo -e "${RED}Веб-панель не установлена${NC}" >&2
+        return 1
+    fi
+
+    echo -e "${CYAN}Обновление веб-панели WARPER...${NC}"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/warper-web-update.XXXXXX)
+    cd "$tmp_dir" || return 1
+
+    # Скачиваем актуальную ветку
+    echo -e "${CYAN}Скачивание с GitHub (ветка $(basename "$REPO_URL"))...${NC}"
+    local repo_branch
+    repo_branch=$(basename "$REPO_URL")
+
+    if ! git clone --depth 1 -b "$repo_branch" \
+        "https://github.com/Liafanx/AZ-WARP.git" repo 2>/dev/null; then
+        echo -e "${RED}Не удалось скачать репозиторий ветки $repo_branch${NC}" >&2
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if [ ! -d "repo/web" ]; then
+        echo -e "${RED}В репозитории нет папки web/${NC}" >&2
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # Бэкап критичных файлов которые НЕ должны быть перезаписаны
+    local backup_dir="$tmp_dir/backup"
+    mkdir -p "$backup_dir"
+    [ -f "$web_dir/.env" ] && cp "$web_dir/.env" "$backup_dir/.env"
+    [ -d "$web_dir/data" ] && cp -a "$web_dir/data" "$backup_dir/data"
+
+    # Список файлов которые нужно обновить
+    echo -e "${CYAN}Обновление Python-кода...${NC}"
+    for f in app.py auth.py warper_api.py requirements.txt; do
+        if [ -f "repo/web/$f" ]; then
+            cp "repo/web/$f" "$web_dir/$f"
+            echo -e "  ✓ $f"
+        fi
+    done
+
+    echo -e "${CYAN}Обновление шаблонов...${NC}"
+    if [ -d "repo/web/templates" ]; then
+        # Удаляем старые шаблоны (на случай если что-то переименовано)
+        rm -rf "$web_dir/templates"
+        cp -r "repo/web/templates" "$web_dir/templates"
+        echo -e "  ✓ templates/"
+    fi
+
+    echo -e "${CYAN}Обновление статики...${NC}"
+    if [ -d "repo/web/static" ]; then
+        # Удаляем старую статику
+        rm -rf "$web_dir/static"
+        cp -r "repo/web/static" "$web_dir/static"
+        echo -e "  ✓ static/"
+    fi
+
+    # Восстанавливаем критичные файлы
+    [ -f "$backup_dir/.env" ] && cp "$backup_dir/.env" "$web_dir/.env" && chmod 600 "$web_dir/.env"
+    if [ -d "$backup_dir/data" ]; then
+        rm -rf "$web_dir/data"
+        cp -a "$backup_dir/data" "$web_dir/data"
+        chmod 700 "$web_dir/data"
+    fi
+
+    # Также обновляем cli.sh и web-menu.sh если есть
+    if [ -f "repo/lib/cli.sh" ]; then
+        cp "repo/lib/cli.sh" "$WARPER_DIR/lib/cli.sh"
+        echo -e "  ✓ lib/cli.sh"
+    fi
+    if [ -f "repo/menus/web-menu.sh" ]; then
+        cp "repo/menus/web-menu.sh" "$WARPER_DIR/menus/web-menu.sh"
+        echo -e "  ✓ menus/web-menu.sh"
+    fi
+
+    # Обновляем Python-зависимости (вдруг добавились новые)
+    echo -e "${CYAN}Обновление Python-зависимостей...${NC}"
+    if [ -x "$web_dir/venv/bin/pip" ]; then
+        "$web_dir/venv/bin/pip" install --quiet --upgrade pip 2>/dev/null
+        "$web_dir/venv/bin/pip" install --quiet -r "$web_dir/requirements.txt" 2>/dev/null
+        echo -e "  ✓ pip пакеты"
+    fi
+
+    # Очистка
+    cd /
+    rm -rf "$tmp_dir"
+
+    # Перезапуск сервиса
+    if systemctl is-active --quiet warper-web 2>/dev/null; then
+        echo -e "${CYAN}Перезапуск сервиса warper-web...${NC}"
+        systemctl restart warper-web
+        sleep 2
+        if systemctl is-active --quiet warper-web 2>/dev/null; then
+            echo -e "${GREEN}✓ Сервис перезапущен${NC}"
+        else
+            echo -e "${RED}⚠ Сервис не запустился после обновления!${NC}"
+            echo -e "${YELLOW}Логи: journalctl -u warper-web -n 20${NC}"
+            return 1
+        fi
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Веб-панель обновлена${NC}"
+    return 0
+}
