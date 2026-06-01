@@ -872,29 +872,33 @@ def _version_gt(a: str, b: str) -> bool:
 
 def update_warper_from_web() -> tuple[bool, str]:
     """
-    Запускает обновление WARPER (CLI команда `warper update`).
-    Это может занять до 5 минут, поэтому увеличиваем timeout.
-    """
-    ok, out, err = _run_warper("update", timeout=300)
-    return ok, (out or err).strip() or ("Обновление выполнено" if ok else "Ошибка обновления")
+    Запускает полное обновление WARPER (CLI команда `warper update`).
+    Если установлена веб-панель — она тоже обновится автоматически
+    (в конце update_warper в lib/update.sh).
 
+    Запускается в фоне через nohup, потому что:
+    1. WARPER при обновлении может рестартовать sing-box (долго)
+    2. Веб-панель при обновлении сама себя перезапустит
+    3. HTTP-ответ может не дойти до браузера
 
-def update_web_panel() -> tuple[bool, str]:
+    Возвращаем сразу OK, браузер ждёт 30 сек и перезагружает страницу.
     """
-    Запускает обновление веб-панели (CLI команда `warper webupdate`).
-    После обновления сервис перезапускается, поэтому ответ может не дойти.
-    """
-    # ВАЖНО: после webupdate перезапускается сам сервис, поэтому ответ браузеру
-    # может не дойти. Возвращаем сразу OK, а команду запускаем в фоне через nohup.
     try:
         import subprocess
+
+        # Лог-файл для отладки
+        log_file = "/tmp/warper-update.log"
+
+        # Запускаем в фоне, отвязываем от родительского процесса
+        # ВАЖНО: `warper update` берёт lock — но мы из веб-панели его не блокируем,
+        # потому что веб-панель не вызывает warper параллельно
         subprocess.Popen(
-            ["nohup", "bash", "-c", "/usr/local/bin/warper webupdate >/tmp/warper-webupdate.log 2>&1"],
+            ["nohup", "bash", "-c", f"/usr/local/bin/warper update </dev/null >{log_file} 2>&1"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-        return True, "Обновление запущено. Страница перезагрузится через 15 сек."
+        return True, "Обновление запущено в фоне. Страница перезагрузится через 30 сек."
     except Exception as e:
         return False, f"Не удалось запустить обновление: {e}"
