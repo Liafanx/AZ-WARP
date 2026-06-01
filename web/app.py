@@ -659,19 +659,83 @@ def htmx_check_updates():
 @login_required
 def htmx_update_warper():
     """
-    Запускает обновление WARPER + веб-панели в фоне.
-    Браузер ждёт 30 сек и редиректит на dashboard.
+    Возвращает HTML-блок с консолью прогресса обновления.
+    Реальный лог стримится через SSE endpoint /api/update-stream.
     """
-    ok, msg = api.update_warper_from_web()
-    if ok:
-        triggers = {
-            "showToast": {"message": msg, "category": "info"},
-            "redirectAfter": {"url": "/dashboard", "delay": 30000},
-        }
-        resp = make_response("", 204)
-        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
-        return resp
-    return _result_partial(False, msg)
+    return render_template("partials/update_progress.html")
+
+
+@app.route("/api/update-stream")
+@login_required
+def api_update_stream():
+    """
+    SSE-стрим: запускает `warper update` и шлёт каждую строку stdout
+    как Server-Sent Event в браузер. По завершении — финальное событие.
+    """
+    proc, err = api.update_warper_from_web()
+    if err or not proc:
+        def _err_stream():
+            import json as _j
+            yield "event: error\n"
+            yield f"data: {_j.dumps({'message': err or 'Unknown error'})}\n\n"
+        return Response(
+            _err_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",  # отключаем буферизацию nginx
+            },
+        )
+
+    @stream_with_context
+    def _stream():
+        import json as _j
+
+        # Стартовое событие
+        yield "event: start\n"
+        yield f"data: {_j.dumps({'message': 'Запуск обновления...'})}\n\n"
+
+        try:
+            # Читаем построчно — каждую строку шлём как SSE
+            assert proc.stdout is not None
+            for line in iter(proc.stdout.readline, ""):
+                # Убираем ANSI escape-последовательности (цвета bash)
+                import re as _re
+                clean = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", line).rstrip()
+                if not clean:
+                    continue
+                yield "event: log\n"
+                yield f"data: {_j.dumps({'line': clean})}\n\n"
+
+            # Ждём завершения
+            rc = proc.wait(timeout=600)
+
+            # Финальное событие
+            if rc == 0:
+                # Инвалидируем кэш версии чтобы dashboard сразу увидел новую
+                api.invalidate_version_cache()
+                yield "event: done\n"
+                yield f"data: {_j.dumps({'rc': rc, 'success': True})}\n\n"
+            else:
+                yield "event: done\n"
+                yield f"data: {_j.dumps({'rc': rc, 'success': False})}\n\n"
+        except Exception as e:
+            yield "event: error\n"
+            yield f"data: {_j.dumps({'message': str(e)})}\n\n"
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return Response(
+        _stream(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ===== Контекст =====
