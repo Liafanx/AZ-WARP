@@ -361,6 +361,8 @@ server {
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;        
     }
 }
 EOF
@@ -403,6 +405,8 @@ server {
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;        
     }
 }
 EOF
@@ -433,6 +437,8 @@ server {
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;        
     }
 }
 EOF
@@ -511,6 +517,8 @@ server {
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;        
     }
 }
 
