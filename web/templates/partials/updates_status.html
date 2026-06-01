@@ -1,0 +1,65 @@
+{# Информация об обновлениях #}
+
+{% if upd.error %}
+    <div class="bg-amber-900/30 border border-amber-700/50 rounded-lg p-4 text-sm">
+        <div class="font-semibold text-amber-200 mb-1">⚠ Не удалось проверить обновления</div>
+        <div class="text-amber-300/80 text-xs font-mono break-all">{{ upd.error }}</div>
+        <button hx-get="{{ url_for('htmx_check_updates') }}?force=1"
+                hx-target="#updates-container"
+                hx-swap="innerHTML"
+                class="mt-3 px-3 py-1.5 text-xs bg-amber-700/30 hover:bg-amber-700/50 border border-amber-700/40 text-amber-200 rounded">
+            ↻ Проверить снова
+        </button>
+    </div>
+
+{% elif upd.update_available %}
+    <div class="bg-brand-900/30 border border-brand-700/50 rounded-lg p-4 text-sm">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <div class="font-semibold text-brand-200 mb-1">⚡ Доступно обновление</div>
+                <div class="text-brand-300/80 text-xs">
+                    Текущая: <span class="font-mono text-emerald-200">{{ upd.current }}</span>
+                    →
+                    Новая: <span class="font-mono text-brand-400">{{ upd.remote }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button hx-post="{{ url_for('htmx_update_warper') }}"
+                    hx-swap="none"
+                    data-confirm="Обновить WARPER до {{ upd.remote }}? Это может занять до 5 минут."
+                    class="px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded text-sm font-medium transition flex items-center justify-center gap-2">
+                <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                ⚡ Обновить WARPER
+            </button>
+
+            <button hx-post="{{ url_for('htmx_update_web') }}"
+                    hx-swap="none"
+                    data-confirm="Обновить веб-панель? Страница перезагрузится через ~15 секунд."
+                    class="px-3 py-2 bg-sky-700 hover:bg-sky-600 text-white rounded text-sm font-medium transition flex items-center justify-center gap-2">
+                <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                🔄 Обновить веб-панель
+            </button>
+        </div>
+
+        <p class="text-xs text-emerald-500/60 mt-3">
+            Сначала рекомендуется обновить WARPER, затем веб-панель.
+        </p>
+    </div>
+
+{% else %}
+    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-lg p-3 text-sm flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+            <span class="text-brand-400">✓</span>
+            <span class="text-emerald-300">У вас актуальная версия:</span>
+            <span class="font-mono text-emerald-200">{{ upd.current }}</span>
+        </div>
+        <button hx-get="{{ url_for('htmx_check_updates') }}?force=1"
+                hx-target="#updates-container"
+                hx-swap="innerHTML"
+                class="text-xs text-emerald-500 hover:text-emerald-300">
+            ↻ Проверить
+        </button>
+    </div>
+{% endif %}
