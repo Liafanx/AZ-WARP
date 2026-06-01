@@ -657,33 +657,21 @@ def htmx_check_updates():
 @app.route("/htmx/update-warper", methods=["POST"])
 @login_required
 def htmx_update_warper():
+    """
+    Запускает обновление WARPER + веб-панели в фоне.
+    Браузер ждёт 30 сек и редиректит на dashboard.
+    """
     ok, msg = api.update_warper_from_web()
     if ok:
-        # Дольше показывать toast - 5 секунд (обновление WARPER может перезагрузить и веб-сервис)
-        triggers = {
-            "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": "/dashboard", "delay": 5000},
-        }
-        resp = make_response("", 204)
-        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
-        return resp
-    return _result_partial(False, msg)
-
-
-@app.route("/htmx/update-web", methods=["POST"])
-@login_required
-def htmx_update_web():
-    ok, msg = api.update_web_panel()
-    if ok:
-        # После обновления сервис перезапустится, ждём 15 сек и перезагружаем
         triggers = {
             "showToast": {"message": msg, "category": "info"},
-            "redirectAfter": {"url": "/dashboard", "delay": 15000},
+            "redirectAfter": {"url": "/dashboard", "delay": 30000},
         }
         resp = make_response("", 204)
         resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
         return resp
     return _result_partial(False, msg)
+
 
 # ===== Контекст =====
 
