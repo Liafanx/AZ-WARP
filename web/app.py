@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from flask import (
     Flask, abort, flash, make_response,
     redirect, render_template, request, url_for,
-    Response, stream_with_context
+    response, stream_with_context
 )
 from flask_login import current_user, login_required, login_user, logout_user
 
