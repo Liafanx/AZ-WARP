@@ -30,8 +30,9 @@
         </div>
 
         <button hx-post="{{ url_for('htmx_update_warper') }}"
-                hx-swap="none"
-                data-confirm="Запустить обновление до версии {{ upd.remote }}? Процесс займёт 1-3 минуты, страница перезагрузится автоматически."
+                hx-target="#updates-container"
+                hx-swap="innerHTML"
+                data-confirm="Запустить обновление до версии {{ upd.remote }}? Процесс займёт 1-3 минуты, вы увидите прогресс в реальном времени."
                 class="w-full sm:w-auto px-5 py-2.5 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shadow-lg shadow-brand-900/40">
             <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
             ⚡ Обновить до {{ upd.remote }}
