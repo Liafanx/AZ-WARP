@@ -68,7 +68,8 @@
                 ('singbox_page','sing-box',     '⚙'),
                 ('logs_page',   'Логи',         '☰'),
                 ('diagnostics_page','Диагностика','⚕'),
-                ('settings_page','Настройки',   '✱'),
+                ('settings_page','Настройки',    '✱'),
+                ('web_settings_page','Веб-панель',    '🌐'),
             ] %}
             {% for endpoint, label, icon in nav_items %}
                 {% set active = request.endpoint == endpoint %}

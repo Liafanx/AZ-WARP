@@ -94,6 +94,10 @@ if [ -d "$WEB_DIR" ] || [ -f "/etc/systemd/system/${WEB_SERVICE}.service" ]; the
         nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
     fi
 
+    # Удаляем hooks автопродления сертификата если создавались
+    rm -f /etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh
+    rm -f /etc/letsencrypt/renewal-hooks/post/warper-start-openvpn80.sh
+
     echo -e " - ${CYAN}Удаление файлов веб-панели...${NC}"
     rm -rf "$WEB_DIR"
     rm -f "/root/warper/web_admin_pass.txt"

@@ -22,12 +22,33 @@ web_get_port() {
 }
 
 web_get_external_port() {
-    # Внешний порт из nginx
     local nginx_conf="/etc/nginx/sites-available/warper-web"
-    if [ -f "$nginx_conf" ]; then
-        grep -oE 'listen\s+[0-9]+' "$nginx_conf" 2>/dev/null \
-            | head -1 | awk '{print $2}'
+    [ -f "$nginx_conf" ] || { echo ""; return; }
+
+    local port=""
+
+    # 1. Сначала пробуем найти HTTPS-блок: "listen NNNN ssl"
+    port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+[[:space:]]+ssl/ {
+        for(i=1; i<=NF; i++) if($i ~ /^[0-9]+$/) { print $i; exit }
+    }' "$nginx_conf")
+
+    # 2. Если HTTPS нет - берём первый "listen NNNN" кроме 80
+    if [ -z "$port" ]; then
+        port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+/ {
+            for(i=1; i<=NF; i++) {
+                if($i ~ /^[0-9]+$/ && $i != "80") { print $i; exit }
+            }
+        }' "$nginx_conf")
     fi
+
+    # 3. Совсем fallback - первый listen
+    if [ -z "$port" ]; then
+        port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+/ {
+            for(i=1; i<=NF; i++) if($i ~ /^[0-9]+$/) { print $i; exit }
+        }' "$nginx_conf")
+    fi
+
+    echo "$port"
 }
 
 web_get_external_url() {

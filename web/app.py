@@ -270,6 +270,10 @@ def settings_page():
         wg_configs=wg_configs,
     )
 
+@app.route("/web-settings")
+@login_required
+def web_settings_page():
+    return render_template("web_settings.html")
 
 # ===== HTMX: статус =====
 
@@ -742,6 +746,101 @@ def api_update_stream():
             "Connection": "keep-alive",
         },
     )
+
+# ===== HTMX: настройки веб-панели =====
+
+@app.route("/htmx/web/info")
+@login_required
+def htmx_web_info():
+    info = api.get_service_info()
+    return render_template("partials/web_service_info.html", info=info)
+
+
+@app.route("/htmx/web/auth-log")
+@login_required
+def htmx_web_auth_log():
+    filter_type = request.args.get("filter") or None
+    if filter_type == "all":
+        filter_type = None
+    try:
+        limit = int(request.args.get("limit", 100))
+    except ValueError:
+        limit = 100
+    if limit < 1 or limit > 500:
+        limit = 100
+
+    data = api.get_auth_log(limit=limit, level_filter=filter_type)
+    return render_template(
+        "partials/web_auth_log.html",
+        events=data["events"],
+        stats=data["stats"],
+        current_filter=filter_type or "all",
+        current_limit=limit,
+    )
+
+
+@app.route("/htmx/web/blocks")
+@login_required
+def htmx_web_blocks():
+    blocks = api.get_active_blocks()
+    return render_template("partials/web_blocks.html", blocks=blocks)
+
+
+@app.route("/htmx/web/unblock", methods=["POST"])
+@login_required
+def htmx_web_unblock():
+    ip = request.form.get("ip", "").strip()
+    if not ip:
+        return _result_partial(False, "IP не указан")
+    ok, msg = api.unblock_ip(ip)
+    return _result_partial(ok, msg, "refreshWebBlocks")
+
+
+@app.route("/htmx/web/unblock-all", methods=["POST"])
+@login_required
+def htmx_web_unblock_all():
+    ok, msg = api.unblock_all_ips()
+    return _result_partial(ok, msg, "refreshWebBlocks")
+
+
+@app.route("/htmx/web/change-port", methods=["POST"])
+@login_required
+def htmx_web_change_port():
+    try:
+        new_port = int(request.form.get("port", "0"))
+    except ValueError:
+        return _result_partial(False, "Порт должен быть числом")
+    ok, msg = api.change_external_port(new_port)
+    if ok:
+        # Редирект на новый порт через 2 секунды
+        import json as _j
+        host = request.host.split(":")[0]
+        scheme = "https" if request.is_secure else "http"
+        new_url = f"{scheme}://{host}:{new_port}/web-settings"
+        triggers = {
+            "showToast": {"message": msg, "category": "success"},
+            "redirectAfter": {"url": new_url, "delay": 3000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/restart", methods=["POST"])
+@login_required
+def htmx_web_restart():
+    ok, msg = api.restart_web_service()
+    if ok:
+        # Браузер ждёт 5 секунд и перезагружает страницу
+        triggers = {
+            "showToast": {"message": msg, "category": "info"},
+            "redirectAfter": {"url": "/web-settings", "delay": 5000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
 
 
 # ===== Контекст =====

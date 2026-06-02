@@ -1,0 +1,54 @@
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Сервис</div>
+        <div class="mt-1 text-sm font-mono">
+            {% if info.service_active %}
+                <span class="text-brand-400">● Запущен</span>
+            {% else %}
+                <span class="text-red-400">● Остановлен</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Аптайм</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.uptime }}</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Память</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.memory_mb }} МБ</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Внешний порт</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.external_port or '?' }}</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Внутренний порт</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.internal_port }}</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Main PID</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.main_pid or '—' }}</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Python</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.python_version }}</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Flask</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.flask_version }}</div>
+    </div>
+
+    <div class="bg-surface-950 border border-emerald-900/40 rounded-lg p-3">
+        <div class="text-xs text-emerald-500/70 uppercase">Gunicorn</div>
+        <div class="mt-1 text-sm font-mono text-emerald-200">{{ info.gunicorn_version }}</div>
+    </div>
+
+</div>

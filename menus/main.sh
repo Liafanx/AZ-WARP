@@ -242,7 +242,15 @@ show_main_menu() {
             local web_stat
             if systemctl is-active --quiet warper-web 2>/dev/null; then
                 local web_port
-                web_port=$(grep -oE 'listen\s+[0-9]+' /etc/nginx/sites-available/warper-web 2>/dev/null | head -1 | awk '{print $2}')
+                if declare -f web_get_external_port >/dev/null 2>&1; then
+                    web_port=$(web_get_external_port)
+                else
+                    # Fallback - правильно ищем порт даже если web-menu.sh не загружен
+                    web_port=$(grep -oE 'listen\s+[0-9]+\s+ssl' /etc/nginx/sites-available/warper-web 2>/dev/null | head -1 | awk '{print $2}')
+                    if [ -z "$web_port" ]; then
+                        web_port=$(grep -oE 'listen\s+[0-9]+' /etc/nginx/sites-available/warper-web 2>/dev/null | awk '{print $2}' | grep -v '^80$' | head -1)
+                    fi
+                fi
                 web_stat="${GREEN}запущена${NC} ${CYAN}(порт ${web_port:-?})${NC}"
             else
                 web_stat="${RED}остановлена${NC}"

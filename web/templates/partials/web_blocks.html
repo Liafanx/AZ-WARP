@@ -1,0 +1,47 @@
+{% if blocks %}
+    <div class="space-y-2">
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-xs uppercase text-emerald-500/70 border-b border-emerald-900/40">
+                        <th class="px-3 py-2">IP-адрес</th>
+                        <th class="px-3 py-2">Осталось</th>
+                        <th class="px-3 py-2 text-right">Действие</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-emerald-900/20">
+                    {% for b in blocks %}
+                    <tr class="hover:bg-surface-950">
+                        <td class="px-3 py-2 font-mono text-emerald-200">{{ b.ip }}</td>
+                        <td class="px-3 py-2 text-emerald-300">
+                            <span class="font-mono">{{ b.minutes_left }}</span> мин
+                        </td>
+                        <td class="px-3 py-2 text-right">
+                            <button hx-post="{{ url_for('htmx_web_unblock') }}"
+                                    hx-vals='{"ip":"{{ b.ip }}"}'
+                                    hx-swap="none"
+                                    class="px-3 py-1 bg-brand-700/40 hover:bg-brand-700 text-brand-100 rounded text-xs font-medium transition">
+                                Разблокировать
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pt-2">
+            <button hx-post="{{ url_for('htmx_web_unblock_all') }}"
+                    hx-swap="none"
+                    data-confirm="Снять все блокировки? ({{ blocks|length }} IP)"
+                    class="px-3 py-1.5 bg-red-700/40 hover:bg-red-700 text-red-100 rounded-lg text-xs font-medium transition">
+                Снять все блокировки ({{ blocks|length }})
+            </button>
+        </div>
+    </div>
+{% else %}
+    <div class="text-sm text-emerald-500/60 bg-surface-950 border border-emerald-900/30 rounded-lg p-4 text-center">
+        ✓ Нет активных блокировок
+    </div>
+{% endif %}
