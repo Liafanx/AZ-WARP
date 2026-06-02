@@ -651,6 +651,30 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
 
             if [ "$CERT_OK" != "y" ]; then
                 echo -e "${RED}⚠ Сертификат получить не удалось${NC}"
+
+                # Проверяем характерные ошибки в логе certbot
+                _certbot_log="/var/log/letsencrypt/letsencrypt.log"
+                if [ -f "$_certbot_log" ]; then
+                    if tail -50 "$_certbot_log" | grep -qE "SERVFAIL.*CAA|CAA.*SERVFAIL"; then
+                        echo -e ""
+                        echo -e "${YELLOW}═══ Похоже на временную проблему DNS-провайдера ═══${NC}"
+                        echo -e "${YELLOW}Let's Encrypt не смог проверить CAA-запись для домена.${NC}"
+                        echo -e "${YELLOW}Это известная проблема некоторых DNS-провайдеров (DuckDNS, NoIP).${NC}"
+                        echo -e ""
+                        echo -e "${CYAN}Что делать:${NC}"
+                        echo -e "  1. Подождать 15-30 минут и попробовать снова:"
+                        echo -e "     ${CYAN}certbot certonly --webroot --webroot-path /var/www/html -d $DOMAIN${NC}"
+                        echo -e "  2. Проверить DNS-провайдера:"
+                        echo -e "     ${CYAN}dig CAA $(echo $DOMAIN | rev | cut -d. -f1-2 | rev) @1.1.1.1${NC}"
+                        echo -e "  3. Если проблема не уходит — рассмотреть смену DNS-провайдера"
+                        echo -e ""
+                    elif tail -50 "$_certbot_log" | grep -qE "Connection refused|Connection reset"; then
+                        echo -e "${YELLOW}Похоже на сетевую проблему — порт 80 может быть заблокирован${NC}"
+                    elif tail -50 "$_certbot_log" | grep -qE "rate limit|too many"; then
+                        echo -e "${YELLOW}Превышен лимит запросов Let's Encrypt для этого домена${NC}"
+                        echo -e "${YELLOW}Попробуйте через час${NC}"
+                    fi
+                fi
             fi
         fi
 
