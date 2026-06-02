@@ -14,7 +14,7 @@
   },
   "inbounds": [
     { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
-    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "auto_route": false, "strict_route": false, "stack": "system" }
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "mtu": 1420, "auto_route": false, "strict_route": false, "stack": "system" }
   ],
   "outbounds": [
     {
