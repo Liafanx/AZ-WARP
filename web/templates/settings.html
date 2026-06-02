@@ -180,29 +180,6 @@
             </div>
         </div>
     </section>
-
-    <!-- ===== Учётные данные ===== -->
-    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
-        <h3 class="text-sm font-semibold text-emerald-200 mb-1">Учётные данные администратора</h3>
-        <p class="text-xs text-emerald-500/60 mb-4">При смене пароля требуется повторный вход</p>
-
-        <form hx-post="{{ url_for('htmx_credentials') }}"
-              hx-swap="none"
-              hx-on::after-request="if(event.detail.successful) this.reset()"
-              class="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
-            <input type="text" name="username" placeholder="Новый логин (3-32 симв.)"
-                   class="px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                          text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
-            <input type="password" name="password" placeholder="Новый пароль (мин. 6 симв.)"
-                   class="px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
-                          text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
-            <button type="submit"
-                    class="md:col-span-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition">
-                Сохранить
-            </button>
-        </form>
-    </section>
-
 </div>
 
 
