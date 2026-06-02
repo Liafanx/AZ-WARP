@@ -647,6 +647,45 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         echo -e "${YELLOW}⚠ Сертификат не найден${NC}"
     fi
 
+    # Если OpenVPN использует порт 80 - создаём hook'и для автопродления
+    if [ "$CERT_OK" = "y" ] && [ "$STOP_OPENVPN_BACKUP" = "y" ]; then
+        echo -e "${CYAN}Создаю hook'и для автопродления сертификата...${NC}"
+
+        # Pre-hook: остановить OpenVPN на 80
+        mkdir -p /etc/letsencrypt/renewal-hooks/pre
+        cat > "/etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh" <<'PREHOOK'
+#!/bin/bash
+# AZ-WARP: останавливаем OpenVPN backup на 80 для продления сертификата
+for svc in antizapret-tcp vpn-tcp; do
+    if systemctl is-active --quiet "openvpn-server@${svc}" 2>/dev/null; then
+        if grep -q "^port 80$" "/etc/openvpn/server/${svc}.conf" 2>/dev/null; then
+            systemctl stop "openvpn-server@${svc}" 2>/dev/null
+        fi
+    fi
+done
+systemctl reload nginx 2>/dev/null || true
+sleep 2
+PREHOOK
+        chmod +x "/etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh"
+
+        # Post-hook: запустить OpenVPN обратно
+        mkdir -p /etc/letsencrypt/renewal-hooks/post
+        cat > "/etc/letsencrypt/renewal-hooks/post/warper-start-openvpn80.sh" <<'POSTHOOK'
+#!/bin/bash
+# AZ-WARP: запускаем OpenVPN backup обратно после продления
+for svc in antizapret-tcp vpn-tcp; do
+    if [ -f "/etc/openvpn/server/${svc}.conf" ]; then
+        if grep -q "^port 80$" "/etc/openvpn/server/${svc}.conf" 2>/dev/null; then
+            systemctl start "openvpn-server@${svc}" 2>/dev/null
+        fi
+    fi
+done
+POSTHOOK
+        chmod +x "/etc/letsencrypt/renewal-hooks/post/warper-start-openvpn80.sh"
+
+        echo -e "${GREEN}✓ Hooks созданы — сертификат будет автоматически продлеваться${NC}"
+    fi
+
 if [ "$CERT_OK" = "y" ]; then
     # Переписываем конфиг — ТОЛЬКО на нашем порту, БЕЗ блока на порту 80
     # (acme-challenge для продления сертификата работает через другие конфиги
