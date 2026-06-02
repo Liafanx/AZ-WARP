@@ -1147,43 +1147,36 @@ def unblock_all_ips() -> tuple[bool, str]:
 def get_nginx_external_port() -> int | None:
     """
     Извлекает внешний порт из nginx-конфига warper-web.
-    Игнорирует блок 'listen 80' (acme-challenge) и возвращает реальный порт веб-панели.
+    Игнорирует блок 'listen 80' (acme-challenge) и возвращает реальный порт.
     """
     nginx_conf = "/etc/nginx/sites-available/warper-web"
     if not os.path.exists(nginx_conf):
         return None
 
-    https_port = None
-    other_ports = []
-
     try:
         with open(nginx_conf, "r", encoding="utf-8") as f:
-            for line in f:
-                # listen PORT ssl ... - HTTPS блок (приоритет)
-                m_ssl = re.match(r"^\s*listen\s+(\d+)\s+ssl\b", line)
-                if m_ssl:
-                    https_port = int(m_ssl.group(1))
-                    continue
-
-                # listen PORT;  - обычный
-                m = re.match(r"^\s*listen\s+(\d+)", line)
-                if m:
-                    other_ports.append(int(m.group(1)))
+            content = f.read()
     except OSError:
         return None
 
-    # Приоритет: HTTPS-порт
-    if https_port:
-        return https_port
+    # 1. Ищем HTTPS-блок: "listen NNNN ssl" в любом виде (с http2 или без)
+    https_matches = re.findall(
+        r"^\s*listen\s+(\d+)\s+ssl\b",
+        content,
+        re.MULTILINE,
+    )
+    if https_matches:
+        return int(https_matches[0])
 
-    # Иначе - первый порт кроме 80 (потому что 80 для acme-challenge)
-    non_80 = [p for p in other_ports if p != 80]
+    # 2. Иначе - все listen, кроме 80
+    all_matches = re.findall(r"^\s*listen\s+(\d+)", content, re.MULTILINE)
+    non_80 = [int(p) for p in all_matches if p != "80"]
     if non_80:
         return non_80[0]
 
-    # Совсем fallback - первый что нашли (вдруг реально на 80)
-    if other_ports:
-        return other_ports[0]
+    # 3. Совсем fallback - первый listen
+    if all_matches:
+        return int(all_matches[0])
 
     return None
 
