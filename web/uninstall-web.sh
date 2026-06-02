@@ -85,11 +85,13 @@ if systemctl is-active --quiet nginx 2>/dev/null; then
     nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
 fi
 
+# Удаляем hooks автопродления сертификата если создавались
+rm -f /etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh
+rm -f /etc/letsencrypt/renewal-hooks/post/warper-start-openvpn80.sh
+
 echo -e "${CYAN}Удаляю файлы веб-панели...${NC}"
 rm -rf /root/warper/web
 
-# Удаляем старый файл с паролем если остался от прошлых версий
-rm -f /root/warper/web_admin_pass.txt
 
 echo ""
 echo -e "${GREEN}=================================================${NC}"
