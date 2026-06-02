@@ -648,6 +648,11 @@ switch_mode() {
         "type": "udp",
         "server": "1.1.1.1",
         "detour": "warp"
+      },
+      {
+        "tag": "local",
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ],
     "strategy": "ipv4_only",
@@ -696,7 +701,7 @@ switch_mode() {
         "outbound": "warp"
       }
     ],
-    "default_domain_resolver": "warp-dns",
+    "default_domain_resolver": "local",
     "final": "direct"
   }
 }

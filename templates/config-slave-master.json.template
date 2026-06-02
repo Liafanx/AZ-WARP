@@ -3,6 +3,7 @@
   "dns": {
     "servers": [
       { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "server-slave" },
+      { "tag": "local", "type": "udp", "server": "8.8.8.8" },
       { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "__SUBNET__" }
     ],
     "rules": [
@@ -32,7 +33,7 @@
       { "protocol": "dns", "action": "hijack-dns" },
       { "inbound": "tun-in", "outbound": "server-slave" }
     ],
-    "default_domain_resolver": "real-dns",
+    "default_domain_resolver": "local",
     "auto_detect_interface": true,
     "final": "direct"
   }
