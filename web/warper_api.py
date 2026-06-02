@@ -999,7 +999,7 @@ def get_auth_log(limit: int = 200, level_filter: str | None = None) -> dict[str,
 
         # Дата+время в начале
         m = re.match(
-            r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(.*)$",
+            r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.]\d+)?\s+(.*)$",
             line,
         )
         if not m:
