@@ -450,28 +450,27 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     echo -e "${CYAN}8. Получение Let's Encrypt сертификата для $DOMAIN...${NC}"
 
     CERT_OK="n"
+    STOP_OPENVPN_BACKUP="n"
+    _stopped_services=()
 
     # Проверяем что у сервера уже есть сертификат
-    if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+    if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && \
+       [ -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
         echo -e "${CYAN}Найден существующий сертификат для $DOMAIN — используем его${NC}"
         CERT_OK="y"
     else
         echo -e "${CYAN}Подготовка к получению Let's Encrypt сертификата...${NC}"
 
-        # Предварительная диагностика - проверяем что порт 80 доступен
+        # ===== Диагностика порта 80 =====
         echo -e "${CYAN}Проверка доступности порта 80...${NC}"
 
-        # Узнаём что слушает порт 80
-        local _port80_pid _port80_proc
+        _port80_pid=""
+        _port80_proc=""
         _port80_pid=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
-
-        # Флаг: нужно ли временно остановить OpenVPN backup для certbot
-        local STOP_OPENVPN_BACKUP="n"
 
         if [ -z "$_port80_pid" ]; then
             echo -e "${RED}⚠ Порт 80 никем не слушается${NC}"
             echo -e "${YELLOW}Сертификат не получится. Проверьте что nginx запущен.${NC}"
-            CERT_OK="n"
         else
             _port80_proc=$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "?")
 
@@ -509,10 +508,8 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
                     echo -e "3. Затем переустановите веб-панель — сертификат будет использован"
                     echo -e ""
                     echo -e "${YELLOW}Сейчас веб-панель будет настроена без HTTPS.${NC}"
-                    CERT_OK="n"
                 else
                     echo -e "${YELLOW}Пропускаем HTTPS, веб-панель будет работать по HTTP${NC}"
-                    CERT_OK="n"
                 fi
             else
                 echo -e "${YELLOW}⚠ Порт 80 слушает: $_port80_proc (PID $_port80_pid)${NC}"
@@ -521,15 +518,12 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             fi
         fi
 
-        # Если согласились - останавливаем OpenVPN backup
-        local _stopped_services=()
+        # ===== Если согласились - останавливаем OpenVPN backup =====
         if [ "$STOP_OPENVPN_BACKUP" = "y" ]; then
-            echo -e "${CYAN}Останавливаю OpenVPN backup на портах 80/443...${NC}"
+            echo -e "${CYAN}Останавливаю OpenVPN backup на порту 80...${NC}"
 
-            # Ищем OpenVPN-сервисы которые слушают 80 (antizapret-tcp / vpn-tcp)
             for _svc in antizapret-tcp vpn-tcp; do
                 if systemctl is-active --quiet "openvpn-server@${_svc}" 2>/dev/null; then
-                    # Проверяем что в его конфиге есть port 80
                     if grep -q "^port 80$" "/etc/openvpn/server/${_svc}.conf" 2>/dev/null; then
                         echo -e "  Останавливаю openvpn-server@${_svc}..."
                         systemctl stop "openvpn-server@${_svc}" 2>/dev/null
@@ -558,10 +552,12 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             fi
         fi
 
-        # Проверка что наш домен резолвится
-        if [ "$CERT_OK" != "n" ]; then
+        # ===== Если пользователь не отказался от HTTPS - пробуем получить =====
+        if [ "$_backup_choice" != "2" ] && [ "$_backup_choice" != "3" ]; then
+            # Проверка что наш домен резолвится
             echo -e "${CYAN}Проверка DNS: $DOMAIN...${NC}"
-            local _domain_ip _server_ip
+            _domain_ip=""
+            _server_ip=""
             _domain_ip=$(getent hosts "$DOMAIN" 2>/dev/null | head -1 | awk '{print $1}')
             _server_ip=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "")
 
@@ -576,15 +572,15 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
                 echo -e "${GREEN}✓ DNS корректно указывает на сервер ($_domain_ip)${NC}"
             fi
 
-            # Self-test HTTP
+            # Self-test HTTP с внешнего адреса
             echo -e "${CYAN}Self-test HTTP с внешнего адреса...${NC}"
             mkdir -p /var/www/html/.well-known/acme-challenge
-            local _test_token
+            _test_token=""
+            _self_test=""
             _test_token="warper-test-$(date +%s)"
             echo "$_test_token" > "/var/www/html/.well-known/acme-challenge/$_test_token"
             chmod 644 "/var/www/html/.well-known/acme-challenge/$_test_token"
 
-            local _self_test
             _self_test=$(curl -s --max-time 10 \
                 "http://$DOMAIN/.well-known/acme-challenge/$_test_token" 2>/dev/null || echo "")
             rm -f "/var/www/html/.well-known/acme-challenge/$_test_token"
@@ -616,7 +612,7 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             fi
         fi
 
-        # Возвращаем OpenVPN backup обратно
+        # ===== Возвращаем OpenVPN backup обратно =====
         if [ ${#_stopped_services[@]} -gt 0 ]; then
             echo -e "${CYAN}Запуск OpenVPN backup обратно...${NC}"
             for _svc in "${_stopped_services[@]}"; do
@@ -625,8 +621,8 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             done
             sleep 2
 
-            # nginx может конфликтовать с OpenVPN на 80 - проверим
-            local _port80_after _port80_after_proc
+            _port80_after=""
+            _port80_after_proc=""
             _port80_after=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
             if [ -n "$_port80_after" ]; then
                 _port80_after_proc=$(ps -p "$_port80_after" -o comm= 2>/dev/null || echo "?")
@@ -637,21 +633,10 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         fi
     fi
 
-    # Проверяем что сертификат реально создался (может уже был от прошлой установки)
-    sleep 2
-    if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && \
-       [ -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
-        CERT_OK="y"
-        echo -e "${GREEN}✓ Сертификат готов (получен или уже существовал)${NC}"
-    else
-        echo -e "${YELLOW}⚠ Сертификат не найден${NC}"
-    fi
-
-    # Если OpenVPN использует порт 80 - создаём hook'и для автопродления
+    # ===== Создание renewal hooks если нужно =====
     if [ "$CERT_OK" = "y" ] && [ "$STOP_OPENVPN_BACKUP" = "y" ]; then
         echo -e "${CYAN}Создаю hook'и для автопродления сертификата...${NC}"
 
-        # Pre-hook: остановить OpenVPN на 80
         mkdir -p /etc/letsencrypt/renewal-hooks/pre
         cat > "/etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh" <<'PREHOOK'
 #!/bin/bash
@@ -668,7 +653,6 @@ sleep 2
 PREHOOK
         chmod +x "/etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh"
 
-        # Post-hook: запустить OpenVPN обратно
         mkdir -p /etc/letsencrypt/renewal-hooks/post
         cat > "/etc/letsencrypt/renewal-hooks/post/warper-start-openvpn80.sh" <<'POSTHOOK'
 #!/bin/bash
@@ -686,14 +670,12 @@ POSTHOOK
         echo -e "${GREEN}✓ Hooks созданы — сертификат будет автоматически продлеваться${NC}"
     fi
 
-if [ "$CERT_OK" = "y" ]; then
-    # Переписываем конфиг — ТОЛЬКО на нашем порту, БЕЗ блока на порту 80
-    # (acme-challenge для продления сертификата работает через другие конфиги
-    # продление будет работать через --webroot certbot)
-    CERTBOT_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-    CERTBOT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+    # ===== Если сертификат получен - переписываем nginx-конфиг на HTTPS =====
+    if [ "$CERT_OK" = "y" ]; then
+        CERTBOT_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+        CERTBOT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
 
-    cat > "$NGINX_AVAIL" <<EOF
+        cat > "$NGINX_AVAIL" <<EOF
 # AZ-WARP Web Panel — HTTPS на порту $PORT, домен $DOMAIN
 server {
     listen $PORT ssl http2;
@@ -729,7 +711,7 @@ server {
     }
 }
 EOF
-    ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
+        ln -sf "$NGINX_AVAIL" "$NGINX_LINK"
 
         if nginx -t >/dev/null 2>&1; then
             systemctl reload nginx
