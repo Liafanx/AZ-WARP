@@ -253,26 +253,70 @@ update_warper() {
 
     systemctl enable warper-autopatch >/dev/null 2>&1 || true
 
-    # ===== Пересборка конфига sing-box =====
-    echo -e "${CYAN}Обновление конфигурации sing-box...${NC}"
-    if ! rebuild_config "$SINGBOX_TEMPLATE"; then
-        echo -e "${RED}Ошибка пересборки config.json, откат.${NC}"
-        rollback_warper_update "$backupdir"
-        if [ "$had_singbox" = true ]; then
-            systemctl restart sing-box >/dev/null 2>&1 || true
+    # ===== Умная пересборка конфига sing-box =====
+    # Проверяем, изменились ли шаблоны после обновления.
+    # Пересобираем config.json и перезапускаем sing-box ТОЛЬКО если шаблон
+    # активного режима реально изменился.
+
+    # Backup-копии шаблонов уже сохранены в $backupdir
+    # ($backupdir/config.json.template, ...config-slave-master..., ...config-wg...)
+
+    load_slave_config  # чтобы узнать CURRENT_OUTBOUND_MODE
+
+    local template_for_current_mode=""
+    local backup_for_current_mode=""
+
+    case "$CURRENT_OUTBOUND_MODE" in
+        warp)
+            template_for_current_mode="$SINGBOX_TEMPLATE"
+            backup_for_current_mode="$backupdir/config.json.template"
+            ;;
+        slave)
+            template_for_current_mode="$SLAVE_TEMPLATE"
+            backup_for_current_mode="$backupdir/config-slave-master.json.template"
+            ;;
+        wg)
+            template_for_current_mode="$WG_TEMPLATE"
+            backup_for_current_mode="$backupdir/config-wg.json.template"
+            ;;
+    esac
+
+    local template_changed="no"
+    if [ -n "$template_for_current_mode" ] && [ -f "$template_for_current_mode" ] && \
+       [ -f "$backup_for_current_mode" ]; then
+        local new_hash old_hash
+        new_hash=$(sha256sum "$template_for_current_mode" | awk '{print $1}')
+        old_hash=$(sha256sum "$backup_for_current_mode" | awk '{print $1}')
+        if [ "$new_hash" != "$old_hash" ]; then
+            template_changed="yes"
+            echo -e "${CYAN}Шаблон конфига sing-box ($CURRENT_OUTBOUND_MODE) изменился — будет пересборка.${NC}"
         fi
-        rm -rf "$tmpdir" "$backupdir"; return 1
     fi
 
-    if [ "$had_singbox" = true ]; then
-        systemctl restart sing-box
-        if ! ensure_singbox_running; then
-            echo -e "${RED}Новая версия sing-box не запустилась, откат.${NC}"
+    if [ "$template_changed" = "yes" ]; then
+        echo -e "${CYAN}Пересборка config.json для режима $CURRENT_OUTBOUND_MODE...${NC}"
+        if ! rebuild_config "$SINGBOX_TEMPLATE"; then
+            echo -e "${RED}Ошибка пересборки config.json, откат.${NC}"
             rollback_warper_update "$backupdir"
-            systemctl restart sing-box >/dev/null 2>&1 || true
+            if [ "$had_singbox" = true ]; then
+                systemctl restart sing-box >/dev/null 2>&1 || true
+            fi
             rm -rf "$tmpdir" "$backupdir"; return 1
         fi
-        echo -e "${GREEN}Служба sing-box перезапущена.${NC}"
+
+        if [ "$had_singbox" = true ]; then
+            echo -e "${CYAN}Перезапуск sing-box (применение нового конфига)...${NC}"
+            systemctl restart sing-box
+            if ! ensure_singbox_running; then
+                echo -e "${RED}Новая версия sing-box не запустилась, откат.${NC}"
+                rollback_warper_update "$backupdir"
+                systemctl restart sing-box >/dev/null 2>&1 || true
+                rm -rf "$tmpdir" "$backupdir"; return 1
+            fi
+            echo -e "${GREEN}✓ sing-box перезапущен с новым конфигом${NC}"
+        fi
+    else
+        echo -e "${GREEN}✓ Шаблоны конфига не изменились — пересборка не требуется${NC}"
     fi
 
     systemctl restart kresd@1 >/dev/null 2>&1 || true
