@@ -190,27 +190,48 @@ set_log_level() {
 
 # ===== MTU =====
 
-# Читает текущий MTU из config.json (из первого endpoint)
+# Читает текущий MTU.
+# Для WARP/WG режимов: MTU из endpoints[0].mtu
+# Для Slave режима: MTU из inbounds[?type=tun].mtu (применяется на TUN)
 get_mtu() {
     if [ -f "$SINGBOX_CONF" ] && command -v jq >/dev/null 2>&1; then
-        jq -r '.endpoints[0].mtu // 1420' "$SINGBOX_CONF" 2>/dev/null || echo "1420"
+        local mtu=""
+
+        # Сначала пробуем endpoints (WARP, WG)
+        mtu=$(jq -r '.endpoints[0].mtu // empty' "$SINGBOX_CONF" 2>/dev/null)
+
+        # Если нет endpoints - пробуем tun inbound (Slave)
+        if [ -z "$mtu" ] || [ "$mtu" = "null" ]; then
+            mtu=$(jq -r '.inbounds[] | select(.type=="tun") | .mtu // empty' "$SINGBOX_CONF" 2>/dev/null | head -1)
+        fi
+
+        # Дефолт
+        if [ -z "$mtu" ] || [ "$mtu" = "null" ]; then
+            echo "1420"
+        else
+            echo "$mtu"
+        fi
     else
         echo "1420"
     fi
 }
 
-# Устанавливает MTU в config.json с backup и откатом при ошибке.
-# Допустимые значения: 1280-1500
+# Устанавливает MTU.
+# Для WARP/WG: меняет endpoints[0].mtu
+# Для Slave: меняет mtu на tun-inbound (Shadowsocks не имеет MTU как туннеля)
 set_mtu() {
     local new_mtu="$1"
     if ! validate_mtu "$new_mtu"; then
-        echo -e "${RED}Некорректный MTU: $new_mtu (допустимо 1280-1500)${NC}"; return 1
+        echo -e "${RED}Некорректный MTU: $new_mtu (допустимо 1280-1500)${NC}"
+        return 1
     fi
     if ! command -v jq >/dev/null 2>&1; then
-        echo -e "${RED}jq не найден.${NC}"; return 1
+        echo -e "${RED}jq не найден.${NC}"
+        return 1
     fi
     if [ ! -f "$SINGBOX_CONF" ]; then
-        echo -e "${RED}Файл $SINGBOX_CONF не найден.${NC}"; return 1
+        echo -e "${RED}Файл $SINGBOX_CONF не найден.${NC}"
+        return 1
     fi
 
     local backup tmp old_mtu
@@ -225,22 +246,47 @@ set_mtu() {
         return 0
     fi
 
-    if ! jq --argjson mtu "$new_mtu" '.endpoints[0].mtu = $mtu' "$SINGBOX_CONF" > "$tmp"; then
-        rm -f "$backup" "$tmp"; return 1
+    # Определяем где менять MTU - в endpoints или в tun-inbound
+    local has_endpoints
+    has_endpoints=$(jq 'has("endpoints") and (.endpoints | length > 0)' "$SINGBOX_CONF" 2>/dev/null)
+
+    if [ "$has_endpoints" = "true" ]; then
+        # WARP / WG режим - меняем endpoints[0].mtu
+        if ! jq --argjson mtu "$new_mtu" '.endpoints[0].mtu = $mtu' "$SINGBOX_CONF" > "$tmp"; then
+            rm -f "$backup" "$tmp"
+            echo -e "${RED}Ошибка изменения MTU в endpoints${NC}"
+            return 1
+        fi
+    else
+        # Slave режим - меняем mtu на tun-inbound
+        if ! jq --argjson mtu "$new_mtu" \
+            '(.inbounds[] | select(.type=="tun") | .mtu) = $mtu' \
+            "$SINGBOX_CONF" > "$tmp"; then
+            rm -f "$backup" "$tmp"
+            echo -e "${RED}Ошибка изменения MTU в inbounds[tun]${NC}"
+            return 1
+        fi
     fi
+
     mv "$tmp" "$SINGBOX_CONF"
     chmod 600 "$SINGBOX_CONF"
 
     if ! validate_singbox_config; then
-        cp -a "$backup" "$SINGBOX_CONF"; chmod 600 "$SINGBOX_CONF"; rm -f "$backup"
-        echo -e "${RED}Откат выполнен.${NC}"; return 1
+        cp -a "$backup" "$SINGBOX_CONF"
+        chmod 600 "$SINGBOX_CONF"
+        rm -f "$backup"
+        echo -e "${RED}Конфиг невалиден после изменения MTU. Откат выполнен.${NC}"
+        return 1
     fi
 
     systemctl restart sing-box
     if ! ensure_singbox_running; then
-        cp -a "$backup" "$SINGBOX_CONF"; chmod 600 "$SINGBOX_CONF"
+        cp -a "$backup" "$SINGBOX_CONF"
+        chmod 600 "$SINGBOX_CONF"
         systemctl restart sing-box >/dev/null 2>&1 || true
-        rm -f "$backup"; return 1
+        rm -f "$backup"
+        echo -e "${RED}sing-box не запустился. Откат выполнен.${NC}"
+        return 1
     fi
 
     ensure_iptables_rule FORWARD -o singbox-tun
