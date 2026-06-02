@@ -188,8 +188,6 @@ done
 unset ADMIN_PASSWORD_CONFIRM
 
 # ===== HTTPS =====
-
-# ===== HTTPS =====
 ENABLE_HTTPS="n"
 DOMAIN=""
 
@@ -322,12 +320,26 @@ rm -f "$NGINX_LINK" /etc/nginx/sites-enabled/default
 
 if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     # ===== HTTPS с доменом (Let's Encrypt) =====
-    # Шаг 1: временный HTTP-конфиг на нашем порту до получения сертификата
+    # Временный конфиг: HTTP на нашем порту + acme-challenge на 80
     mkdir -p /var/www/html
 
     cat > "$NGINX_AVAIL" <<EOF
-# AZ-WARP Web Panel — временно HTTP до получения сертификата
-# (порт 80 НЕ трогаем чтобы не конфликтовать с другими сайтами)
+# AZ-WARP Web Panel - временно HTTP пока не получен Let's Encrypt сертификат
+# Минимальный server-блок на 80 - только для acme-challenge (не мешает другим сайтам)
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # Не перехватываем другие запросы на 80
+    location / {
+        return 404;
+    }
+}
+
 server {
     listen $PORT default_server;
     server_name _;
@@ -390,7 +402,7 @@ server {
         proxy_send_timeout 600s;
         proxy_buffering off;
         proxy_cache off;
-        chunked_transfer_encoding on;        
+        chunked_transfer_encoding on;
     }
 }
 EOF
@@ -421,7 +433,7 @@ server {
         proxy_send_timeout 600s;
         proxy_buffering off;
         proxy_cache off;
-        chunked_transfer_encoding on;        
+        chunked_transfer_encoding on;
     }
 }
 EOF
@@ -449,9 +461,19 @@ sleep 2
 if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     echo -e "${CYAN}8. Получение Let's Encrypt сертификата для $DOMAIN...${NC}"
 
+    # Все переменные инициализируем заранее чтобы set -u не падал
     CERT_OK="n"
     STOP_OPENVPN_BACKUP="n"
+    _backup_choice="1"          # значение по умолчанию = пробуем получить сертификат
     _stopped_services=()
+    _port80_pid=""
+    _port80_proc=""
+    _domain_ip=""
+    _server_ip=""
+    _test_token=""
+    _self_test=""
+    _port80_after=""
+    _port80_after_proc=""
 
     # Проверяем что у сервера уже есть сертификат
     if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && \
@@ -464,13 +486,11 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         # ===== Диагностика порта 80 =====
         echo -e "${CYAN}Проверка доступности порта 80...${NC}"
 
-        _port80_pid=""
-        _port80_proc=""
         _port80_pid=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
 
         if [ -z "$_port80_pid" ]; then
-            echo -e "${RED}⚠ Порт 80 никем не слушается${NC}"
-            echo -e "${YELLOW}Сертификат не получится. Проверьте что nginx запущен.${NC}"
+            echo -e "${YELLOW}⚠ Порт 80 никем не слушается${NC}"
+            echo -e "${YELLOW}Возможно nginx не смог занять порт 80. Проверяем дальше...${NC}"
         else
             _port80_proc=$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "?")
 
@@ -534,11 +554,9 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
 
             sleep 2
 
-            # nginx нужно reload чтобы он смог занять освобождённый порт
             systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null
             sleep 1
 
-            # Проверяем что теперь порт 80 у nginx
             _port80_pid=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
             if [ -n "$_port80_pid" ]; then
                 _port80_proc=$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "?")
@@ -552,12 +570,9 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             fi
         fi
 
-        # ===== Если пользователь не отказался от HTTPS - пробуем получить =====
+        # ===== Если пользователь не отказался (выбор 2 или 3) - пробуем получить =====
         if [ "$_backup_choice" != "2" ] && [ "$_backup_choice" != "3" ]; then
-            # Проверка что наш домен резолвится
             echo -e "${CYAN}Проверка DNS: $DOMAIN...${NC}"
-            _domain_ip=""
-            _server_ip=""
             _domain_ip=$(getent hosts "$DOMAIN" 2>/dev/null | head -1 | awk '{print $1}')
             _server_ip=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "")
 
@@ -575,8 +590,6 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             # Self-test HTTP с внешнего адреса
             echo -e "${CYAN}Self-test HTTP с внешнего адреса...${NC}"
             mkdir -p /var/www/html/.well-known/acme-challenge
-            _test_token=""
-            _self_test=""
             _test_token="warper-test-$(date +%s)"
             echo "$_test_token" > "/var/www/html/.well-known/acme-challenge/$_test_token"
             chmod 644 "/var/www/html/.well-known/acme-challenge/$_test_token"
@@ -621,8 +634,6 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             done
             sleep 2
 
-            _port80_after=""
-            _port80_after_proc=""
             _port80_after=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
             if [ -n "$_port80_after" ]; then
                 _port80_after_proc=$(ps -p "$_port80_after" -o comm= 2>/dev/null || echo "?")
@@ -677,6 +688,20 @@ POSTHOOK
 
         cat > "$NGINX_AVAIL" <<EOF
 # AZ-WARP Web Panel — HTTPS на порту $PORT, домен $DOMAIN
+# Минимальный server-блок на 80 для автопродления Let's Encrypt
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 404;
+    }
+}
+
 server {
     listen $PORT ssl http2;
     server_name $DOMAIN;
@@ -733,7 +758,7 @@ EOF
         echo -e "   ${CYAN}iptables -I INPUT -p tcp --dport 80 -j ACCEPT${NC}"
         echo -e "   ${CYAN}ufw allow 80${NC}  (если используете ufw)"
         echo -e "${CYAN}3.${NC} Если хостинг блокирует порт 80 на уровне сети — откройте его в панели хостинга"
-        echo -e "${CYAN}4.${NC} Если AntiZapret использует порт 80 для OpenVPN backup — отключите эту опцию"
+        echo -e "${CYAN}4.${NC} Если AntiZapret использует порт 80 для OpenVPN backup — выберите вариант 1 при установке"
         echo -e "${CYAN}5.${NC} После исправления получите сертификат:"
         echo -e "   ${CYAN}certbot certonly --webroot --webroot-path /var/www/html -d $DOMAIN${NC}"
         echo -e "${CYAN}6.${NC} Затем переустановите веб-панель чтобы применить HTTPS:"
@@ -743,7 +768,6 @@ EOF
         echo -e "${YELLOW}Или используйте самоподписанный сертификат — установите заново без ввода домена.${NC}"
     fi
 fi
-
 # ===== Установка пароля =====
 
 echo -e "${CYAN}9. Установка начального пароля...${NC}"
