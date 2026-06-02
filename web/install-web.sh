@@ -456,17 +456,184 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         echo -e "${CYAN}Найден существующий сертификат для $DOMAIN — используем его${NC}"
         CERT_OK="y"
     else
-        # Получаем сертификат через --webroot (не модифицирует nginx-конфиги)
-        # Это безопасно для серверов где уже есть другие nginx-сайты
-        mkdir -p /var/www/html
-        if certbot certonly --webroot --webroot-path /var/www/html \
-            -d "$DOMAIN" --non-interactive --agree-tos \
-            --register-unsafely-without-email 2>&1 | tail -10; then
-            sleep 2
-            if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-                CERT_OK="y"
-                echo -e "${GREEN}✓ Сертификат получен${NC}"
+        echo -e "${CYAN}Подготовка к получению Let's Encrypt сертификата...${NC}"
+
+        # Предварительная диагностика - проверяем что порт 80 доступен
+        echo -e "${CYAN}Проверка доступности порта 80...${NC}"
+
+        # Узнаём что слушает порт 80
+        local _port80_pid _port80_proc
+        _port80_pid=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
+
+        # Флаг: нужно ли временно остановить OpenVPN backup для certbot
+        local STOP_OPENVPN_BACKUP="n"
+
+        if [ -z "$_port80_pid" ]; then
+            echo -e "${RED}⚠ Порт 80 никем не слушается${NC}"
+            echo -e "${YELLOW}Сертификат не получится. Проверьте что nginx запущен.${NC}"
+            CERT_OK="n"
+        else
+            _port80_proc=$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "?")
+
+            if [ "$_port80_proc" = "nginx" ]; then
+                echo -e "${GREEN}✓ Порт 80 слушает nginx — отлично${NC}"
+            elif [ "$_port80_proc" = "openvpn" ] || [ "$_port80_proc" = "openvpn-server" ]; then
+                echo -e "${YELLOW}⚠ Порт 80 занят OpenVPN (backup-подключения AntiZapret)${NC}"
+                echo -e ""
+                echo -e "${YELLOW}OpenVPN использует порт 80 для backup-подключений (OPENVPN_BACKUP_TCP=y${NC}"
+                echo -e "${YELLOW}в /root/antizapret/setup). Let's Encrypt не сможет получить сертификат${NC}"
+                echo -e "${YELLOW}пока порт 80 занят OpenVPN.${NC}"
+                echo -e ""
+                echo -e "${CYAN}Варианты:${NC}"
+                echo -e "  ${GREEN}1.${NC} Временно остановить OpenVPN на 80 порту (~1 минута)"
+                echo -e "     получить сертификат и запустить OpenVPN обратно"
+                echo -e "     ${YELLOW}В это время клиенты не смогут подключаться через backup-порт 80${NC}"
+                echo -e "  ${CYAN}2.${NC} Пропустить HTTPS, использовать HTTP"
+                echo -e "  ${CYAN}3.${NC} Настроить DNS-01 challenge вручную (для опытных)"
+                echo -e ""
+                read -r -e -p "Выбор [1/2/3, по умолчанию 1]: " _backup_choice
+                _backup_choice="${_backup_choice:-1}"
+
+                if [ "$_backup_choice" = "1" ]; then
+                    STOP_OPENVPN_BACKUP="y"
+                    echo -e "${CYAN}OpenVPN backup на 80 будет временно остановлен${NC}"
+                elif [ "$_backup_choice" = "3" ]; then
+                    echo -e ""
+                    echo -e "${CYAN}Инструкция по DNS-01 challenge:${NC}"
+                    echo -e "1. Установите плагин для вашего DNS-провайдера, например:"
+                    echo -e "   ${CYAN}apt install -y python3-certbot-dns-cloudflare${NC}"
+                    echo -e "2. Получите сертификат через DNS:"
+                    echo -e "   ${CYAN}certbot certonly --dns-cloudflare \\${NC}"
+                    echo -e "   ${CYAN}  --dns-cloudflare-credentials /root/.cloudflare.ini \\${NC}"
+                    echo -e "   ${CYAN}  -d $DOMAIN${NC}"
+                    echo -e "3. Затем переустановите веб-панель — сертификат будет использован"
+                    echo -e ""
+                    echo -e "${YELLOW}Сейчас веб-панель будет настроена без HTTPS.${NC}"
+                    CERT_OK="n"
+                else
+                    echo -e "${YELLOW}Пропускаем HTTPS, веб-панель будет работать по HTTP${NC}"
+                    CERT_OK="n"
+                fi
+            else
+                echo -e "${YELLOW}⚠ Порт 80 слушает: $_port80_proc (PID $_port80_pid)${NC}"
+                echo -e "${YELLOW}Это не nginx и не OpenVPN — автоматически не разобраться.${NC}"
+                echo -e "${YELLOW}Сертификат может не получиться. Пробуем всё равно...${NC}"
             fi
+        fi
+
+        # Если согласились - останавливаем OpenVPN backup
+        local _stopped_services=()
+        if [ "$STOP_OPENVPN_BACKUP" = "y" ]; then
+            echo -e "${CYAN}Останавливаю OpenVPN backup на портах 80/443...${NC}"
+
+            # Ищем OpenVPN-сервисы которые слушают 80 (antizapret-tcp / vpn-tcp)
+            for _svc in antizapret-tcp vpn-tcp; do
+                if systemctl is-active --quiet "openvpn-server@${_svc}" 2>/dev/null; then
+                    # Проверяем что в его конфиге есть port 80
+                    if grep -q "^port 80$" "/etc/openvpn/server/${_svc}.conf" 2>/dev/null; then
+                        echo -e "  Останавливаю openvpn-server@${_svc}..."
+                        systemctl stop "openvpn-server@${_svc}" 2>/dev/null
+                        _stopped_services+=("openvpn-server@${_svc}")
+                    fi
+                fi
+            done
+
+            sleep 2
+
+            # nginx нужно reload чтобы он смог занять освобождённый порт
+            systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null
+            sleep 1
+
+            # Проверяем что теперь порт 80 у nginx
+            _port80_pid=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
+            if [ -n "$_port80_pid" ]; then
+                _port80_proc=$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "?")
+                if [ "$_port80_proc" = "nginx" ]; then
+                    echo -e "${GREEN}✓ Порт 80 теперь у nginx, готов получать сертификат${NC}"
+                else
+                    echo -e "${YELLOW}⚠ Порт 80 у $_port80_proc, не у nginx${NC}"
+                fi
+            else
+                echo -e "${YELLOW}⚠ Порт 80 свободен, но nginx его не занял${NC}"
+            fi
+        fi
+
+        # Проверка что наш домен резолвится
+        if [ "$CERT_OK" != "n" ]; then
+            echo -e "${CYAN}Проверка DNS: $DOMAIN...${NC}"
+            local _domain_ip _server_ip
+            _domain_ip=$(getent hosts "$DOMAIN" 2>/dev/null | head -1 | awk '{print $1}')
+            _server_ip=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+
+            if [ -z "$_domain_ip" ]; then
+                echo -e "${RED}⚠ DNS-запись для $DOMAIN не найдена${NC}"
+                echo -e "${YELLOW}  Проверьте A-запись на DNS-провайдере${NC}"
+            elif [ -n "$_server_ip" ] && [ "$_domain_ip" != "$_server_ip" ]; then
+                echo -e "${RED}⚠ DNS-несовпадение!${NC}"
+                echo -e "  Домен указывает на: ${RED}$_domain_ip${NC}"
+                echo -e "  IP этого сервера:  ${GREEN}$_server_ip${NC}"
+            else
+                echo -e "${GREEN}✓ DNS корректно указывает на сервер ($_domain_ip)${NC}"
+            fi
+
+            # Self-test HTTP
+            echo -e "${CYAN}Self-test HTTP с внешнего адреса...${NC}"
+            mkdir -p /var/www/html/.well-known/acme-challenge
+            local _test_token
+            _test_token="warper-test-$(date +%s)"
+            echo "$_test_token" > "/var/www/html/.well-known/acme-challenge/$_test_token"
+            chmod 644 "/var/www/html/.well-known/acme-challenge/$_test_token"
+
+            local _self_test
+            _self_test=$(curl -s --max-time 10 \
+                "http://$DOMAIN/.well-known/acme-challenge/$_test_token" 2>/dev/null || echo "")
+            rm -f "/var/www/html/.well-known/acme-challenge/$_test_token"
+
+            if [ "$_self_test" = "$_test_token" ]; then
+                echo -e "${GREEN}✓ Сервер доступен извне, можно запрашивать сертификат${NC}"
+            else
+                echo -e "${YELLOW}⚠ Self-test провалился (получено: '${_self_test:-пусто}')${NC}"
+                echo -e "${YELLOW}  Возможно firewall блокирует входящий порт 80${NC}"
+                echo -e "${YELLOW}  Пробуем certbot всё равно...${NC}"
+            fi
+
+            # Запускаем certbot
+            echo -e "${CYAN}Запуск certbot...${NC}"
+            mkdir -p /var/www/html
+
+            if certbot certonly --webroot --webroot-path /var/www/html \
+                -d "$DOMAIN" --non-interactive --agree-tos \
+                --register-unsafely-without-email 2>&1 | tail -15; then
+                sleep 2
+                if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+                    CERT_OK="y"
+                    echo -e "${GREEN}✓ Сертификат получен!${NC}"
+                fi
+            fi
+
+            if [ "$CERT_OK" != "y" ]; then
+                echo -e "${RED}⚠ Сертификат получить не удалось${NC}"
+            fi
+        fi
+
+        # Возвращаем OpenVPN backup обратно
+        if [ ${#_stopped_services[@]} -gt 0 ]; then
+            echo -e "${CYAN}Запуск OpenVPN backup обратно...${NC}"
+            for _svc in "${_stopped_services[@]}"; do
+                echo -e "  Запуск $_svc..."
+                systemctl start "$_svc" 2>/dev/null
+            done
+            sleep 2
+
+            # nginx может конфликтовать с OpenVPN на 80 - проверим
+            local _port80_after _port80_after_proc
+            _port80_after=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
+            if [ -n "$_port80_after" ]; then
+                _port80_after_proc=$(ps -p "$_port80_after" -o comm= 2>/dev/null || echo "?")
+                echo -e "  Порт 80 теперь у: $_port80_after_proc"
+            fi
+
+            echo -e "${GREEN}✓ OpenVPN восстановлен${NC}"
         fi
     fi
 
@@ -533,13 +700,26 @@ EOF
             nginx -t
         fi
     else
-        echo -e "${YELLOW}⚠ Сертификат не получен — продолжаем с HTTP${NC}"
-        echo -e "${YELLOW}Возможные причины:${NC}"
-        echo -e "  - Домен $DOMAIN не указывает на этот сервер"
-        echo -e "  - Порт 80 заблокирован (firewall/провайдер)"
-        echo -e "  - Лимит Let's Encrypt"
-        echo -e "${CYAN}Веб-панель работает по HTTP. Попробовать получить сертификат позже:${NC}"
-        echo -e "  ${CYAN}certbot --nginx -d $DOMAIN${NC}"
+        echo -e ""
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}⚠ HTTPS не настроен — веб-панель работает по HTTP${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e ""
+        echo -e "${YELLOW}Чтобы исправить:${NC}"
+        echo -e ""
+        echo -e "${CYAN}1.${NC} Проверьте что DNS-запись A для ${CYAN}$DOMAIN${NC} указывает на IP этого сервера"
+        echo -e "${CYAN}2.${NC} Откройте порт 80 в firewall:"
+        echo -e "   ${CYAN}iptables -I INPUT -p tcp --dport 80 -j ACCEPT${NC}"
+        echo -e "   ${CYAN}ufw allow 80${NC}  (если используете ufw)"
+        echo -e "${CYAN}3.${NC} Если хостинг блокирует порт 80 на уровне сети — откройте его в панели хостинга"
+        echo -e "${CYAN}4.${NC} Если AntiZapret использует порт 80 для OpenVPN backup — отключите эту опцию"
+        echo -e "${CYAN}5.${NC} После исправления получите сертификат:"
+        echo -e "   ${CYAN}certbot certonly --webroot --webroot-path /var/www/html -d $DOMAIN${NC}"
+        echo -e "${CYAN}6.${NC} Затем переустановите веб-панель чтобы применить HTTPS:"
+        echo -e "   ${CYAN}bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/web/uninstall-web.sh)${NC}"
+        echo -e "   ${CYAN}bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/web/install-web.sh)${NC}"
+        echo -e ""
+        echo -e "${YELLOW}Или используйте самоподписанный сертификат — установите заново без ввода домена.${NC}"
     fi
 fi
 
