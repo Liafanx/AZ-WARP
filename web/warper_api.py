@@ -944,3 +944,410 @@ def invalidate_version_cache():
     """Сбросить кэш проверки версии (вызывать после обновления)."""
     global _version_cache
     _version_cache = {"checked_at": 0, "data": None}
+
+# =============================================================================
+# Веб-панель: настройки и управление
+# =============================================================================
+
+import time as _time
+
+
+def get_auth_log(limit: int = 200, level_filter: str | None = None) -> dict[str, Any]:
+    """
+    Парсит web/data/auth.log и возвращает список событий + статистику.
+    level_filter: None | 'success' | 'failed' | 'blocked'
+    """
+    log_file = "/root/warper/web/data/auth.log"
+    events: list[dict[str, Any]] = []
+    stats = {
+        "total": 0,
+        "success": 0,
+        "failed": 0,
+        "blocked_attempts": 0,
+        "blocks_set": 0,
+        "last_24h_success": 0,
+        "last_24h_failed": 0,
+    }
+
+    if not os.path.exists(log_file):
+        return {"events": events, "stats": stats}
+
+    # Также читаем ротированные файлы auth.log.1, auth.log.2 ...
+    all_files = [log_file]
+    for i in range(1, 4):
+        rotated = f"{log_file}.{i}"
+        if os.path.exists(rotated):
+            all_files.append(rotated)
+
+    now = _time.time()
+    cutoff_24h = now - 24 * 3600
+
+    all_lines: list[str] = []
+    for f_path in all_files:
+        try:
+            with open(f_path, "r", encoding="utf-8") as f:
+                all_lines.extend(f.readlines())
+        except OSError:
+            continue
+
+    # Парсим формат:
+    # 2026-06-01 16:34:24 ip=193.32.191.66 event=login_failed user=admin attempt=3/10
+    for line in all_lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Дата+время в начале
+        m = re.match(
+            r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(.*)$",
+            line,
+        )
+        if not m:
+            continue
+
+        timestamp_str = m.group(1)
+        rest = m.group(2)
+
+        # Парсим key=value пары
+        fields: dict[str, str] = {}
+        for kv_match in re.finditer(r"(\w+)=(\S+)", rest):
+            fields[kv_match.group(1)] = kv_match.group(2)
+
+        event = fields.get("event", "")
+        if not event:
+            continue
+
+        # Подсчёт статистики
+        stats["total"] += 1
+        is_success = event == "login_success"
+        is_blocked_attempt = event in ("blocked_attempt", "blocked_now")
+        is_failed = event in (
+            "login_failed", "empty_credentials",
+            "invalid_login_format", "invalid_password_length",
+        )
+
+        if is_success:
+            stats["success"] += 1
+        if is_blocked_attempt:
+            stats["blocked_attempts"] += 1
+            if event == "blocked_now":
+                stats["blocks_set"] += 1
+        if is_failed:
+            stats["failed"] += 1
+
+        # За последние 24 часа
+        try:
+            from datetime import datetime as _dt
+            ts = _dt.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").timestamp()
+            if ts >= cutoff_24h:
+                if is_success:
+                    stats["last_24h_success"] += 1
+                if is_failed or is_blocked_attempt:
+                    stats["last_24h_failed"] += 1
+        except (ValueError, OSError):
+            pass
+
+        # Фильтр по типу
+        if level_filter == "success" and not is_success:
+            continue
+        if level_filter == "failed" and not (is_failed or is_blocked_attempt):
+            continue
+        if level_filter == "blocked" and not is_blocked_attempt:
+            continue
+
+        events.append({
+            "timestamp": timestamp_str,
+            "ip": fields.get("ip", "?"),
+            "event": event,
+            "user": fields.get("user", ""),
+            "extra": " ".join(
+                f"{k}={v}" for k, v in fields.items()
+                if k not in ("ip", "event", "user")
+            ),
+        })
+
+    # Сортировка - новые сверху
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    events = events[:limit]
+
+    return {"events": events, "stats": stats}
+
+
+def get_active_blocks() -> list[dict[str, Any]]:
+    """Возвращает список активных блокировок IP с временем разблокировки."""
+    blocks_file = "/root/warper/web/data/blocks.json"
+    if not os.path.exists(blocks_file):
+        return []
+
+    try:
+        import json
+        with open(blocks_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    now = _time.time()
+    result = []
+    for ip, until_ts in data.get("blocks", {}).items():
+        if until_ts <= now:
+            continue
+        seconds_left = int(until_ts - now)
+        result.append({
+            "ip": ip,
+            "until": until_ts,
+            "seconds_left": seconds_left,
+            "minutes_left": (seconds_left + 59) // 60,
+        })
+
+    result.sort(key=lambda x: x["until"])
+    return result
+
+
+def unblock_ip(ip: str) -> tuple[bool, str]:
+    """Удаляет конкретный IP из списка блокировок."""
+    blocks_file = "/root/warper/web/data/blocks.json"
+    if not os.path.exists(blocks_file):
+        return True, "Нет активных блокировок"
+
+    try:
+        import json
+        with open(blocks_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False, "Не удалось прочитать blocks.json"
+
+    if ip not in data.get("blocks", {}) and ip not in data.get("attempts", {}):
+        return True, f"IP {ip} не заблокирован"
+
+    data.get("blocks", {}).pop(ip, None)
+    data.get("attempts", {}).pop(ip, None)
+
+    try:
+        tmp = blocks_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, blocks_file)
+        return True, f"IP {ip} разблокирован"
+    except OSError as e:
+        return False, f"Ошибка записи: {e}"
+
+
+def unblock_all_ips() -> tuple[bool, str]:
+    """Снимает все блокировки IP."""
+    blocks_file = "/root/warper/web/data/blocks.json"
+    try:
+        if os.path.exists(blocks_file):
+            os.unlink(blocks_file)
+        return True, "Все блокировки сняты"
+    except OSError as e:
+        return False, f"Ошибка: {e}"
+
+
+def get_nginx_external_port() -> int | None:
+    """Извлекает внешний порт из nginx-конфига warper-web."""
+    nginx_conf = "/etc/nginx/sites-available/warper-web"
+    if not os.path.exists(nginx_conf):
+        return None
+    try:
+        with open(nginx_conf, "r", encoding="utf-8") as f:
+            for line in f:
+                # listen 6060;  или  listen 6060 ssl http2;
+                m = re.match(r"^\s*listen\s+(\d+)", line)
+                if m:
+                    return int(m.group(1))
+    except OSError:
+        pass
+    return None
+
+
+def change_external_port(new_port: int) -> tuple[bool, str]:
+    """
+    Меняет внешний порт в nginx-конфиге, делает reload.
+    Не требует перезапуска warper-web.
+    """
+    if not (1 <= new_port <= 65535):
+        return False, "Порт должен быть 1-65535"
+
+    nginx_conf = "/etc/nginx/sites-available/warper-web"
+    if not os.path.exists(nginx_conf):
+        return False, "Конфиг nginx не найден"
+
+    current_port = get_nginx_external_port()
+    if current_port is None:
+        return False, "Не удалось определить текущий порт"
+
+    if current_port == new_port:
+        return False, f"Порт не изменился (текущий: {current_port})"
+
+    # Проверка занятости
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(("127.0.0.1", new_port))
+        sock.close()
+        if result == 0:
+            return False, f"Порт {new_port} уже занят другим процессом"
+    except OSError:
+        pass
+
+    # Бэкап конфига
+    backup = nginx_conf + ".bak"
+    try:
+        import shutil
+        shutil.copy2(nginx_conf, backup)
+    except OSError as e:
+        return False, f"Не удалось создать бэкап: {e}"
+
+    # Замена всех вхождений "listen OLD_PORT" на "listen NEW_PORT"
+    try:
+        with open(nginx_conf, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Используем регекс чтобы не задеть proxy_pass и другие места
+        new_content = re.sub(
+            rf"^(\s*listen\s+){current_port}(\b)",
+            rf"\g<1>{new_port}\g<2>",
+            content,
+            flags=re.MULTILINE,
+        )
+
+        if new_content == content:
+            os.remove(backup)
+            return False, "Не найдены строки listen для замены"
+
+        with open(nginx_conf, "w", encoding="utf-8") as f:
+            f.write(new_content)
+    except OSError as e:
+        return False, f"Ошибка записи: {e}"
+
+    # Тест и reload nginx
+    rc, out, err = _run(["nginx", "-t"], timeout=10)
+    if rc != 0:
+        # Откат
+        try:
+            shutil.copy2(backup, nginx_conf)
+            os.remove(backup)
+        except OSError:
+            pass
+        return False, f"nginx -t упал: {(err or out).strip()[:300]}"
+
+    rc, out, err = _run(["systemctl", "reload", "nginx"], timeout=15)
+    if rc != 0:
+        return False, f"reload nginx упал: {(err or out).strip()}"
+
+    try:
+        os.remove(backup)
+    except OSError:
+        pass
+
+    return True, f"Порт изменён: {current_port} → {new_port}. Откройте сайт на новом порту."
+
+
+def restart_web_service() -> tuple[bool, str]:
+    """Перезапускает warper-web. После перезапуска текущая сессия может потеряться (но не должна — secret.key не меняем)."""
+    # Запускаем restart в фоне через nohup чтобы текущий HTTP-ответ успел уйти
+    try:
+        import subprocess
+        subprocess.Popen(
+            ["nohup", "bash", "-c", "sleep 1 && systemctl restart warper-web"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True, "Перезапуск запланирован через 1 сек. Страница автоматически обновится."
+    except Exception as e:
+        return False, f"Ошибка: {e}"
+
+
+def get_service_info() -> dict[str, Any]:
+    """Информация о сервисе warper-web: версии, статус, аптайм, память."""
+    import sys
+    info: dict[str, Any] = {
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "flask_version": "?",
+        "gunicorn_version": "?",
+        "service_active": False,
+        "uptime": "?",
+        "memory_mb": 0,
+        "main_pid": None,
+        "external_port": get_nginx_external_port(),
+        "internal_port": int(os.environ.get("PORT", 16060)),
+    }
+
+    # Flask version
+    try:
+        import flask
+        info["flask_version"] = flask.__version__
+    except Exception:
+        pass
+
+    # Gunicorn version
+    try:
+        import gunicorn
+        info["gunicorn_version"] = gunicorn.__version__
+    except Exception:
+        pass
+
+    # Status и main PID
+    rc, out, err = _run(
+        ["systemctl", "show", "warper-web",
+         "--property=ActiveState,MainPID,ActiveEnterTimestamp"],
+        timeout=5,
+    )
+    if rc == 0:
+        for line in out.splitlines():
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k == "ActiveState":
+                info["service_active"] = (v == "active")
+            elif k == "MainPID":
+                try:
+                    info["main_pid"] = int(v) if v != "0" else None
+                except ValueError:
+                    pass
+            elif k == "ActiveEnterTimestamp" and v:
+                # Считаем аптайм
+                try:
+                    from datetime import datetime as _dt
+                    started = _dt.strptime(v, "%a %Y-%m-%d %H:%M:%S %Z")
+                    delta = _dt.now() - started.replace(tzinfo=None)
+                    secs = int(delta.total_seconds())
+                    if secs < 0:
+                        secs = 0
+                    days = secs // 86400
+                    hours = (secs % 86400) // 3600
+                    minutes = (secs % 3600) // 60
+                    parts = []
+                    if days > 0:
+                        parts.append(f"{days}д")
+                    if hours > 0 or days > 0:
+                        parts.append(f"{hours}ч")
+                    parts.append(f"{minutes}м")
+                    info["uptime"] = " ".join(parts)
+                except (ValueError, AttributeError):
+                    pass
+
+    # Память (сумма по всем gunicorn-процессам)
+    if info["main_pid"]:
+        try:
+            total_kb = 0
+            # Главный процесс + дочерние
+            rc, out, _ = _run(
+                ["ps", "-o", "rss=", "--pid", str(info["main_pid"]),
+                 "--ppid", str(info["main_pid"])],
+                timeout=3,
+            )
+            if rc == 0:
+                for line in out.splitlines():
+                    line = line.strip()
+                    if line.isdigit():
+                        total_kb += int(line)
+            info["memory_mb"] = round(total_kb / 1024, 1)
+        except Exception:
+            pass
+
+    return info
