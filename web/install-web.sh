@@ -464,10 +464,14 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     # Все переменные инициализируем заранее чтобы set -u не падал
     CERT_OK="n"
     STOP_OPENVPN_BACKUP="n"
-    _backup_choice="1"          # значение по умолчанию = пробуем получить сертификат
+    _backup_choice="1"
     _stopped_services=()
     _port80_pid=""
+    _port80_pids=""
     _port80_proc=""
+    _az_openvpn_backup=""
+    _pid=""
+    _name="" 
     _domain_ip=""
     _server_ip=""
     _test_token=""
@@ -486,56 +490,81 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         # ===== Диагностика порта 80 =====
         echo -e "${CYAN}Проверка доступности порта 80...${NC}"
 
-        _port80_pid=$(ss -tlnpH "sport = :80" 2>/dev/null | head -1 | grep -oP 'pid=\K\d+' || echo "")
+        # Собираем ВСЕ pid'ы которые слушают порт 80 (могут быть несколько процессов/воркеров)
+        _port80_pids=$(ss -tlnpH "sport = :80" 2>/dev/null | grep -oP 'pid=\K\d+' | sort -u | tr '\n' ' ')
 
-        if [ -z "$_port80_pid" ]; then
+        # Собираем имена процессов в одну строку
+        _port80_proc=""
+        if [ -n "$_port80_pids" ]; then
+            for _pid in $_port80_pids; do
+                _name=$(ps -p "$_pid" -o comm= 2>/dev/null | tr -d ' ')
+                if [ -n "$_name" ]; then
+                    _port80_proc="${_port80_proc} ${_name}"
+                fi
+            done
+            _port80_proc=$(echo "$_port80_proc" | xargs)
+        fi
+
+        # Дополнительная проверка: используется ли OpenVPN backup в AntiZapret
+        _az_openvpn_backup="n"
+        if [ -f "/root/antizapret/setup" ] && \
+           grep -qE "^OPENVPN_BACKUP_(TCP|UDP)=y" /root/antizapret/setup 2>/dev/null; then
+            _az_openvpn_backup="y"
+        fi
+
+        if [ -z "$_port80_pids" ]; then
             echo -e "${YELLOW}⚠ Порт 80 никем не слушается${NC}"
             echo -e "${YELLOW}Возможно nginx не смог занять порт 80. Проверяем дальше...${NC}"
-        else
-            _port80_proc=$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "?")
-
-            if [ "$_port80_proc" = "nginx" ]; then
-                echo -e "${GREEN}✓ Порт 80 слушает nginx — отлично${NC}"
-            elif [ "$_port80_proc" = "openvpn" ] || [ "$_port80_proc" = "openvpn-server" ]; then
-                echo -e "${YELLOW}⚠ Порт 80 занят OpenVPN (backup-подключения AntiZapret)${NC}"
-                echo -e ""
-                echo -e "${YELLOW}OpenVPN использует порт 80 для backup-подключений (OPENVPN_BACKUP_TCP=y${NC}"
-                echo -e "${YELLOW}в /root/antizapret/setup). Let's Encrypt не сможет получить сертификат${NC}"
-                echo -e "${YELLOW}пока порт 80 занят OpenVPN.${NC}"
-                echo -e ""
-                echo -e "${CYAN}Варианты:${NC}"
-                echo -e "  ${GREEN}1.${NC} Временно остановить OpenVPN на 80 порту (~1 минута)"
-                echo -e "     получить сертификат и запустить OpenVPN обратно"
-                echo -e "     ${YELLOW}В это время клиенты не смогут подключаться через backup-порт 80${NC}"
-                echo -e "  ${CYAN}2.${NC} Пропустить HTTPS, использовать HTTP"
-                echo -e "  ${CYAN}3.${NC} Настроить DNS-01 challenge вручную (для опытных)"
-                echo -e ""
-                read -r -e -p "Выбор [1/2/3, по умолчанию 1]: " _backup_choice
-                _backup_choice="${_backup_choice:-1}"
-
-                if [ "$_backup_choice" = "1" ]; then
-                    STOP_OPENVPN_BACKUP="y"
-                    echo -e "${CYAN}OpenVPN backup на 80 будет временно остановлен${NC}"
-                elif [ "$_backup_choice" = "3" ]; then
-                    echo -e ""
-                    echo -e "${CYAN}Инструкция по DNS-01 challenge:${NC}"
-                    echo -e "1. Установите плагин для вашего DNS-провайдера, например:"
-                    echo -e "   ${CYAN}apt install -y python3-certbot-dns-cloudflare${NC}"
-                    echo -e "2. Получите сертификат через DNS:"
-                    echo -e "   ${CYAN}certbot certonly --dns-cloudflare \\${NC}"
-                    echo -e "   ${CYAN}  --dns-cloudflare-credentials /root/.cloudflare.ini \\${NC}"
-                    echo -e "   ${CYAN}  -d $DOMAIN${NC}"
-                    echo -e "3. Затем переустановите веб-панель — сертификат будет использован"
-                    echo -e ""
-                    echo -e "${YELLOW}Сейчас веб-панель будет настроена без HTTPS.${NC}"
-                else
-                    echo -e "${YELLOW}Пропускаем HTTPS, веб-панель будет работать по HTTP${NC}"
-                fi
-            else
-                echo -e "${YELLOW}⚠ Порт 80 слушает: $_port80_proc (PID $_port80_pid)${NC}"
-                echo -e "${YELLOW}Это не nginx и не OpenVPN — автоматически не разобраться.${NC}"
-                echo -e "${YELLOW}Сертификат может не получиться. Пробуем всё равно...${NC}"
+        elif echo "$_port80_proc" | grep -qi "nginx" && [ "$_az_openvpn_backup" != "y" ]; then
+            echo -e "${GREEN}✓ Порт 80 слушает nginx — отлично${NC}"
+        elif echo "$_port80_proc" | grep -qiE "openvpn" || [ "$_az_openvpn_backup" = "y" ]; then
+            echo -e "${YELLOW}⚠ Порт 80 связан с OpenVPN (backup-подключения AntiZapret)${NC}"
+            if [ "$_az_openvpn_backup" = "y" ]; then
+                echo -e "${YELLOW}  В /root/antizapret/setup: OPENVPN_BACKUP_TCP=y или OPENVPN_BACKUP_UDP=y${NC}"
             fi
+            if [ -n "$_port80_proc" ]; then
+                echo -e "${YELLOW}  Процессы на 80: ${_port80_proc}${NC}"
+            fi
+            echo -e ""
+            echo -e "${YELLOW}OpenVPN использует порт 80 для backup-подключений.${NC}"
+            echo -e "${YELLOW}Let's Encrypt может не получить сертификат пока правила iptables${NC}"
+            echo -e "${YELLOW}перенаправляют трафик с 80 на OpenVPN.${NC}"
+            echo -e ""
+            echo -e "${CYAN}Варианты:${NC}"
+            echo -e "  ${GREEN}1.${NC} Временно остановить OpenVPN на 80 порту (~1 минута)"
+            echo -e "     получить сертификат и запустить OpenVPN обратно"
+            echo -e "     ${YELLOW}В это время клиенты не смогут подключаться через backup-порт 80${NC}"
+            echo -e "  ${CYAN}2.${NC} Пропустить HTTPS, использовать HTTP"
+            echo -e "  ${CYAN}3.${NC} Настроить DNS-01 challenge вручную (для опытных)"
+            echo -e ""
+            echo -e "${YELLOW}Если у вас уже работает HTTP-сервер на 80 рядом с OpenVPN${NC}"
+            echo -e "${YELLOW}(такое бывает) — попробуйте вариант 1: certbot скорее всего получит сертификат${NC}"
+            echo -e "${YELLOW}даже без остановки OpenVPN. Можно сразу нажать Enter.${NC}"
+            echo -e ""
+            read -r -e -p "Выбор [1/2/3, по умолчанию 1]: " _backup_choice
+            _backup_choice="${_backup_choice:-1}"
+
+            if [ "$_backup_choice" = "1" ]; then
+                STOP_OPENVPN_BACKUP="y"
+                echo -e "${CYAN}OpenVPN backup на 80 будет временно остановлен${NC}"
+            elif [ "$_backup_choice" = "3" ]; then
+                echo -e ""
+                echo -e "${CYAN}Инструкция по DNS-01 challenge:${NC}"
+                echo -e "1. Установите плагин для вашего DNS-провайдера, например:"
+                echo -e "   ${CYAN}apt install -y python3-certbot-dns-cloudflare${NC}"
+                echo -e "2. Получите сертификат через DNS:"
+                echo -e "   ${CYAN}certbot certonly --dns-cloudflare \\${NC}"
+                echo -e "   ${CYAN}  --dns-cloudflare-credentials /root/.cloudflare.ini \\${NC}"
+                echo -e "   ${CYAN}  -d $DOMAIN${NC}"
+                echo -e "3. Затем переустановите веб-панель — сертификат будет использован"
+                echo -e ""
+                echo -e "${YELLOW}Сейчас веб-панель будет настроена без HTTPS.${NC}"
+            else
+                echo -e "${YELLOW}Пропускаем HTTPS, веб-панель будет работать по HTTP${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠ Порт 80 слушает: ${_port80_proc:-неизвестно} (PID $_port80_pids)${NC}"
+            echo -e "${YELLOW}Это не nginx и не OpenVPN — пробуем всё равно...${NC}"
         fi
 
         # ===== Если согласились - останавливаем OpenVPN backup =====
