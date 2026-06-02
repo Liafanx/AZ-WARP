@@ -23,10 +23,27 @@ web_get_port() {
 
 web_get_external_port() {
     # Внешний порт из nginx
+    # Игнорируем "listen 80" (acme-challenge блок) и берём наш реальный порт
     local nginx_conf="/etc/nginx/sites-available/warper-web"
     if [ -f "$nginx_conf" ]; then
-        grep -oE 'listen\s+[0-9]+' "$nginx_conf" 2>/dev/null \
-            | head -1 | awk '{print $2}'
+        # Сначала ищем "listen PORT ssl" (HTTPS-блок)
+        local _port
+        _port=$(grep -oE 'listen\s+[0-9]+\s+ssl' "$nginx_conf" 2>/dev/null \
+            | head -1 | awk '{print $2}')
+
+        # Если HTTPS не найден - берём первый "listen PORT" исключая 80 (acme)
+        if [ -z "$_port" ]; then
+            _port=$(grep -oE 'listen\s+[0-9]+' "$nginx_conf" 2>/dev/null \
+                | awk '{print $2}' | grep -v '^80$' | head -1)
+        fi
+
+        # Если ничего не нашлось - возможно реально на 80 (HTTP без HTTPS)
+        if [ -z "$_port" ]; then
+            _port=$(grep -oE 'listen\s+[0-9]+' "$nginx_conf" 2>/dev/null \
+                | head -1 | awk '{print $2}')
+        fi
+
+        echo "$_port"
     fi
 }
 
