@@ -505,10 +505,10 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
             _port80_proc=$(echo "$_port80_proc" | xargs)
         fi
 
-        # Дополнительная проверка: используется ли OpenVPN backup в AntiZapret
+        # Дополнительная проверка: используется ли OpenVPN backup TCP в AntiZapret
         _az_openvpn_backup="n"
         if [ -f "/root/antizapret/setup" ] && \
-           grep -qE "^OPENVPN_BACKUP_(TCP|UDP)=y" /root/antizapret/setup 2>/dev/null; then
+           grep -qE "^OPENVPN_BACKUP_TCP=y" /root/antizapret/setup 2>/dev/null; then
             _az_openvpn_backup="y"
         fi
 
@@ -520,7 +520,7 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
         elif echo "$_port80_proc" | grep -qiE "openvpn" || [ "$_az_openvpn_backup" = "y" ]; then
             echo -e "${YELLOW}⚠ Порт 80 связан с OpenVPN (backup-подключения AntiZapret)${NC}"
             if [ "$_az_openvpn_backup" = "y" ]; then
-                echo -e "${YELLOW}  В /root/antizapret/setup: OPENVPN_BACKUP_TCP=y или OPENVPN_BACKUP_UDP=y${NC}"
+                echo -e "${YELLOW}  В /root/antizapret/setup: OPENVPN_BACKUP_TCP=y${NC}"
             fi
             if [ -n "$_port80_proc" ]; then
                 echo -e "${YELLOW}  Процессы на 80: ${_port80_proc}${NC}"
