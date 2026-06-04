@@ -751,8 +751,8 @@ cli_status_json() {
                 synced: $ip_ranges_synced,
                 mode: $ip_route_mode,
                 export_to_antizapret: $ip_export_to_az
-            }
-            traffic_today: $traffic_today
+            },
+            "traffic_today": $traffic_today
         }'
 }
 
