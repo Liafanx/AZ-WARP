@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/1.3.7"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 SB_VERSION="1.13.11"
 
 RED='\033[0;31m'
