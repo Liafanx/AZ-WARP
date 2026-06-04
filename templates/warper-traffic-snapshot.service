@@ -1,0 +1,7 @@
+[Unit]
+Description=WARPER Traffic Snapshot
+After=sing-box.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/warper traffic snapshot
