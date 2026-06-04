@@ -41,9 +41,6 @@ BLOCKS_FILE = DATA_DIR / "blocks.json"
 AUTH_LOG = DATA_DIR / "auth.log"
 
 # ===== Brute-force защита =====
-MAX_ATTEMPTS = 10
-BLOCK_DURATION = 15 * 60        # 15 минут
-ATTEMPT_WINDOW = 10 * 60        # окно учёта попыток - 10 минут
 _blocks_lock = Lock()
 
 # ===== Валидация =====
@@ -62,6 +59,49 @@ _audit_logger = logging.getLogger("warper.audit")
 _audit_logger.setLevel(logging.INFO)
 _audit_logger.propagate = False
 
+# ===== Конфигурация безопасности =====
+SECURITY_FILE = DATA_DIR / "security.json"
+
+# Дефолтные значения (используются если файл security.json отсутствует)
+_DEFAULTS = {
+    "max_attempts": 10,
+    "block_duration_minutes": 15,
+    "attempt_window_minutes": 10,
+    "cookie_lifetime_days": 7,
+}
+
+
+def load_security_settings() -> dict:
+    """Загружает настройки безопасности из файла. Дефолты если файла нет."""
+    if not SECURITY_FILE.exists():
+        return dict(_DEFAULTS)
+    try:
+        with open(SECURITY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # Дополняем дефолтами на случай если файл устаревший
+            result = dict(_DEFAULTS)
+            for k in result:
+                if k in data and isinstance(data[k], (int, float)):
+                    result[k] = int(data[k])
+            return result
+    except (OSError, json.JSONDecodeError):
+        return dict(_DEFAULTS)
+
+
+def save_security_settings(settings: dict) -> tuple[bool, str]:
+    """Сохраняет настройки безопасности. Валидирует значения."""
+    # Валидация
+    cleaned = {}
+    try:
+        cleaned["max_attempts"] = max(3, min(100, int(settings.get("max_attempts", 10))))
+        cleaned["block_duration_minutes"] = max(1, min(1440, int(settings.get("block_duration_minutes", 15))))
+        cleaned["attempt_window_minutes"] = max(1, min(1440, int(settings.get("attempt_window_minutes", 10))))
+        cleaned["cookie_lifetime_days"] = max(0, min(365, int(settings.get("cookie_lifetime_days", 7))))
+    except (ValueError, TypeError):
+        return False, "Все значения должны быть числами"
+
+    return _atomic_write(SECURITY_FILE, json.dumps(cleaned, indent=2), 0o600), \
+           "Настройки сохранены" if _atomic_write else "Ошибка записи"
 
 def _setup_audit_log():
     """Настраивает RotatingFileHandler для auth.log (макс 1MB, 3 файла)."""
