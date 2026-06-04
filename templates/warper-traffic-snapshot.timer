@@ -1,5 +1,5 @@
 [Unit]
-Description=WARPER Traffic Snapshot Timer (every 5 min)
+Description=WARPER Traffic Snapshot Timer (every 10 min)
 
 [Timer]
 OnBootSec=2min
