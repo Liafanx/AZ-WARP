@@ -1467,19 +1467,35 @@ def healthcheck() -> dict:
     # 2. Gunicorn отвечает на HTTP
     try:
         import urllib.request
+        import urllib.error
+
         req = urllib.request.Request(
             f"http://127.0.0.1:{internal_port}/login",
             headers={"User-Agent": "warper-healthcheck"},
+            method="GET",
         )
+
+        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def http_error_302(self, req, fp, code, msg, headers):
+                return fp
+            http_error_301 = http_error_303 = http_error_307 = http_error_302
+
+        opener = urllib.request.build_opener(NoRedirectHandler())
+
         start = _time.time()
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            elapsed = (_time.time() - start) * 1000
-            if 200 <= resp.status < 400:
-                _add("Gunicorn отвечает на HTTP", "ok",
-                     f"HTTP {resp.status} за {elapsed:.0f}мс")
-            else:
-                _add("Gunicorn отвечает на HTTP", "warn",
-                     f"Странный код: HTTP {resp.status}")
+        try:
+            with opener.open(req, timeout=5) as resp:
+                code = resp.status
+        except urllib.error.HTTPError as he:
+            code = he.code
+        elapsed = (_time.time() - start) * 1000
+
+        if 200 <= code < 500:
+            _add("Gunicorn отвечает на HTTP", "ok",
+                 f"HTTP {code} за {elapsed:.0f}мс")
+        else:
+            _add("Gunicorn отвечает на HTTP", "warn",
+                 f"Странный код: HTTP {code}")
     except Exception as e:
         _add("Gunicorn отвечает на HTTP", "error", str(e)[:200])
 
@@ -1504,23 +1520,47 @@ def healthcheck() -> dict:
     if external_port:
         try:
             import urllib.request
+            import urllib.error
+
             req = urllib.request.Request(
                 f"http://127.0.0.1:{external_port}/login",
-                headers={"User-Agent": "warper-healthcheck"},
+                headers={
+                    "User-Agent": "warper-healthcheck",
+                    # Origin совпадающий с host - чтобы пройти CSRF (если запрос POST)
+                    "Host": f"127.0.0.1:{external_port}",
+                },
+                method="GET",  # GET точно не триггерит CSRF
             )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if 200 <= resp.status < 400:
-                    _add("nginx → gunicorn проксирование", "ok",
-                         f"HTTP {resp.status}")
-                else:
-                    _add("nginx → gunicorn проксирование", "warn",
-                         f"HTTP {resp.status}")
+
+            # Создаём opener БЕЗ автоматического следования за redirect
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def http_error_302(self, req, fp, code, msg, headers):
+                    return fp
+                http_error_301 = http_error_303 = http_error_307 = http_error_302
+
+            opener = urllib.request.build_opener(NoRedirect())
+
+            try:
+                with opener.open(req, timeout=5) as resp:
+                    code = resp.status
+            except urllib.error.HTTPError as he:
+                # 302/301 - редирект (нормально, /login делает redirect если уже залогинен)
+                code = he.code
+
+            if 200 <= code < 500:
+                # 200, 302, 401 - всё это значит nginx → gunicorn работает
+                _add("nginx → gunicorn проксирование", "ok",
+                     f"HTTP {code}")
+            else:
+                _add("nginx → gunicorn проксирование", "warn",
+                     f"Странный код: HTTP {code}")
         except Exception as e:
             err = str(e)[:200]
             # Если SSL ошибка - это нормально, не считаем за ошибку (HTTPS режим)
-            if "ssl" in err.lower() or "wrong version" in err.lower():
+            if "ssl" in err.lower() or "wrong version" in err.lower() \
+               or "tlsv1" in err.lower():
                 _add("nginx → gunicorn проксирование (HTTPS)", "ok",
-                     "SSL на порту, HTTP-тест неприменим")
+                     "SSL на порту, HTTP-тест неприменим (это нормально)")
             else:
                 _add("nginx → gunicorn проксирование", "error", err)
 
