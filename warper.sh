@@ -309,6 +309,11 @@ case "${1:-}" in
     webupdate)
         cli_web_update
         exit $?
+        ;;
+    webhttps)
+        shift
+        cli_web_https "$@"
+        exit $?
         ;;        
 esac
 
