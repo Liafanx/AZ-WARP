@@ -64,6 +64,7 @@ singbox_menu() {
                     if [ "$(count_ip_ranges)" -gt 0 ]; then
                         remove_all_ip_routes >/dev/null 2>&1 || true
                     fi
+                    traffic_finalize_session 2>/dev/null || true                    
                     systemctl stop sing-box
                     echo -e "${YELLOW}Служба остановлена.${NC}"
                     sleep 1
