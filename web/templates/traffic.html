@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Трафик{% endblock %}
+{% block heading %}Статистика трафика{% endblock %}
+
+{% block content %}
+
+<div id="traffic-content"
+     hx-get="{{ url_for('htmx_traffic') }}"
+     hx-trigger="load, every 30s"
+     hx-swap="innerHTML">
+    <div class="bg-surface-900/40 border border-emerald-900/30 rounded-xl p-12 text-center text-emerald-500/60">
+        Загрузка статистики...
+    </div>
+</div>
+
+{% endblock %}
