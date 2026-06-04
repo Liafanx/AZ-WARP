@@ -195,6 +195,8 @@ toggle_warper() {
     if [[ -z "$conf" || "$conf" == "Y" || "$conf" == "y" ]]; then
         if [ "$action" = "ВЫКЛЮЧИТЬ" ]; then
             echo -e "${YELLOW}Отключение WARPER...${NC}"
+              # Фиксируем трафик текущей сессии
+            traffic_finalize_session 2>/dev/null || true          
             systemctl stop sing-box
             systemctl disable sing-box 2>/dev/null
             systemctl disable warper-autopatch 2>/dev/null
