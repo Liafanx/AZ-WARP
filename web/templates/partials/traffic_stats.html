@@ -1,0 +1,82 @@
+{% set cur = data.get('current_session', {'rx': 0, 'tx': 0}) %}
+{% set uptime = data.get('uptime', 'не запущен') %}
+
+{% macro fmt(bytes) %}
+{%- if bytes >= 1073741824 -%}
+    {{ "%.1f GB"|format(bytes / 1073741824) }}
+{%- elif bytes >= 1048576 -%}
+    {{ "%.1f MB"|format(bytes / 1048576) }}
+{%- elif bytes >= 1024 -%}
+    {{ "%.1f KB"|format(bytes / 1024) }}
+{%- else -%}
+    {{ bytes }} B
+{%- endif -%}
+{% endmacro %}
+
+<!-- ===== Текущая сессия ===== -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-2">Аптайм sing-box</div>
+        <div class="text-2xl font-bold text-emerald-100 font-mono">{{ uptime }}</div>
+    </div>
+
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-2">↓ Получено (сессия)</div>
+        <div class="text-2xl font-bold text-brand-400 font-mono">{{ fmt(cur.rx) }}</div>
+    </div>
+
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="text-xs uppercase tracking-wider text-emerald-500/70 font-semibold mb-2">↑ Отправлено (сессия)</div>
+        <div class="text-2xl font-bold text-cyan-400 font-mono">{{ fmt(cur.tx) }}</div>
+    </div>
+
+</div>
+
+<!-- ===== Статистика по периодам ===== -->
+<div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
+
+    <div class="px-5 py-3 border-b border-emerald-900/40">
+        <h3 class="text-sm font-semibold text-emerald-200">Трафик через WARPER (singbox-tun)</h3>
+        <p class="text-xs text-emerald-500/60 mt-0.5">Агрегация по часам, данные обновляются автоматически</p>
+    </div>
+
+    <div class="divide-y divide-emerald-900/30">
+
+        {% for period_key, period_label in [('today', 'Сегодня'), ('week', 'За неделю'), ('month', 'За месяц'), ('all', 'За всё время')] %}
+        {% set p = data.get(period_key, {'rx': 0, 'tx': 0}) %}
+        {% set total = p.rx + p.tx %}
+        <div class="px-5 py-4 flex items-center justify-between hover:bg-emerald-900/10">
+            <div class="flex items-center gap-3 min-w-0">
+                <span class="text-lg">
+                    {% if period_key == 'today' %}📅
+                    {% elif period_key == 'week' %}📊
+                    {% elif period_key == 'month' %}📈
+                    {% else %}📦{% endif %}
+                </span>
+                <div>
+                    <div class="text-sm text-emerald-100 font-medium">{{ period_label }}</div>
+                    <div class="text-xs text-emerald-500/60">Суммарно: {{ fmt(total) }}</div>
+                </div>
+            </div>
+            <div class="flex gap-6 text-right">
+                <div>
+                    <div class="text-xs text-emerald-500/70 uppercase">↓ Получено</div>
+                    <div class="text-sm font-mono text-brand-400 font-medium">{{ fmt(p.rx) }}</div>
+                </div>
+                <div>
+                    <div class="text-xs text-emerald-500/70 uppercase">↑ Отправлено</div>
+                    <div class="text-sm font-mono text-cyan-400 font-medium">{{ fmt(p.tx) }}</div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+
+    </div>
+
+</div>
+
+<div class="mt-4 text-xs text-emerald-500/60 text-center">
+    Данные обновляются каждые 30 секунд. Счётчики текущей сессии сбрасываются при перезапуске sing-box.
+    <br>История хранится в <code class="text-emerald-400 font-mono">traffic.json</code> (максимум 31 день почасовой агрегации).
+</div>
