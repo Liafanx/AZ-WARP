@@ -186,6 +186,17 @@ def _result_partial(ok, message, refresh_target=None):
     resp.headers["HX-Trigger"] = header_value
     return resp
 
+def _absolute_web_settings_url(scheme: str, host: str | None = None) -> str:
+    status = api.get_https_status()
+    port = status.get("port")
+    if not port:
+        if ":" in request.host:
+            port = request.host.split(":", 1)[1]
+        else:
+            port = "6060"
+
+    host = host or request.host.split(":", 1)[0]
+    return f"{scheme}://{host}:{port}/web-settings"
 
 # ===== Страницы =====
 
@@ -918,9 +929,10 @@ def htmx_web_https_status():
 def htmx_web_https_selfsigned():
     ok, msg = api.set_https_selfsigned()
     if ok:
+        url = _absolute_web_settings_url("https")
         triggers = {
             "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": "/web-settings", "delay": 3000},
+            "redirectAfter": {"url": url, "delay": 3000},
         }
         resp = make_response("", 204)
         resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
@@ -936,9 +948,10 @@ def htmx_web_https_letsencrypt():
         return _result_partial(False, "Введите домен")
     ok, msg = api.set_https_letsencrypt(domain)
     if ok:
+        url = _absolute_web_settings_url("https", domain)
         triggers = {
             "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": "/web-settings", "delay": 3000},
+            "redirectAfter": {"url": url, "delay": 3000},
         }
         resp = make_response("", 204)
         resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
@@ -951,9 +964,10 @@ def htmx_web_https_letsencrypt():
 def htmx_web_https_disable():
     ok, msg = api.disable_https()
     if ok:
+        url = _absolute_web_settings_url("http")
         triggers = {
             "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": "/web-settings", "delay": 3000},
+            "redirectAfter": {"url": url, "delay": 3000},
         }
         resp = make_response("", 204)
         resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
