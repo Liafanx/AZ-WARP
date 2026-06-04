@@ -1608,3 +1608,45 @@ def healthcheck() -> dict:
         _add("SECRET_KEY", "error", "secret.key отсутствует")
 
     return result
+
+# ===== HTTPS управление =====
+
+def get_https_status() -> dict[str, Any]:
+    """Возвращает текущий режим HTTPS."""
+    ok, out, _ = _run_warper("webhttps", "status", timeout=10)
+    if not ok:
+        return {"mode": "unknown", "error": out}
+
+    result: dict[str, Any] = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            result[k.strip()] = v.strip()
+
+    return result
+
+
+def set_https_selfsigned() -> tuple[bool, str]:
+    """Включает HTTPS с самоподписанным сертификатом."""
+    ok, out, err = _run_warper("webhttps", "enable-selfsigned", timeout=30)
+    return ok, (out or err).strip()
+
+
+def set_https_letsencrypt(domain: str) -> tuple[bool, str]:
+    """Включает HTTPS с Let's Encrypt."""
+    if not domain or not re.match(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", domain):
+        return False, "Некорректный домен"
+    ok, out, err = _run_warper("webhttps", "enable-letsencrypt", domain, timeout=120)
+    return ok, (out or err).strip()
+
+
+def disable_https() -> tuple[bool, str]:
+    """Отключает HTTPS, переключает на HTTP."""
+    ok, out, err = _run_warper("webhttps", "disable", timeout=15)
+    return ok, (out or err).strip()
+
+
+def renew_certificate() -> tuple[bool, str]:
+    """Обновляет Let's Encrypt сертификат."""
+    ok, out, err = _run_warper("webhttps", "renew", timeout=120)
+    return ok, (out or err).strip()
