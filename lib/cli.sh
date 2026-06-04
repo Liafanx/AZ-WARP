@@ -29,6 +29,7 @@ cli_toggle_warper() {
     if systemctl is-active --quiet sing-box || \
        grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
         # Выключаем
+        traffic_finalize_session 2>/dev/null || true        
         systemctl stop sing-box
         systemctl disable sing-box 2>/dev/null
         systemctl disable warper-autopatch 2>/dev/null
