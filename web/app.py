@@ -901,6 +901,69 @@ def htmx_web_healthcheck():
     result = api.healthcheck()
     return render_template("partials/web_healthcheck.html", h=result)
 
+# ===== HTMX: HTTPS управление =====
+
+@app.route("/htmx/web/https-status")
+@login_required
+def htmx_web_https_status():
+    status = api.get_https_status()
+    return render_template("partials/web_https_status.html", s=status)
+
+
+@app.route("/htmx/web/https/selfsigned", methods=["POST"])
+@login_required
+def htmx_web_https_selfsigned():
+    ok, msg = api.set_https_selfsigned()
+    if ok:
+        triggers = {
+            "showToast": {"message": msg, "category": "success"},
+            "redirectAfter": {"url": "/web-settings", "delay": 3000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/https/letsencrypt", methods=["POST"])
+@login_required
+def htmx_web_https_letsencrypt():
+    domain = request.form.get("domain", "").strip()
+    if not domain:
+        return _result_partial(False, "Введите домен")
+    ok, msg = api.set_https_letsencrypt(domain)
+    if ok:
+        triggers = {
+            "showToast": {"message": msg, "category": "success"},
+            "redirectAfter": {"url": "/web-settings", "delay": 3000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/https/disable", methods=["POST"])
+@login_required
+def htmx_web_https_disable():
+    ok, msg = api.disable_https()
+    if ok:
+        triggers = {
+            "showToast": {"message": msg, "category": "success"},
+            "redirectAfter": {"url": "/web-settings", "delay": 3000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/https/renew", methods=["POST"])
+@login_required
+def htmx_web_https_renew():
+    ok, msg = api.renew_certificate()
+    return _result_partial(ok, msg)
+
 # ===== Контекст =====
 
 @app.context_processor
