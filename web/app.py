@@ -842,6 +842,53 @@ def htmx_web_restart():
         return resp
     return _result_partial(False, msg)
 
+@app.route("/htmx/web/security-settings")
+@login_required
+def htmx_web_security_settings():
+    settings = api.get_security_settings_api()
+    return render_template("partials/web_security_form.html", s=settings)
+
+
+@app.route("/htmx/web/security-settings/save", methods=["POST"])
+@login_required
+def htmx_web_security_save():
+    settings = {
+        "max_attempts": request.form.get("max_attempts", "10"),
+        "block_duration_minutes": request.form.get("block_duration_minutes", "15"),
+        "attempt_window_minutes": request.form.get("attempt_window_minutes", "10"),
+        "cookie_lifetime_days": request.form.get("cookie_lifetime_days", "7"),
+    }
+    ok, msg = api.save_security_settings_api(settings)
+    return _result_partial(ok, msg)
+
+
+@app.route("/htmx/web/sessions")
+@login_required
+def htmx_web_sessions():
+    sessions = api.get_recent_logins(limit=20)
+    return render_template("partials/web_sessions.html", sessions=sessions)
+
+
+@app.route("/htmx/web/sessions/revoke-all", methods=["POST"])
+@login_required
+def htmx_web_revoke_sessions():
+    ok, msg = api.rotate_session_secret()
+    if ok:
+        triggers = {
+            "showToast": {"message": msg, "category": "success"},
+            "redirectAfter": {"url": "/login", "delay": 2000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/healthcheck")
+@login_required
+def htmx_web_healthcheck():
+    result = api.healthcheck()
+    return render_template("partials/web_healthcheck.html", h=result)
 
 # ===== Контекст =====
 
