@@ -138,11 +138,14 @@ def _csrf_origin_check():
 
 # ===== Безопасные cookie при HTTPS =====
 @app.before_request
-def _force_secure_cookies_on_https():
-    """Если запрос пришёл по HTTPS — включаем Secure для cookie."""
-    if request.is_secure:
-        app.config["SESSION_COOKIE_SECURE"] = True
-        app.config["REMEMBER_COOKIE_SECURE"] = True
+def _set_cookie_security_flags():
+    """
+    На HTTPS cookie должны быть Secure, на HTTP — нет.
+    Иначе после перехода HTTPS -> HTTP будет цикл логина.
+    """
+    secure = bool(request.is_secure)
+    app.config["SESSION_COOKIE_SECURE"] = secure
+    app.config["REMEMBER_COOKIE_SECURE"] = secure
 
 logging.basicConfig(
     level=logging.INFO,
