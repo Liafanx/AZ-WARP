@@ -411,3 +411,70 @@ manage_warp_keys() {
     fi
     sleep 2
 }
+
+# Тихая автосинхронизация WARP-ключей при загрузке системы.
+# Если системный warp.conf существует и ключи отличаются —
+# молча пересобирает конфиг и перезапускает sing-box.
+# Не задаёт вопросов. Для интерактивного режима используйте check_and_sync_warp_keys.
+auto_sync_warp_keys_on_boot() {
+    load_slave_config
+
+    # Только для режима WARP
+    if [ "$CURRENT_OUTBOUND_MODE" != "warp" ]; then
+        return 0
+    fi
+
+    # Нет системного файла — нечего синхронизировать
+    if [ ! -f "$WARP_SYSTEM_CONF" ]; then
+        return 0
+    fi
+
+    # Проверяем что это именно Cloudflare WARP
+    if ! grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WARP_SYSTEM_CONF" 2>/dev/null; then
+        return 0
+    fi
+
+    local sys_key="" sys_addr="" current_key="" current_addr=""
+    sys_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+    sys_addr=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+
+    if [ -z "$sys_key" ] || [ -z "$sys_addr" ]; then
+        return 0
+    fi
+
+    [[ ! "$sys_addr" =~ / ]] && sys_addr="${sys_addr}/32"
+
+    if [ -f "$SINGBOX_CONF" ] && command -v jq >/dev/null 2>&1; then
+        current_key=$(jq -r '.endpoints[] | select(.tag=="warp") | .private_key // empty' \
+            "$SINGBOX_CONF" 2>/dev/null || true)
+        current_addr=$(jq -r '.endpoints[] | select(.tag=="warp") | .address[0] // empty' \
+            "$SINGBOX_CONF" 2>/dev/null || true)
+    fi
+
+    # Ключи совпадают — ничего не делаем
+    if [ "$sys_key" = "$current_key" ] && [ "$sys_addr" = "$current_addr" ]; then
+        return 0
+    fi
+
+    # Ключи разные — молча пересобираем
+    echo "WARP keys changed in $WARP_SYSTEM_CONF, auto-syncing..."
+
+    if [ -f "$SINGBOX_TEMPLATE" ]; then
+        CURRENT_OUTBOUND_MODE="warp"
+        if rebuild_config "$SINGBOX_TEMPLATE" >/dev/null 2>&1; then
+            if systemctl is-active --quiet sing-box; then
+                systemctl restart sing-box
+                sleep 2
+                ensure_iptables_rule FORWARD -o singbox-tun
+                ensure_iptables_rule FORWARD -i singbox-tun
+            fi
+            systemctl restart kresd@1 >/dev/null 2>&1 || true
+            echo "WARP keys synced successfully"
+        else
+            echo "ERROR: failed to rebuild config with new WARP keys" >&2
+            return 1
+        fi
+    fi
+
+    return 0
+}
