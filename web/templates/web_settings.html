@@ -187,6 +187,25 @@
             <div class="text-sm text-emerald-500/60">Загрузка...</div>
         </div>
     </section>
+
+    <!-- ============================================================ -->
+    <!-- HTTPS                                                         -->
+    <!-- ============================================================ -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h2 class="text-base font-semibold text-emerald-200 mb-1 flex items-center gap-2">
+            <span>🔒</span>
+            <span>HTTPS</span>
+        </h2>
+        <p class="text-xs text-emerald-500/60 mb-4">
+            Управление SSL/TLS для веб-панели
+        </p>
+
+        <div id="web-https-status"
+             hx-get="{{ url_for('htmx_web_https_status') }}"
+             hx-trigger="load">
+            <div class="text-sm text-emerald-500/60">Загрузка...</div>
+        </div>
+    </section>
     
     <!-- ============================================================ -->
     <!-- Активные блокировки IP                                        -->
