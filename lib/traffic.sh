@@ -1,7 +1,7 @@
 #!/bin/bash
 # warper lib: traffic.sh
 # Подсчёт трафика через singbox-tun:
-# чтение счётчиков ядра, хранение истории в traffic.json,
+# чтение счётчиков ядра, хранение истории в traffic.json (через jq),
 # почасовая агрегация, вывод статистики за период.
 # Подключается через source из warper.sh
 
@@ -11,8 +11,6 @@ TRAFFIC_MAX_HOURLY_HOURS=744  # 31 день
 
 # ===== Чтение счётчиков ядра =====
 
-# Читает текущие RX/TX байты с интерфейса singbox-tun.
-# Возвращает "rx tx" через stdout, или "" если интерфейс не существует.
 traffic_read_tun_counters() {
     local rx_file="/sys/class/net/singbox-tun/statistics/rx_bytes"
     local tx_file="/sys/class/net/singbox-tun/statistics/tx_bytes"
@@ -29,7 +27,7 @@ traffic_read_tun_counters() {
     return 0
 }
 
-# ===== Инициализация traffic.json =====
+# ===== Инициализация =====
 
 traffic_ensure_file() {
     if [ ! -f "$TRAFFIC_FILE" ]; then
@@ -38,10 +36,8 @@ traffic_ensure_file() {
     fi
 }
 
-# ===== Snapshot: снимок текущих счётчиков + агрегация =====
+# ===== Snapshot =====
 
-# Снимает текущие счётчики, обновляет hourly-агрегацию и last_snapshot.
-# Вызывается при каждом обращении к статистике.
 traffic_take_snapshot() {
     local counters
     counters=$(traffic_read_tun_counters) || return 1
@@ -57,73 +53,58 @@ traffic_take_snapshot() {
     now_iso=$(date -u +"%Y-%m-%dT%H:%M:%S")
     now_hour=$(date -u +"%Y-%m-%dT%H")
 
-    # Используем Python для атомарного обновления JSON
-    python3 - "$TRAFFIC_FILE" "$cur_rx" "$cur_tx" "$now_iso" "$now_hour" \
-        "$TRAFFIC_MAX_HOURLY_HOURS" <<'PYEOF'
-import json, sys, os
-from pathlib import Path
+    local prev_rx=0 prev_tx=0 delta_rx=0 delta_tx=0
+    local has_prev="false"
 
-traffic_file = sys.argv[1]
-cur_rx = int(sys.argv[2])
-cur_tx = int(sys.argv[3])
-now_iso = sys.argv[4]
-now_hour = sys.argv[5]
-max_hourly = int(sys.argv[6])
+    if jq -e '.last_snapshot != null' "$TRAFFIC_FILE" >/dev/null 2>&1; then
+        prev_rx=$(jq -r '.last_snapshot.rx // 0' "$TRAFFIC_FILE")
+        prev_tx=$(jq -r '.last_snapshot.tx // 0' "$TRAFFIC_FILE")
+        has_prev="true"
+    fi
 
-try:
-    with open(traffic_file, "r") as f:
-        data = json.load(f)
-except (OSError, json.JSONDecodeError):
-    data = {"sessions": [], "hourly": {}, "last_snapshot": None}
+    # Считаем дельту только если счётчики не сбросились (рестарт интерфейса)
+    if [ "$has_prev" = "true" ] && [ "$cur_rx" -ge "$prev_rx" ] && [ "$cur_tx" -ge "$prev_tx" ]; then
+        delta_rx=$((cur_rx - prev_rx))
+        delta_tx=$((cur_tx - prev_tx))
+    fi
 
-if "hourly" not in data or not isinstance(data["hourly"], dict):
-    data["hourly"] = {}
-if "sessions" not in data or not isinstance(data["sessions"], list):
-    data["sessions"] = []
+    # Атомарное обновление через jq
+    local tmp
+    tmp=$(mktemp)
 
-last = data.get("last_snapshot")
+    jq --arg hour "$now_hour" \
+       --argjson drx "$delta_rx" \
+       --argjson dtx "$delta_tx" \
+       --argjson crx "$cur_rx" \
+       --argjson ctx "$cur_tx" \
+       --arg ts "$now_iso" \
+       --argjson max_h "$TRAFFIC_MAX_HOURLY_HOURS" \
+       '
+       # Добавляем дельту в hourly
+       (if ($drx > 0 or $dtx > 0) then
+           .hourly[$hour].rx = ((.hourly[$hour].rx // 0) + $drx) |
+           .hourly[$hour].tx = ((.hourly[$hour].tx // 0) + $dtx)
+        else . end) |
 
-if last and isinstance(last, dict):
-    prev_rx = last.get("rx", 0)
-    prev_tx = last.get("tx", 0)
+       # Ротация hourly
+       (if (.hourly | length) > $max_h then
+           .hourly = (.hourly | to_entries | sort_by(.key) | .[-$max_h:] | from_entries)
+        else . end) |
 
-    # Если счётчики меньше предыдущих — интерфейс пересоздан (рестарт)
-    if cur_rx >= prev_rx and cur_tx >= prev_tx:
-        delta_rx = cur_rx - prev_rx
-        delta_tx = cur_tx - prev_tx
+       # Обновляем snapshot
+       .last_snapshot = {rx: $crx, tx: $ctx, ts: $ts}
+       ' "$TRAFFIC_FILE" > "$tmp" 2>/dev/null
 
-        if delta_rx > 0 or delta_tx > 0:
-            h = data["hourly"].get(now_hour, {"rx": 0, "tx": 0})
-            h["rx"] = h.get("rx", 0) + delta_rx
-            h["tx"] = h.get("tx", 0) + delta_tx
-            data["hourly"][now_hour] = h
-
-# Ротация hourly: оставляем только последние N часов
-if len(data["hourly"]) > max_hourly:
-    keys = sorted(data["hourly"].keys())
-    excess = len(keys) - max_hourly
-    for k in keys[:excess]:
-        del data["hourly"][k]
-
-# Обновляем snapshot
-data["last_snapshot"] = {
-    "rx": cur_rx,
-    "tx": cur_tx,
-    "ts": now_iso,
+    if [ -s "$tmp" ]; then
+        chmod 600 "$tmp"
+        mv "$tmp" "$TRAFFIC_FILE"
+    else
+        rm -f "$tmp"
+    fi
 }
 
-tmp = traffic_file + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(data, f, separators=(",", ":"))
-os.chmod(tmp, 0o600)
-os.replace(tmp, traffic_file)
-PYEOF
-}
+# ===== Фиксация сессии =====
 
-# ===== Фиксация сессии при остановке sing-box =====
-
-# Вызывается перед остановкой sing-box.
-# Записывает финальные счётчики текущей сессии.
 traffic_finalize_session() {
     local counters
     counters=$(traffic_read_tun_counters) || return 0
@@ -133,150 +114,118 @@ traffic_finalize_session() {
     cur_rx=$(echo "$counters" | awk '{print $1}')
     cur_tx=$(echo "$counters" | awk '{print $2}')
 
-    # Сначала делаем финальный snapshot (чтобы hourly был актуален)
+    # Финальный snapshot
     traffic_take_snapshot 2>/dev/null || true
 
     traffic_ensure_file
 
-    local now_iso
+    local now_iso started_iso
     now_iso=$(date -u +"%Y-%m-%dT%H:%M:%S")
 
-    # Определяем время старта sing-box
-    local started_iso=""
     started_iso=$(systemctl show sing-box --property=ActiveEnterTimestamp 2>/dev/null \
-        | sed 's/ActiveEnterTimestamp=//' | xargs -I{} date -u -d "{}" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || true)
+        | sed 's/ActiveEnterTimestamp=//' \
+        | xargs -I{} date -u -d "{}" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || true)
     [ -z "$started_iso" ] && started_iso="$now_iso"
 
-    python3 - "$TRAFFIC_FILE" "$cur_rx" "$cur_tx" "$started_iso" "$now_iso" \
-        "$TRAFFIC_MAX_SESSIONS" <<'PYEOF'
-import json, sys, os
+    # Не записываем пустые сессии
+    if [ "$cur_rx" -eq 0 ] && [ "$cur_tx" -eq 0 ]; then
+        return 0
+    fi
 
-traffic_file = sys.argv[1]
-rx = int(sys.argv[2])
-tx = int(sys.argv[3])
-started = sys.argv[4]
-stopped = sys.argv[5]
-max_sessions = int(sys.argv[6])
+    local tmp
+    tmp=$(mktemp)
 
-try:
-    with open(traffic_file, "r") as f:
-        data = json.load(f)
-except (OSError, json.JSONDecodeError):
-    data = {"sessions": [], "hourly": {}, "last_snapshot": None}
+    jq --arg started "$started_iso" \
+       --arg stopped "$now_iso" \
+       --argjson rx "$cur_rx" \
+       --argjson tx "$cur_tx" \
+       --argjson max_s "$TRAFFIC_MAX_SESSIONS" \
+       '
+       .sessions += [{started: $started, stopped: $stopped, rx: $rx, tx: $tx}] |
+       (if (.sessions | length) > $max_s then
+           .sessions = .sessions[-$max_s:]
+        else . end) |
+       .last_snapshot = null
+       ' "$TRAFFIC_FILE" > "$tmp" 2>/dev/null
 
-if not isinstance(data.get("sessions"), list):
-    data["sessions"] = []
-
-# Не записываем пустые сессии
-if rx > 0 or tx > 0:
-    data["sessions"].append({
-        "started": started,
-        "stopped": stopped,
-        "rx": rx,
-        "tx": tx,
-    })
-
-# Ротация сессий
-if len(data["sessions"]) > max_sessions:
-    data["sessions"] = data["sessions"][-max_sessions:]
-
-# Сбрасываем snapshot (интерфейс скоро умрёт)
-data["last_snapshot"] = None
-
-tmp = traffic_file + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(data, f, separators=(",", ":"))
-os.chmod(tmp, 0o600)
-os.replace(tmp, traffic_file)
-PYEOF
+    if [ -s "$tmp" ]; then
+        chmod 600 "$tmp"
+        mv "$tmp" "$TRAFFIC_FILE"
+    else
+        rm -f "$tmp"
+    fi
 }
 
-# ===== Форматирование размера =====
+# ===== Форматирование =====
 
 traffic_format_bytes() {
-    local bytes="$1"
-    if [ -z "$bytes" ] || [ "$bytes" = "0" ]; then
+    local bytes="${1:-0}"
+    if [ "$bytes" -eq 0 ] 2>/dev/null; then
         echo "0 B"
         return
     fi
 
-    python3 -c "
-b = $bytes
-for u in ['B','KB','MB','GB','TB']:
-    if b < 1024:
-        print(f'{b:.1f} {u}' if b != int(b) else f'{int(b)} {u}')
-        break
-    b /= 1024
-"
+    if [ "$bytes" -ge 1073741824 ]; then
+        echo "$(awk "BEGIN{printf \"%.1f GB\", $bytes/1073741824}")"
+    elif [ "$bytes" -ge 1048576 ]; then
+        echo "$(awk "BEGIN{printf \"%.1f MB\", $bytes/1048576}")"
+    elif [ "$bytes" -ge 1024 ]; then
+        echo "$(awk "BEGIN{printf \"%.1f KB\", $bytes/1024}")"
+    else
+        echo "${bytes} B"
+    fi
 }
 
-# ===== Получение статистики за период =====
+# ===== Статистика за период =====
 
-# Возвращает суммарный трафик за указанный период.
-# Аргументы: period = today | week | month | all
-# Выводит: "rx_bytes tx_bytes"
 traffic_get_period() {
     local period="${1:-today}"
 
     traffic_ensure_file
     traffic_take_snapshot 2>/dev/null || true
 
-    python3 - "$TRAFFIC_FILE" "$period" <<'PYEOF'
-import json, sys
-from datetime import datetime, timedelta
+    local now_date cutoff_key
 
-traffic_file = sys.argv[1]
-period = sys.argv[2]
-
-try:
-    with open(traffic_file, "r") as f:
-        data = json.load(f)
-except (OSError, json.JSONDecodeError):
-    print("0 0")
-    sys.exit(0)
-
-hourly = data.get("hourly", {})
-if not isinstance(hourly, dict):
-    print("0 0")
-    sys.exit(0)
-
-now = datetime.utcnow()
-
-if period == "today":
-    prefix = now.strftime("%Y-%m-%dT")
-elif period == "week":
-    start = now - timedelta(days=7)
-    prefix = None
-    cutoff = start.strftime("%Y-%m-%dT%H")
-elif period == "month":
-    start = now - timedelta(days=30)
-    prefix = None
-    cutoff = start.strftime("%Y-%m-%dT%H")
-elif period == "all":
-    prefix = None
-    cutoff = ""
-else:
-    print("0 0")
-    sys.exit(0)
-
-total_rx = 0
-total_tx = 0
-
-for hour_key, vals in hourly.items():
-    if prefix is not None:
-        if hour_key.startswith(prefix):
-            total_rx += vals.get("rx", 0)
-            total_tx += vals.get("tx", 0)
-    else:
-        if hour_key >= cutoff:
-            total_rx += vals.get("rx", 0)
-            total_tx += vals.get("tx", 0)
-
-print(f"{total_rx} {total_tx}")
-PYEOF
+    case "$period" in
+        today)
+            # Все ключи, начинающиеся с сегодняшней даты
+            now_date=$(date -u +"%Y-%m-%dT")
+            jq -r --arg prefix "$now_date" '
+                [.hourly | to_entries[] | select(.key | startswith($prefix))]
+                | {rx: (map(.value.rx) | add // 0), tx: (map(.value.tx) | add // 0)}
+                | "\(.rx) \(.tx)"
+            ' "$TRAFFIC_FILE" 2>/dev/null || echo "0 0"
+            ;;
+        week)
+            cutoff_key=$(date -u -d "7 days ago" +"%Y-%m-%dT%H" 2>/dev/null || date -u +"%Y-%m-%dT%H")
+            jq -r --arg cutoff "$cutoff_key" '
+                [.hourly | to_entries[] | select(.key >= $cutoff)]
+                | {rx: (map(.value.rx) | add // 0), tx: (map(.value.tx) | add // 0)}
+                | "\(.rx) \(.tx)"
+            ' "$TRAFFIC_FILE" 2>/dev/null || echo "0 0"
+            ;;
+        month)
+            cutoff_key=$(date -u -d "30 days ago" +"%Y-%m-%dT%H" 2>/dev/null || date -u +"%Y-%m-%dT%H")
+            jq -r --arg cutoff "$cutoff_key" '
+                [.hourly | to_entries[] | select(.key >= $cutoff)]
+                | {rx: (map(.value.rx) | add // 0), tx: (map(.value.tx) | add // 0)}
+                | "\(.rx) \(.tx)"
+            ' "$TRAFFIC_FILE" 2>/dev/null || echo "0 0"
+            ;;
+        all)
+            jq -r '
+                [.hourly | to_entries[]]
+                | {rx: (map(.value.rx) | add // 0), tx: (map(.value.tx) | add // 0)}
+                | "\(.rx) \(.tx)"
+            ' "$TRAFFIC_FILE" 2>/dev/null || echo "0 0"
+            ;;
+        *)
+            echo "0 0"
+            ;;
+    esac
 }
 
-# ===== CLI: warper traffic =====
+# ===== CLI =====
 
 cli_traffic() {
     local period="${1:-today}"
@@ -288,8 +237,6 @@ cli_traffic() {
     fi
 
     traffic_ensure_file
-
-    # Снимаем актуальный snapshot
     traffic_take_snapshot 2>/dev/null || true
 
     # Текущая сессия
@@ -300,7 +247,7 @@ cli_traffic() {
         cur_tx=$(echo "$counters" | awk '{print $2}')
     fi
 
-    # Аптайм sing-box
+    # Аптайм
     local uptime_str="не запущен"
     if systemctl is-active --quiet sing-box 2>/dev/null; then
         local started_raw
@@ -311,43 +258,49 @@ cli_traffic() {
             started_epoch=$(date -d "$started_raw" +%s 2>/dev/null || echo "0")
             now_epoch=$(date +%s)
             diff_sec=$((now_epoch - started_epoch))
-            if [ "$diff_sec" -lt 0 ]; then diff_sec=0; fi
+            [ "$diff_sec" -lt 0 ] && diff_sec=0
             local days=$((diff_sec / 86400))
             local hours=$(( (diff_sec % 86400) / 3600 ))
             local mins=$(( (diff_sec % 3600) / 60 ))
             local parts=""
             [ "$days" -gt 0 ] && parts="${days}д "
-            [ "$hours" -gt 0 ] || [ "$days" -gt 0 ] && parts="${parts}${hours}ч "
+            ([ "$hours" -gt 0 ] || [ "$days" -gt 0 ]) && parts="${parts}${hours}ч "
             parts="${parts}${mins}м"
             uptime_str="$parts"
         fi
     fi
 
-    # Данные за период
+    # Данные за запрошенный период
     local period_data period_rx=0 period_tx=0
     period_data=$(traffic_get_period "$period")
     period_rx=$(echo "$period_data" | awk '{print $1}')
     period_tx=$(echo "$period_data" | awk '{print $2}')
 
-    # Данные за сегодня (для status/doctor)
+    # Данные за сегодня
     local today_data today_rx=0 today_tx=0
     today_data=$(traffic_get_period "today")
     today_rx=$(echo "$today_data" | awk '{print $1}')
     today_tx=$(echo "$today_data" | awk '{print $2}')
 
     if [ "$show_json" = "json" ]; then
-        python3 -c "
-import json
-print(json.dumps({
-    'current_session': {'rx': $cur_rx, 'tx': $cur_tx},
-    'uptime': '$uptime_str',
-    'period': '$period',
-    'period_rx': $period_rx,
-    'period_tx': $period_tx,
-    'today_rx': $today_rx,
-    'today_tx': $today_tx,
-}))
-"
+        jq -n \
+            --argjson cur_rx "$cur_rx" \
+            --argjson cur_tx "$cur_tx" \
+            --arg uptime "$uptime_str" \
+            --arg period "$period" \
+            --argjson period_rx "$period_rx" \
+            --argjson period_tx "$period_tx" \
+            --argjson today_rx "$today_rx" \
+            --argjson today_tx "$today_tx" \
+            '{
+                current_session: {rx: $cur_rx, tx: $cur_tx},
+                uptime: $uptime,
+                period: $period,
+                period_rx: $period_rx,
+                period_tx: $period_tx,
+                today_rx: $today_rx,
+                today_tx: $today_tx
+            }'
         return 0
     fi
 
@@ -378,7 +331,6 @@ print(json.dumps({
 
 # ===== Краткая строка для status/doctor =====
 
-# Возвращает строку вида "Сегодня: ↑ 1.2 GB ↓ 3.4 GB"
 traffic_today_summary() {
     traffic_take_snapshot 2>/dev/null || true
 
@@ -387,5 +339,5 @@ traffic_today_summary() {
     rx=$(echo "$data" | awk '{print $1}')
     tx=$(echo "$data" | awk '{print $2}')
 
-    echo "Сегодня: ↑ $(traffic_format_bytes "$tx") ↓ $(traffic_format_bytes "$rx")"
+    echo "↑ $(traffic_format_bytes "$tx") ↓ $(traffic_format_bytes "$rx")"
 }
