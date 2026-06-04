@@ -1,11 +1,25 @@
 [Unit]
-Description=WARPER Auto-Patch Kresd on Boot
-After=network-online.target kresd@1.service kresd@2.service sing-box.service
+Description=WARPER Auto-Patch and Traffic on Boot/Shutdown
+After=network-online.target kresd@1.service kresd@2.service sing-box.service antizapret.service
+Wants=warper-traffic-snapshot.timer
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c '/usr/local/bin/warper patch; sleep 2; /usr/local/bin/warper ipsync || true'
 RemainAfterExit=yes
+
+# При загрузке: синхронизация WARP-ключей + патч DNS + IP-маршруты + запуск таймера трафика
+ExecStart=/bin/bash -c '\
+    /usr/local/bin/warper warpkeysync 2>/dev/null || true; \
+    sleep 1; \
+    /usr/local/bin/warper patch 2>/dev/null || true; \
+    sleep 2; \
+    /usr/local/bin/warper ipsync 2>/dev/null || true; \
+    systemctl start warper-traffic-snapshot.timer 2>/dev/null || true; \
+    /usr/local/bin/warper traffic snapshot 2>/dev/null || true'
+
+# При остановке/ребуте: финализация трафика
+ExecStop=/bin/bash -c '\
+    /usr/local/bin/warper trafficfinalize 2>/dev/null || true'
 
 [Install]
 WantedBy=multi-user.target
