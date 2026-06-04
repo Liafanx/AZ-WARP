@@ -145,12 +145,13 @@ web_menu() {
             else
                 echo -e " Автозагрузка: ${RED}ВЫКЛ${NC}"
             fi
-            echo -e " HTTPS:       ${https_mode}"
-            
+
             local port external_url https_mode
             port=$(web_get_external_port)
             external_url=$(web_get_external_url)
             https_mode=$(web_get_https_mode_label)
+
+            echo -e " HTTPS:        ${https_mode}"
             echo -e " Внешний порт: ${CYAN}${port:-?}${NC}"
             echo -e " URL:          ${YELLOW}${external_url}${NC}"
             echo -e "${CYAN}------------------------------------------${NC}"
