@@ -138,7 +138,7 @@ for _lib in \
     "$WARPER_LIB/diagnostics.sh" \
     "$WARPER_LIB/update.sh" \
     "$WARPER_LIB/cli.sh" \
-    "$WARPER_LIB/traffic.sh" \    
+    "$WARPER_LIB/traffic.sh" \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
