@@ -62,10 +62,17 @@ traffic_take_snapshot() {
         has_prev="true"
     fi
 
-    # Считаем дельту только если счётчики не сбросились (рестарт интерфейса)
-    if [ "$has_prev" = "true" ] && [ "$cur_rx" -ge "$prev_rx" ] && [ "$cur_tx" -ge "$prev_tx" ]; then
-        delta_rx=$((cur_rx - prev_rx))
-        delta_tx=$((cur_tx - prev_tx))
+    if [ "$has_prev" = "true" ]; then
+        # Считаем дельту только если счётчики не сбросились (рестарт интерфейса)
+        if [ "$cur_rx" -ge "$prev_rx" ] && [ "$cur_tx" -ge "$prev_tx" ]; then
+            delta_rx=$((cur_rx - prev_rx))
+            delta_tx=$((cur_tx - prev_tx))
+        fi
+    else
+        # Первый snapshot: записываем весь накопленный трафик текущей сессии
+        # (счётчики ядра считают с момента создания интерфейса)
+        delta_rx=$cur_rx
+        delta_tx=$cur_tx
     fi
 
     # Атомарное обновление через jq
