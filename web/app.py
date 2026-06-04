@@ -198,6 +198,71 @@ def _absolute_web_settings_url(scheme: str, host: str | None = None) -> str:
     host = host or request.host.split(":", 1)[0]
     return f"{scheme}://{host}:{port}/web-settings"
 
+def _get_public_ipv4() -> str:
+    import subprocess
+
+    for cmd in (
+        ["curl", "-s", "-4", "--connect-timeout", "3", "ifconfig.me"],
+        ["hostname", "-I"],
+    ):
+        try:
+            out = subprocess.check_output(cmd, text=True, timeout=5).strip()
+            if out:
+                return out.split()[0]
+        except Exception:
+            pass
+    return request.host.split(":", 1)[0]
+
+
+def _absolute_panel_url(scheme: str, host: str | None = None, path: str = "/login") -> str:
+    status = api.get_https_status()
+    port = status.get("port")
+
+    if not port:
+        if ":" in request.host:
+            port = request.host.split(":", 1)[1]
+        else:
+            port = "6060"
+
+    host = host or request.host.split(":", 1)[0]
+    return f"{scheme}://{host}:{port}{path}"
+
+
+def _clear_auth_cookies(resp):
+    session_name = app.config.get("SESSION_COOKIE_NAME", "session")
+    remember_name = app.config.get("REMEMBER_COOKIE_NAME", "remember_token")
+
+    session_path = app.config.get("SESSION_COOKIE_PATH", "/")
+    remember_path = app.config.get("REMEMBER_COOKIE_PATH", "/")
+
+    session_domain = app.config.get("SESSION_COOKIE_DOMAIN")
+    remember_domain = app.config.get("REMEMBER_COOKIE_DOMAIN")
+
+    resp.delete_cookie(session_name, path=session_path, domain=session_domain)
+    resp.delete_cookie(remember_name, path=remember_path, domain=remember_domain)
+    return resp
+
+
+def _https_switch_response(message: str, scheme: str, host: str | None = None):
+    """
+    После смены HTTP/HTTPS:
+    - показываем toast
+    - сбрасываем текущую авторизацию
+    - редиректим на login по НОВОМУ абсолютному URL
+    """
+    url = _absolute_panel_url(scheme, host=host, path="/login")
+
+    triggers = {
+        "showToast": {"message": message, "category": "success"},
+        "redirectAfter": {"url": url, "delay": 2500},
+    }
+
+    logout_user()
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+    _clear_auth_cookies(resp)
+    return resp
+
 # ===== Страницы =====
 
 @app.route("/")
@@ -929,14 +994,7 @@ def htmx_web_https_status():
 def htmx_web_https_selfsigned():
     ok, msg = api.set_https_selfsigned()
     if ok:
-        url = _absolute_web_settings_url("https")
-        triggers = {
-            "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": url, "delay": 3000},
-        }
-        resp = make_response("", 204)
-        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
-        return resp
+        return _https_switch_response(msg, "https", host=_get_public_ipv4())
     return _result_partial(False, msg)
 
 
@@ -948,14 +1006,7 @@ def htmx_web_https_letsencrypt():
         return _result_partial(False, "Введите домен")
     ok, msg = api.set_https_letsencrypt(domain)
     if ok:
-        url = _absolute_web_settings_url("https", domain)
-        triggers = {
-            "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": url, "delay": 3000},
-        }
-        resp = make_response("", 204)
-        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
-        return resp
+        return _https_switch_response(msg, "https", host=domain)
     return _result_partial(False, msg)
 
 
@@ -964,14 +1015,7 @@ def htmx_web_https_letsencrypt():
 def htmx_web_https_disable():
     ok, msg = api.disable_https()
     if ok:
-        url = _absolute_web_settings_url("http")
-        triggers = {
-            "showToast": {"message": msg, "category": "success"},
-            "redirectAfter": {"url": url, "delay": 3000},
-        }
-        resp = make_response("", 204)
-        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
-        return resp
+        return _https_switch_response(msg, "http", host=_get_public_ipv4())
     return _result_partial(False, msg)
 
 
