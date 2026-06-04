@@ -703,6 +703,7 @@ cli_status_json() {
         --argjson ip_ranges_synced "$ip_synced" \
         --arg ip_route_mode "$IP_ROUTE_MODE" \
         --arg ip_export_to_az "$IP_EXPORT_TO_ANTIZAPRET" \
+        --arg traffic_today "$(traffic_today_summary 2>/dev/null || echo '')" \
         '{
             version: $version,
             remote_version: $remote_version,
@@ -750,6 +751,7 @@ cli_status_json() {
                 mode: $ip_route_mode,
                 export_to_antizapret: $ip_export_to_az
             }
+            traffic_today: $traffic_today
         }'
 }
 
