@@ -1650,3 +1650,36 @@ def renew_certificate() -> tuple[bool, str]:
     """Обновляет Let's Encrypt сертификат."""
     ok, out, err = _run_warper("webhttps", "renew", timeout=120)
     return ok, (out or err).strip()
+
+# ===== Трафик =====
+
+def get_traffic(period: str = "today") -> dict[str, Any]:
+    """Возвращает статистику трафика за период."""
+    if period not in ("today", "week", "month", "all"):
+        period = "today"
+
+    ok, out, err = _run_warper("traffic", period, "json", timeout=15)
+    if not ok:
+        return {"error": err or "не удалось получить статистику"}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {"error": "невалидный JSON", "raw": out}
+
+
+def get_traffic_history() -> dict[str, Any]:
+    """Возвращает данные за все периоды для страницы статистики."""
+    result = {}
+    for period in ("today", "week", "month", "all"):
+        data = get_traffic(period)
+        result[period] = {
+            "rx": data.get("period_rx", 0),
+            "tx": data.get("period_tx", 0),
+        }
+
+    # Текущая сессия
+    today = get_traffic("today")
+    result["current_session"] = today.get("current_session", {"rx": 0, "tx": 0})
+    result["uptime"] = today.get("uptime", "не запущен")
+
+    return result
