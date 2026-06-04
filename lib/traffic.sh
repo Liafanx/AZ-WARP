@@ -238,6 +238,12 @@ cli_traffic() {
     local period="${1:-today}"
     local show_json="${2:-}"
 
+    # Команда snapshot — только записать snapshot и выйти (для systemd timer)
+    if [ "$period" = "snapshot" ]; then
+        traffic_take_snapshot 2>/dev/null || true
+        return 0
+    fi
+
     if [ "$period" = "json" ]; then
         show_json="json"
         period="today"
