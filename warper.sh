@@ -112,7 +112,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         return 1
     }
 
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli; do
+    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic; do
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
@@ -138,6 +138,7 @@ for _lib in \
     "$WARPER_LIB/diagnostics.sh" \
     "$WARPER_LIB/update.sh" \
     "$WARPER_LIB/cli.sh" \
+    "$WARPER_LIB/traffic.sh" \    
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
@@ -280,6 +281,10 @@ case "${1:-}" in
     fullvpn)     cli_fullvpn "${2:-}"; exit $? ;;
     iproutemode) cli_iproutemode "${2:-}"; exit $? ;;
     ipexport)    cli_ipexport "${2:-}"; exit $? ;;
+    traffic)
+        cli_traffic "${2:-today}" "${3:-}"
+        exit $?
+        ;;
     warpkey)
         case "${2:-}" in
             list)     cli_warpkey_list; exit $? ;;
