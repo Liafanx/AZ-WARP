@@ -1523,7 +1523,7 @@ def healthcheck() -> dict:
             import urllib.error
 
             req = urllib.request.Request(
-                f"http://127.0.0.1:{external_port}/login",
+                f"http://127.0.0.1:{external_port}/health",
                 headers={
                     "User-Agent": "warper-healthcheck",
                     # Origin совпадающий с host - чтобы пройти CSRF (если запрос POST)
