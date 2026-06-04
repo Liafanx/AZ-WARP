@@ -361,6 +361,11 @@ status_cmd() {
     echo "ip routes sync: $ip_sync_stat"
     echo "ip route mode: $IP_ROUTE_MODE"
     echo "ip export to AntiZapret: $IP_EXPORT_TO_ANTIZAPRET"
+
+    # Трафик за сегодня
+    local traffic_summary
+    traffic_summary=$(traffic_today_summary 2>/dev/null || echo "нет данных")
+    echo "traffic: $traffic_summary"
 }
 
 # Выполняет полную диагностику всех компонентов WARPER.
@@ -509,6 +514,11 @@ doctor() {
     else
         echo -e " ${GREEN}✔${NC} Конфликт fake-подсети не обнаружен"
     fi
+
+    # Трафик
+    local traffic_info
+    traffic_info=$(traffic_today_summary 2>/dev/null || echo "нет данных")
+    echo -e " ${CYAN}!${NC} Трафик: $traffic_info"
 
     echo -e "${CYAN}------------------------------------------${NC}"
     if [ "$failed" -eq 0 ]; then
