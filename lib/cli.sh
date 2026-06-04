@@ -1270,3 +1270,321 @@ cli_web_update() {
     echo -e "${GREEN}✓ Веб-панель обновлена${NC}"
     return 0
 }
+
+# ===== УПРАВЛЕНИЕ HTTPS ВЕБ-ПАНЕЛИ =====
+
+cli_web_https() {
+    local web_dir="/root/warper/web"
+    local nginx_conf="/etc/nginx/sites-available/warper-web"
+    local nginx_link="/etc/nginx/sites-enabled/warper-web"
+    local ssl_dir="/etc/nginx/ssl"
+    local action="${1:-status}"
+
+    if [ ! -f "$nginx_conf" ]; then
+        echo "ERROR: nginx-конфиг не найден" >&2
+        return 1
+    fi
+
+    # Определяем текущие порты
+    local ext_port=""
+    ext_port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+[[:space:]]+ssl/ {
+        for(i=1; i<=NF; i++) if($i ~ /^[0-9]+$/) { print $i; exit }
+    }' "$nginx_conf")
+    if [ -z "$ext_port" ]; then
+        ext_port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+/ {
+            for(i=1; i<=NF; i++) if($i ~ /^[0-9]+$/ && $i != "80") { print $i; exit }
+        }' "$nginx_conf")
+    fi
+    [ -z "$ext_port" ] && ext_port="6060"
+
+    local backend_port=""
+    backend_port=$(grep -oP 'proxy_pass\s+http://127\.0\.0\.1:\K\d+' "$nginx_conf" | head -1)
+    [ -z "$backend_port" ] && backend_port="16060"
+
+    case "$action" in
+
+        # ===== Статус =====
+        status)
+            local mode="http"
+            local domain=""
+            local cert_file=""
+            local cert_expiry=""
+            local cert_issuer=""
+
+            if grep -q "ssl_certificate" "$nginx_conf" 2>/dev/null; then
+                cert_file=$(grep -oP 'ssl_certificate\s+\K[^;]+' "$nginx_conf" | head -1)
+
+                if echo "$cert_file" | grep -q "letsencrypt"; then
+                    mode="letsencrypt"
+                    domain=$(echo "$cert_file" | grep -oP 'live/\K[^/]+')
+                elif echo "$cert_file" | grep -q "warper-web"; then
+                    mode="selfsigned"
+                fi
+
+                # Дата истечения
+                if [ -f "$cert_file" ]; then
+                    cert_expiry=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null \
+                        | sed 's/notAfter=//')
+                    cert_issuer=$(openssl x509 -issuer -noout -in "$cert_file" 2>/dev/null \
+                        | sed 's/issuer=//')
+                fi
+            fi
+
+            echo "mode=$mode"
+            echo "port=$ext_port"
+            echo "domain=$domain"
+            echo "cert_file=$cert_file"
+            echo "cert_expiry=$cert_expiry"
+            echo "cert_issuer=$cert_issuer"
+            ;;
+
+        # ===== Включить самоподписанный =====
+        enable-selfsigned)
+            echo "Включение HTTPS (самоподписанный сертификат)..."
+
+            mkdir -p "$ssl_dir"
+            if [ ! -f "$ssl_dir/warper-web.crt" ] || [ "${2:-}" = "--force" ]; then
+                echo "Генерация сертификата..."
+                openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+                    -keyout "$ssl_dir/warper-web.key" \
+                    -out "$ssl_dir/warper-web.crt" \
+                    -subj "/CN=warper-web" 2>/dev/null
+                echo "✓ Сертификат сгенерирован"
+            fi
+
+            # Бэкап
+            cp -a "$nginx_conf" "${nginx_conf}.bak"
+
+            cat > "$nginx_conf" <<SSLEOF
+server {
+    listen $ext_port ssl http2 default_server;
+    server_name _;
+
+    ssl_certificate $ssl_dir/warper-web.crt;
+    ssl_certificate_key $ssl_dir/warper-web.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    client_max_body_size 2M;
+    access_log /var/log/nginx/warper-web.access.log;
+    error_log /var/log/nginx/warper-web.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:$backend_port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;
+    }
+}
+SSLEOF
+
+            if nginx -t >/dev/null 2>&1; then
+                systemctl reload nginx
+                rm -f "${nginx_conf}.bak"
+                echo "✓ HTTPS (самоподписанный) включён на порту $ext_port"
+            else
+                echo "ERROR: невалидный конфиг, откат" >&2
+                mv "${nginx_conf}.bak" "$nginx_conf"
+                nginx -t >/dev/null 2>&1 && systemctl reload nginx
+                return 1
+            fi
+            ;;
+
+        # ===== Включить Let's Encrypt =====
+        enable-letsencrypt)
+            local domain="${2:-}"
+            if [ -z "$domain" ]; then
+                echo "ERROR: укажите домен" >&2
+                return 1
+            fi
+
+            echo "Включение HTTPS (Let's Encrypt) для $domain..."
+
+            # Проверяем сертификат
+            if [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ] && \
+               [ -f "/etc/letsencrypt/live/$domain/privkey.pem" ]; then
+                echo "✓ Сертификат для $domain уже существует"
+            else
+                echo "Получение сертификата..."
+
+                # Нужен порт 80 для acme-challenge
+                # Временно добавляем server-блок на 80 если его нет
+                local _had_port80="n"
+                if grep -q "listen 80" "$nginx_conf" 2>/dev/null; then
+                    _had_port80="y"
+                else
+                    # Добавляем временный server-блок
+                    local _tmp_conf
+                    _tmp_conf=$(mktemp)
+                    cat > "$_tmp_conf" <<ACMEEOF
+server {
+    listen 80;
+    server_name $domain;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 404; }
+}
+ACMEEOF
+                    cat "$nginx_conf" >> "$_tmp_conf"
+                    cp -a "$nginx_conf" "${nginx_conf}.bak"
+                    mv "$_tmp_conf" "$nginx_conf"
+                    nginx -t >/dev/null 2>&1 && systemctl reload nginx
+                    sleep 1
+                fi
+
+                mkdir -p /var/www/html
+                if ! certbot certonly --webroot --webroot-path /var/www/html \
+                    -d "$domain" --non-interactive --agree-tos \
+                    --register-unsafely-without-email 2>&1; then
+                    echo "ERROR: certbot не смог получить сертификат" >&2
+                    # Откат если добавляли временный блок
+                    if [ "$_had_port80" = "n" ] && [ -f "${nginx_conf}.bak" ]; then
+                        mv "${nginx_conf}.bak" "$nginx_conf"
+                        nginx -t >/dev/null 2>&1 && systemctl reload nginx
+                    fi
+                    return 1
+                fi
+
+                if [ ! -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
+                    echo "ERROR: файл сертификата не найден после certbot" >&2
+                    return 1
+                fi
+
+                echo "✓ Сертификат получен"
+            fi
+
+            # Бэкап
+            cp -a "$nginx_conf" "${nginx_conf}.bak"
+
+            local certbot_cert="/etc/letsencrypt/live/$domain/fullchain.pem"
+            local certbot_key="/etc/letsencrypt/live/$domain/privkey.pem"
+
+            cat > "$nginx_conf" <<LEEOF
+# AZ-WARP Web Panel — HTTPS (Let's Encrypt), домен $domain
+server {
+    listen 80;
+    server_name $domain;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 404; }
+}
+
+server {
+    listen $ext_port ssl http2;
+    server_name $domain;
+
+    ssl_certificate $certbot_cert;
+    ssl_certificate_key $certbot_key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_session_cache shared:WarperSSL:5m;
+    ssl_session_timeout 1d;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    client_max_body_size 2M;
+    access_log /var/log/nginx/warper-web.access.log;
+    error_log /var/log/nginx/warper-web.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:$backend_port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;
+    }
+}
+LEEOF
+
+            if nginx -t >/dev/null 2>&1; then
+                systemctl reload nginx
+                rm -f "${nginx_conf}.bak"
+                echo "✓ HTTPS (Let's Encrypt) включён для $domain на порту $ext_port"
+            else
+                echo "ERROR: невалидный конфиг, откат" >&2
+                mv "${nginx_conf}.bak" "$nginx_conf"
+                nginx -t >/dev/null 2>&1 && systemctl reload nginx
+                return 1
+            fi
+            ;;
+
+        # ===== Отключить HTTPS =====
+        disable)
+            echo "Переключение на HTTP..."
+
+            cp -a "$nginx_conf" "${nginx_conf}.bak"
+
+            cat > "$nginx_conf" <<HTTPEOF
+server {
+    listen $ext_port default_server;
+    server_name _;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    client_max_body_size 2M;
+    access_log /var/log/nginx/warper-web.access.log;
+    error_log /var/log/nginx/warper-web.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:$backend_port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;
+    }
+}
+HTTPEOF
+
+            if nginx -t >/dev/null 2>&1; then
+                systemctl reload nginx
+                rm -f "${nginx_conf}.bak"
+                echo "✓ HTTPS отключён, HTTP на порту $ext_port"
+            else
+                echo "ERROR: невалидный конфиг, откат" >&2
+                mv "${nginx_conf}.bak" "$nginx_conf"
+                nginx -t >/dev/null 2>&1 && systemctl reload nginx
+                return 1
+            fi
+            ;;
+
+        # ===== Обновить сертификат =====
+        renew)
+            echo "Обновление сертификата Let's Encrypt..."
+            if certbot renew --quiet 2>&1; then
+                systemctl reload nginx 2>/dev/null
+                echo "✓ Сертификат обновлён"
+            else
+                echo "ERROR: не удалось обновить сертификат" >&2
+                return 1
+            fi
+            ;;
+
+        *)
+            echo "Использование: warper webhttps status|enable-selfsigned|enable-letsencrypt DOMAIN|disable|renew" >&2
+            return 1
+            ;;
+    esac
+}
