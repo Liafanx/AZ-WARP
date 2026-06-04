@@ -42,6 +42,10 @@ Gunicorn (2 workers × 8 threads)
 warper CLI (cli_*функции в lib/cli.sh)
     ↓ чтение/запись
 файлы конфигурации WARPER (/root/warper/*.conf, *.txt, *.json)
+
+systemd timer (5 мин)
+    ↓ warper traffic snapshot
+файл traffic.json (hourly агрегация)
 ```
 
 Веб-панель **не дублирует логику** WARPER — она вызывает CLI-команды `warper add`, `warper sync`, `warper mode wg`, и т.д.
