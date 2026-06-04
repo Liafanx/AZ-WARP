@@ -191,6 +191,13 @@ def _result_partial(ok, message, refresh_target=None):
 def index():
     return redirect(url_for("dashboard"))
 
+@app.route("/health")
+def healthcheck_endpoint():
+    """
+    Простой healthcheck-endpoint для внутренних проверок.
+    Не требует авторизации. Возвращает JSON.
+    """
+    return jsonify({"status": "ok", "service": "warper-web"})
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
