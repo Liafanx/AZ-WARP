@@ -361,6 +361,11 @@ def settings_page():
 def web_settings_page():
     return render_template("web_settings.html")
 
+@app.route("/traffic")
+@login_required
+def traffic_page():
+    return render_template("traffic.html")
+
 # ===== HTMX: статус =====
 
 @app.route("/htmx/status-summary")
@@ -626,6 +631,15 @@ def htmx_logs():
 def htmx_doctor():
     results = api.get_doctor()
     return render_template("partials/doctor_results.html", results=results)
+
+# ===== HTMX: трафик =====
+
+@app.route("/htmx/traffic")
+@login_required
+def htmx_traffic():
+    period = request.args.get("period", "today")
+    data = api.get_traffic_history()
+    return render_template("partials/traffic_stats.html", data=data, current_period=period)
 
 
 # ===== HTMX: настройки =====
