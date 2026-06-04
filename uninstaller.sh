@@ -231,6 +231,7 @@ if [ "$KEEP_DOMAINS" = true ]; then
         -not -name 'ip-ranges.txt' \
         -not -name 'slave_mode.conf' \
         -not -name 'wg_mode.conf' \
+        -not -name 'traffic.json' \
         -not -path '*/wgcf/*' \
         -delete 2>/dev/null
     rm -rf /root/warper/download 2>/dev/null
