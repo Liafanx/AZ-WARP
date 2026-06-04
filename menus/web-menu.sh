@@ -285,7 +285,7 @@ web_https_menu() {
 
             2)
                 echo ""
-                read -r -e -p "Введите домен (например protomoto.duckdns.org): " new_domain
+                read -r -e -p "Введите домен (например warp.example.com): " new_domain
                 if [ -z "$new_domain" ]; then
                     echo -e "${YELLOW}Отмена.${NC}"
                     sleep 1
