@@ -111,6 +111,83 @@
     </section>
 
     <!-- ============================================================ -->
+    <!-- Healthcheck                                                   -->
+    <!-- ============================================================ -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <h2 class="text-base font-semibold text-emerald-200 flex items-center gap-2">
+                    <span>🩺</span>
+                    <span>Проверка состояния (Healthcheck)</span>
+                </h2>
+                <p class="text-xs text-emerald-500/60 mt-1">
+                    Проверка работоспособности nginx → gunicorn → веб-панели
+                </p>
+            </div>
+            <button hx-get="{{ url_for('htmx_web_healthcheck') }}"
+                    hx-target="#web-healthcheck"
+                    hx-swap="innerHTML"
+                    hx-indicator="this"
+                    class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+                <span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>🩺 Проверить</span>
+            </button>
+        </div>
+
+        <div id="web-healthcheck">
+            <div class="text-sm text-emerald-500/60">Нажмите «Проверить» для запуска диагностики</div>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Активные сессии                                               -->
+    <!-- ============================================================ -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <h2 class="text-base font-semibold text-emerald-200 flex items-center gap-2">
+                    <span>👥</span>
+                    <span>Активные сессии</span>
+                </h2>
+                <p class="text-xs text-emerald-500/60 mt-1">
+                    Последние успешные входы за 24 часа (один IP = одна сессия)
+                </p>
+            </div>
+            <button hx-post="{{ url_for('htmx_web_revoke_sessions') }}"
+                    hx-swap="none"
+                    data-confirm="Сбросить все активные сессии? Все пользователи (включая вас) должны будут войти заново."
+                    class="px-3 py-1.5 bg-red-700/40 hover:bg-red-700 text-red-100 rounded text-xs font-medium transition">
+                🚪 Выкинуть всех
+            </button>
+        </div>
+
+        <div id="web-sessions"
+             hx-get="{{ url_for('htmx_web_sessions') }}"
+             hx-trigger="load, every 60s">
+            <div class="text-sm text-emerald-500/60">Загрузка...</div>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Настройки безопасности                                        -->
+    <!-- ============================================================ -->
+    <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <h2 class="text-base font-semibold text-emerald-200 mb-1 flex items-center gap-2">
+            <span>🛡️</span>
+            <span>Настройки безопасности</span>
+        </h2>
+        <p class="text-xs text-emerald-500/60 mb-4">
+            Параметры защиты от brute-force и длительность сессий
+        </p>
+
+        <div id="web-security-form"
+             hx-get="{{ url_for('htmx_web_security_settings') }}"
+             hx-trigger="load">
+            <div class="text-sm text-emerald-500/60">Загрузка...</div>
+        </div>
+    </section>
+    
+    <!-- ============================================================ -->
     <!-- Активные блокировки IP                                        -->
     <!-- ============================================================ -->
     <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
