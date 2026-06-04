@@ -247,6 +247,14 @@ case "${1:-}" in
     ipsync)   sync_ip_ranges; exit $? ;;
     iplist)   extract_ip_ranges; exit $? ;;
     iproutes) get_current_tun_routes; exit $? ;;
+    warpkeysync)
+        auto_sync_warp_keys_on_boot
+        exit $?
+        ;;
+    trafficfinalize)
+        traffic_finalize_session 2>/dev/null || true
+        exit $?
+        ;;    
 
     # ===== Команды для веб-панели =====
     toggle)   cli_toggle_warper; exit $? ;;
