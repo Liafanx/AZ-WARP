@@ -23,6 +23,10 @@ rollback_warper_update() {
         "/etc/systemd/system/sing-box.service"
     restore_if_exists "$backupdir/warper-autopatch.service" \
         "/etc/systemd/system/warper-autopatch.service"
+    restore_if_exists "$backupdir/warper-traffic-snapshot.service" \
+        "/etc/systemd/system/warper-traffic-snapshot.service"
+    restore_if_exists "$backupdir/warper-traffic-snapshot.timer" \
+        "/etc/systemd/system/warper-traffic-snapshot.timer"        
 
     restore_if_exists "$backupdir/config.json" "$SINGBOX_CONF"
     restore_if_exists "$backupdir/domains.txt" "$MASTER_FILE"
@@ -87,7 +91,11 @@ update_warper() {
         "$tmpdir/sing-box.service" "sing-box.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     download_file_safe "$REPO_URL/templates/warper-autopatch.service" \
         "$tmpdir/warper-autopatch.service" "warper-autopatch.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-
+    download_file_safe "$REPO_URL/templates/warper-traffic-snapshot.service" \
+        "$tmpdir/warper-traffic-snapshot.service" "warper-traffic-snapshot.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    download_file_safe "$REPO_URL/templates/warper-traffic-snapshot.timer" \
+        "$tmpdir/warper-traffic-snapshot.timer" "warper-traffic-snapshot.timer" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+        
     # Шаблоны конфигурации
     download_file_safe "$REPO_URL/templates/config.json.template" \
         "$tmpdir/config.json.template" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -166,6 +174,10 @@ update_warper() {
         "$backupdir/sing-box.service"
     backup_if_exists "/etc/systemd/system/warper-autopatch.service" \
         "$backupdir/warper-autopatch.service"
+    backup_if_exists "/etc/systemd/system/warper-traffic-snapshot.service" \
+        "$backupdir/warper-traffic-snapshot.service"
+    backup_if_exists "/etc/systemd/system/warper-traffic-snapshot.timer" \
+        "$backupdir/warper-traffic-snapshot.timer"        
     backup_if_exists "$SINGBOX_CONF"  "$backupdir/config.json"
     backup_if_exists "$MASTER_FILE"   "$backupdir/domains.txt"
     # Backup модулей
@@ -224,6 +236,16 @@ update_warper() {
         echo -e "${RED}Ошибка установки warper-autopatch.service, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
     }
+    install -m 644 "$tmpdir/warper-traffic-snapshot.service" \
+        "/etc/systemd/system/warper-traffic-snapshot.service" || {
+        echo -e "${RED}Ошибка установки warper-traffic-snapshot.service, откат.${NC}"
+        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+    }
+    install -m 644 "$tmpdir/warper-traffic-snapshot.timer" \
+        "/etc/systemd/system/warper-traffic-snapshot.timer" || {
+        echo -e "${RED}Ошибка установки warper-traffic-snapshot.timer, откат.${NC}"
+        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+    }    
 
     # Устанавливаем модули lib/ и menus/
     mkdir -p "$WARPER_DIR/lib" "$WARPER_DIR/menus"
@@ -252,6 +274,8 @@ update_warper() {
     fi
 
     systemctl enable warper-autopatch >/dev/null 2>&1 || true
+    systemctl enable warper-traffic-snapshot.timer >/dev/null 2>&1 || true
+    systemctl start warper-traffic-snapshot.timer >/dev/null 2>&1 || true    
 
     # ===== Умная пересборка конфига sing-box =====
     # Проверяем, изменились ли шаблоны после обновления.
