@@ -132,5 +132,44 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install.sh | b
 warperslave   # → U
 curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install-slave.sh | bash
 ```
+
+### Трафик показывает 0 или одинаковые данные за все периоды
+
+**Симптом:** Все периоды (сегодня/неделя/месяц) показывают одинаковые значения.
+
+**Причина:** При первом запуске модуля трафика все данные попадают в один час. Через сутки данные разойдутся по периодам.
+
+**Также проверьте:**
+```bash
+# Интерфейс существует?
+ip link show singbox-tun
+
+# Счётчики доступны?
+cat /sys/class/net/singbox-tun/statistics/rx_bytes
+
+# Таймер запущен?
+systemctl status warper-traffic-snapshot.timer
+
+# Файл данных существует?
+cat /root/warper/traffic.json | jq .
+```
+
+**Сброс данных:**
+```bash
+rm -f /root/warper/traffic.json
+# Файл пересоздастся автоматически
+```
+
+### После переустановки AntiZapret WARP-ключи не обновились
+
+**Симптом:** sing-box использует старые ключи, сервисы не работают.
+
+**Решение:** Перезагрузите сервер или выполните:
+```bash
+warper warpkeysync
+```
+
+Команда автоматически проверит `/etc/wireguard/warp.conf` и если ключи изменились — пересоберёт конфиг и перезапустит sing-box.
+```
 ---
 

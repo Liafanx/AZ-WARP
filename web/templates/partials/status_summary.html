@@ -264,6 +264,12 @@
                 <span class="text-emerald-400/70">ANTIZAPRET_WARP</span>
                 <span class="text-emerald-200">{% if status.antizapret_warp %}<span class="text-red-400">включён ⚠</span>{% else %}выключен{% endif %}</span>
             </div>
+            <div class="flex justify-between">
+                <span class="text-emerald-400/70">Трафик через WARPER</span>
+                <span class="text-emerald-200 text-xs font-mono">
+                    {{ status.get('traffic_today', 'нет данных') }}
+                </span>
+            </div>            
         </div>
     </div>
 

@@ -195,6 +195,8 @@ toggle_warper() {
     if [[ -z "$conf" || "$conf" == "Y" || "$conf" == "y" ]]; then
         if [ "$action" = "ВЫКЛЮЧИТЬ" ]; then
             echo -e "${YELLOW}Отключение WARPER...${NC}"
+              # Фиксируем трафик текущей сессии
+            traffic_finalize_session 2>/dev/null || true          
             systemctl stop sing-box
             systemctl disable sing-box 2>/dev/null
             systemctl disable warper-autopatch 2>/dev/null
@@ -361,6 +363,11 @@ status_cmd() {
     echo "ip routes sync: $ip_sync_stat"
     echo "ip route mode: $IP_ROUTE_MODE"
     echo "ip export to AntiZapret: $IP_EXPORT_TO_ANTIZAPRET"
+
+    # Трафик за сегодня
+    local traffic_summary
+    traffic_summary=$(traffic_today_summary 2>/dev/null || echo "нет данных")
+    echo "traffic: $traffic_summary"
 }
 
 # Выполняет полную диагностику всех компонентов WARPER.
@@ -509,6 +516,11 @@ doctor() {
     else
         echo -e " ${GREEN}✔${NC} Конфликт fake-подсети не обнаружен"
     fi
+
+    # Трафик
+    local traffic_info
+    traffic_info=$(traffic_today_summary 2>/dev/null || echo "нет данных")
+    echo -e " ${CYAN}!${NC} Трафик: $traffic_info"
 
     echo -e "${CYAN}------------------------------------------${NC}"
     if [ "$failed" -eq 0 ]; then

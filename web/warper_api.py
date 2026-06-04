@@ -1371,3 +1371,315 @@ def get_service_info() -> dict[str, Any]:
             pass
 
     return info
+
+# =============================================================================
+# Безопасность: настройки + сессии + healthcheck
+# =============================================================================
+
+def get_security_settings_api() -> dict:
+    """Возвращает текущие настройки безопасности."""
+    from auth import load_security_settings
+    return load_security_settings()
+
+
+def save_security_settings_api(settings: dict) -> tuple[bool, str]:
+    """Сохраняет настройки безопасности."""
+    from auth import save_security_settings
+    return save_security_settings(settings)
+
+
+def rotate_session_secret() -> tuple[bool, str]:
+    """Ротирует SECRET_KEY - инвалидирует все активные сессии."""
+    from auth import rotate_secret_key
+    new_key = rotate_secret_key()
+    if new_key:
+        return True, "Все сессии сброшены. Войдите заново."
+    return False, "Не удалось ротировать ключ"
+
+
+def get_recent_logins(limit: int = 20) -> list[dict]:
+    """
+    Возвращает последние успешные входы из auth.log.
+    Это - "активные сессии" (на самом деле успешные логины за последние 24ч,
+    т.к. server-side session storage у нас нет).
+    """
+    data = get_auth_log(limit=500, level_filter="success")
+    events = data.get("events", [])
+
+    # Группируем по IP - один IP = одна сессия
+    seen_ips: dict[str, dict] = {}
+    for e in events:
+        ip = e.get("ip", "?")
+        if ip not in seen_ips:
+            seen_ips[ip] = {
+                "ip": ip,
+                "user": e.get("user", "?"),
+                "last_seen": e.get("timestamp", ""),
+                "count": 1,
+            }
+        else:
+            seen_ips[ip]["count"] += 1
+
+    # Сортируем по времени последнего входа (новые сверху)
+    result = list(seen_ips.values())
+    result.sort(key=lambda x: x["last_seen"], reverse=True)
+
+    return result[:limit]
+
+
+def healthcheck() -> dict:
+    """
+    Проверяет что nginx → gunicorn работает корректно.
+    """
+    import socket
+    import time as _time
+
+    result = {
+        "overall": "ok",  # ok | warn | error
+        "checks": [],
+    }
+
+    def _add(name, status, message):
+        result["checks"].append({
+            "name": name,
+            "status": status,  # ok | warn | error
+            "message": message,
+        })
+        if status == "error":
+            result["overall"] = "error"
+        elif status == "warn" and result["overall"] != "error":
+            result["overall"] = "warn"
+
+    # 1. Gunicorn слушает порт
+    internal_port = int(os.environ.get("PORT", 16060))
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        rc = sock.connect_ex(("127.0.0.1", internal_port))
+        sock.close()
+        if rc == 0:
+            _add("Gunicorn слушает порт", "ok", f"127.0.0.1:{internal_port}")
+        else:
+            _add("Gunicorn слушает порт", "error", f"127.0.0.1:{internal_port} - не отвечает")
+    except Exception as e:
+        _add("Gunicorn слушает порт", "error", str(e))
+
+    # 2. Gunicorn отвечает на HTTP
+    try:
+        import urllib.request
+        import urllib.error
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{internal_port}/login",
+            headers={"User-Agent": "warper-healthcheck"},
+            method="GET",
+        )
+
+        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def http_error_302(self, req, fp, code, msg, headers):
+                return fp
+            http_error_301 = http_error_303 = http_error_307 = http_error_302
+
+        opener = urllib.request.build_opener(NoRedirectHandler())
+
+        start = _time.time()
+        try:
+            with opener.open(req, timeout=5) as resp:
+                code = resp.status
+        except urllib.error.HTTPError as he:
+            code = he.code
+        elapsed = (_time.time() - start) * 1000
+
+        if 200 <= code < 500:
+            _add("Gunicorn отвечает на HTTP", "ok",
+                 f"HTTP {code} за {elapsed:.0f}мс")
+        else:
+            _add("Gunicorn отвечает на HTTP", "warn",
+                 f"Странный код: HTTP {code}")
+    except Exception as e:
+        _add("Gunicorn отвечает на HTTP", "error", str(e)[:200])
+
+    # 3. nginx слушает наш внешний порт
+    external_port = get_nginx_external_port()
+    if external_port:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            rc = sock.connect_ex(("127.0.0.1", external_port))
+            sock.close()
+            if rc == 0:
+                _add(f"nginx слушает порт {external_port}", "ok", "")
+            else:
+                _add(f"nginx слушает порт {external_port}", "error", "не отвечает")
+        except Exception as e:
+            _add(f"nginx слушает порт {external_port}", "error", str(e))
+    else:
+        _add("Внешний порт", "warn", "не удалось определить из nginx-конфига")
+
+    # 4. nginx → gunicorn проксирование работает
+    if external_port:
+        try:
+            import urllib.request
+            import urllib.error
+
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{external_port}/health",
+                headers={
+                    "User-Agent": "warper-healthcheck",
+                    # Origin совпадающий с host - чтобы пройти CSRF (если запрос POST)
+                    "Host": f"127.0.0.1:{external_port}",
+                },
+                method="GET",  # GET точно не триггерит CSRF
+            )
+
+            # Создаём opener БЕЗ автоматического следования за redirect
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def http_error_302(self, req, fp, code, msg, headers):
+                    return fp
+                http_error_301 = http_error_303 = http_error_307 = http_error_302
+
+            opener = urllib.request.build_opener(NoRedirect())
+
+            try:
+                with opener.open(req, timeout=5) as resp:
+                    code = resp.status
+            except urllib.error.HTTPError as he:
+                # 302/301 - редирект (нормально, /login делает redirect если уже залогинен)
+                code = he.code
+
+            if 200 <= code < 500:
+                # 200, 302, 401 - всё это значит nginx → gunicorn работает
+                _add("nginx → gunicorn проксирование", "ok",
+                     f"HTTP {code}")
+            else:
+                _add("nginx → gunicorn проксирование", "warn",
+                     f"Странный код: HTTP {code}")
+        except Exception as e:
+            err = str(e)[:200]
+            # Если SSL ошибка - это нормально, не считаем за ошибку (HTTPS режим)
+            if "ssl" in err.lower() or "wrong version" in err.lower() \
+               or "tlsv1" in err.lower():
+                _add("nginx → gunicorn проксирование (HTTPS)", "ok",
+                     "SSL на порту, HTTP-тест неприменим (это нормально)")
+            else:
+                _add("nginx → gunicorn проксирование", "error", err)
+
+    # 5. systemd: warper-web active
+    rc, out, _ = _run(["systemctl", "is-active", "warper-web"], timeout=3)
+    if rc == 0 and out.strip() == "active":
+        _add("Сервис warper-web", "ok", "active")
+    else:
+        _add("Сервис warper-web", "error", out.strip() or "не запущен")
+
+    # 6. systemd: nginx active
+    rc, out, _ = _run(["systemctl", "is-active", "nginx"], timeout=3)
+    if rc == 0 and out.strip() == "active":
+        _add("Сервис nginx", "ok", "active")
+    else:
+        _add("Сервис nginx", "error", out.strip() or "не запущен")
+
+    # 7. Файл users.json существует и читается
+    users_file = "/root/warper/web/data/users.json"
+    if os.path.exists(users_file):
+        try:
+            with open(users_file, "r") as f:
+                data = json.loads(f.read())
+            if data:
+                _add("БД пользователей", "ok", f"{len(data)} аккаунт(ов)")
+            else:
+                _add("БД пользователей", "warn", "пустая")
+        except Exception as e:
+            _add("БД пользователей", "error", str(e)[:100])
+    else:
+        _add("БД пользователей", "error", "users.json не существует")
+
+    # 8. SECRET_KEY существует
+    secret_file = "/root/warper/web/data/secret.key"
+    if os.path.exists(secret_file):
+        try:
+            size = os.path.getsize(secret_file)
+            if size >= 32:
+                _add("SECRET_KEY", "ok", f"{size} байт")
+            else:
+                _add("SECRET_KEY", "warn", f"слишком короткий: {size} байт")
+        except Exception:
+            _add("SECRET_KEY", "warn", "не удалось проверить")
+    else:
+        _add("SECRET_KEY", "error", "secret.key отсутствует")
+
+    return result
+
+# ===== HTTPS управление =====
+
+def get_https_status() -> dict[str, Any]:
+    """Возвращает текущий режим HTTPS."""
+    ok, out, _ = _run_warper("webhttps", "status", timeout=10)
+    if not ok:
+        return {"mode": "unknown", "error": out}
+
+    result: dict[str, Any] = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            result[k.strip()] = v.strip()
+
+    return result
+
+
+def set_https_selfsigned() -> tuple[bool, str]:
+    """Включает HTTPS с самоподписанным сертификатом."""
+    ok, out, err = _run_warper("webhttps", "enable-selfsigned", timeout=30)
+    return ok, (out or err).strip()
+
+
+def set_https_letsencrypt(domain: str) -> tuple[bool, str]:
+    """Включает HTTPS с Let's Encrypt."""
+    if not domain or not re.match(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", domain):
+        return False, "Некорректный домен"
+    ok, out, err = _run_warper("webhttps", "enable-letsencrypt", domain, timeout=120)
+    return ok, (out or err).strip()
+
+
+def disable_https() -> tuple[bool, str]:
+    """Отключает HTTPS, переключает на HTTP."""
+    ok, out, err = _run_warper("webhttps", "disable", timeout=15)
+    return ok, (out or err).strip()
+
+
+def renew_certificate() -> tuple[bool, str]:
+    """Обновляет Let's Encrypt сертификат."""
+    ok, out, err = _run_warper("webhttps", "renew", timeout=120)
+    return ok, (out or err).strip()
+
+# ===== Трафик =====
+
+def get_traffic(period: str = "today") -> dict[str, Any]:
+    """Возвращает статистику трафика за период."""
+    if period not in ("today", "week", "month", "all"):
+        period = "today"
+
+    ok, out, err = _run_warper("traffic", period, "json", timeout=15)
+    if not ok:
+        return {"error": err or "не удалось получить статистику"}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {"error": "невалидный JSON", "raw": out}
+
+
+def get_traffic_history() -> dict[str, Any]:
+    """Возвращает данные за все периоды для страницы статистики."""
+    result = {}
+    for period in ("today", "week", "month", "all"):
+        data = get_traffic(period)
+        result[period] = {
+            "rx": data.get("period_rx", 0),
+            "tx": data.get("period_tx", 0),
+        }
+
+    # Текущая сессия
+    today = get_traffic("today")
+    result["current_session"] = today.get("current_session", {"rx": 0, "tx": 0})
+    result["uptime"] = today.get("uptime", "не запущен")
+
+    return result

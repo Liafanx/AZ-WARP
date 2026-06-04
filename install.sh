@@ -935,6 +935,8 @@ echo -e " - ${GREEN}Конфигурация sing-box создана с подс
 echo -e "\n${YELLOW}[4/8] Загрузка и настройка служб systemd...${NC}"
 download_file "$REPO_URL/templates/sing-box.service" "/etc/systemd/system/sing-box.service" "служба sing-box.service" || exit 1
 download_file "$REPO_URL/templates/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
+download_file "$REPO_URL/templates/warper-traffic-snapshot.service" "/etc/systemd/system/warper-traffic-snapshot.service" "служба warper-traffic-snapshot.service" || exit 1
+download_file "$REPO_URL/templates/warper-traffic-snapshot.timer" "/etc/systemd/system/warper-traffic-snapshot.timer" "таймер warper-traffic-snapshot.timer" || exit 1
 systemctl daemon-reload
 
 if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
@@ -946,7 +948,13 @@ else
     if ! ensure_singbox_running; then
         exit 1
     fi
+
     systemctl enable warper-autopatch > /dev/null 2>&1
+
+    # Таймер периодических snapshot'ов трафика
+    systemctl enable warper-traffic-snapshot.timer > /dev/null 2>&1
+    systemctl start warper-traffic-snapshot.timer > /dev/null 2>&1 || true
+
     sleep 2
 fi
 
@@ -1005,7 +1013,7 @@ download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-
 # Скачиваем модули lib/
 echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
 mkdir -p "$WARPER_DIR/lib"
-for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli; do
+for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic; do
     download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
 done
 
@@ -1038,6 +1046,11 @@ cat << 'IPEOF' > "$WARPER_DIR/ip-ranges.txt"
 # После изменения файла выполните: warper ipsync
 # Или в меню: Управление IP-подсетями → Синхронизировать
 IPEOF
+fi
+
+if [ ! -f "$WARPER_DIR/traffic.json" ]; then
+    echo '{"sessions":[],"hourly":{},"last_snapshot":null}' > "$WARPER_DIR/traffic.json"
+    chmod 600 "$WARPER_DIR/traffic.json"
 fi
 
 chmod +x "$WARPER_DIR/warper.sh" "$WARPER_DIR/uninstaller.sh"

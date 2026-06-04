@@ -21,18 +21,70 @@ web_get_port() {
     fi
 }
 
+web_get_public_ip() {
+    curl -s -4 --connect-timeout 3 ifconfig.me 2>/dev/null \
+        || hostname -I 2>/dev/null | awk '{print $1}' \
+        || echo "0.0.0.0"
+}
+
+web_get_https_status_field() {
+    local key="$1"
+    cli_web_https status 2>/dev/null | awk -F= -v k="$key" '
+        $1 == k {
+            print substr($0, length($1) + 2)
+            exit
+        }
+    '
+}
+
+web_get_https_mode() {
+    web_get_https_status_field "mode"
+}
+
+web_get_https_domain() {
+    web_get_https_status_field "domain"
+}
+
+web_get_https_mode_label() {
+    local mode domain
+    mode=$(web_get_https_mode)
+    domain=$(web_get_https_domain)
+
+    case "$mode" in
+        letsencrypt)
+            if [ -n "$domain" ]; then
+                echo -e "${GREEN}Let's Encrypt${NC} ${CYAN}(${domain})${NC}"
+            else
+                echo -e "${GREEN}Let's Encrypt${NC}"
+            fi
+            ;;
+        selfsigned)
+            echo -e "${YELLOW}Самоподписанный${NC}"
+            ;;
+        http|"")
+            echo -e "${CYAN}HTTP${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}${mode}${NC}"
+            ;;
+    esac
+}
+
 web_get_external_port() {
+    local port
+    port=$(web_get_https_status_field "port")
+    if [ -n "$port" ]; then
+        echo "$port"
+        return
+    fi
+
     local nginx_conf="/etc/nginx/sites-available/warper-web"
     [ -f "$nginx_conf" ] || { echo ""; return; }
 
-    local port=""
-
-    # 1. Сначала пробуем найти HTTPS-блок: "listen NNNN ssl"
     port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+[[:space:]]+ssl/ {
         for(i=1; i<=NF; i++) if($i ~ /^[0-9]+$/) { print $i; exit }
     }' "$nginx_conf")
 
-    # 2. Если HTTPS нет - берём первый "listen NNNN" кроме 80
     if [ -z "$port" ]; then
         port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+/ {
             for(i=1; i<=NF; i++) {
@@ -41,35 +93,33 @@ web_get_external_port() {
         }' "$nginx_conf")
     fi
 
-    # 3. Совсем fallback - первый listen
-    if [ -z "$port" ]; then
-        port=$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+/ {
-            for(i=1; i<=NF; i++) if($i ~ /^[0-9]+$/) { print $i; exit }
-        }' "$nginx_conf")
-    fi
-
     echo "$port"
 }
 
 web_get_external_url() {
-    local port
+    local mode port domain ip
+    mode=$(web_get_https_mode)
     port=$(web_get_external_port)
-    if [ -z "$port" ]; then
-        echo "не определён"
-        return
-    fi
+    domain=$(web_get_https_domain)
+    ip=$(web_get_public_ip)
 
-    local ip
-    ip=$(curl -s -4 --connect-timeout 3 ifconfig.me 2>/dev/null \
-        || hostname -I 2>/dev/null | awk '{print $1}' \
-        || echo "0.0.0.0")
+    [ -z "$port" ] && { echo "не определён"; return; }
 
-    # Проверка HTTPS
-    if grep -q "ssl " "/etc/nginx/sites-available/warper-web" 2>/dev/null; then
-        echo "https://${ip}:${port}"
-    else
-        echo "http://${ip}:${port}"
-    fi
+    case "$mode" in
+        letsencrypt)
+            if [ -n "$domain" ]; then
+                echo "https://${domain}:${port}/"
+            else
+                echo "https://${ip}:${port}/"
+            fi
+            ;;
+        selfsigned)
+            echo "https://${ip}:${port}/"
+            ;;
+        http|*)
+            echo "http://${ip}:${port}/"
+            ;;
+    esac
 }
 
 # ===== Меню =====
@@ -96,9 +146,12 @@ web_menu() {
                 echo -e " Автозагрузка: ${RED}ВЫКЛ${NC}"
             fi
 
-            local port external_url
+            local port external_url https_mode
             port=$(web_get_external_port)
             external_url=$(web_get_external_url)
+            https_mode=$(web_get_https_mode_label)
+
+            echo -e " HTTPS:        ${https_mode}"
             echo -e " Внешний порт: ${CYAN}${port:-?}${NC}"
             echo -e " URL:          ${YELLOW}${external_url}${NC}"
             echo -e "${CYAN}------------------------------------------${NC}"
@@ -106,11 +159,12 @@ web_menu() {
             echo -e " ${CYAN}2.${NC} 🔄 Сбросить пароль (admin + случайный)"
             echo -e " ${CYAN}3.${NC} 🚫 Сбросить блокировки IP"
             echo -e " ${CYAN}4.${NC} 🔌 Изменить внешний порт"
-            echo -e " ${YELLOW}5.${NC} ▶️  Запустить / ⏹️  Остановить"
-            echo -e " ${YELLOW}6.${NC} ⟳  Перезапустить"
-            echo -e " ${CYAN}7.${NC} 📄 Логи веб-панели"
-            echo -e " ${CYAN}8.${NC} 📋 Лог авторизаций"
-            echo -e " ${RED}9.${NC} 🗑️  Удалить веб-панель"
+            echo -e " ${CYAN}5.${NC} 🔒 HTTPS / SSL"
+            echo -e " ${YELLOW}6.${NC} ▶️  Запустить / ⏹️  Остановить"
+            echo -e " ${YELLOW}7.${NC} ⟳  Перезапустить"
+            echo -e " ${CYAN}8.${NC} 📄 Логи веб-панели"
+            echo -e " ${CYAN}9.${NC} 📋 Лог авторизаций"
+            echo -e " ${RED}10.${NC} 🗑️  Удалить веб-панель"
             echo -e " ${CYAN}0.${NC} ↩️  Назад"
             echo -e ""
             echo -e " ${YELLOW}ℹ Обновление веб-панели:${NC} автоматически вместе с WARPER"
@@ -123,11 +177,12 @@ web_menu() {
                 2) web_action_reset_password ;;
                 3) web_action_unblock ;;
                 4) web_action_change_port ;;
-                5) web_action_toggle ;;
-                6) web_action_restart ;;
-                7) web_action_logs ;;
-                8) web_action_auth_log ;;
-                9) web_action_uninstall ;;
+                5) web_https_menu ;;
+                6) web_action_toggle ;;
+                7) web_action_restart ;;
+                8) web_action_logs ;;
+                9) web_action_auth_log ;;
+                10) web_action_uninstall ;;
                 0) return ;;
                 *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
             esac
@@ -153,6 +208,147 @@ web_menu() {
                 *) echo -e "${RED}Неверный выбор.${NC}"; sleep 1 ;;
             esac
         fi
+    done
+}
+
+web_https_menu() {
+    while true; do
+        clear
+
+        local mode domain port cert_expiry cert_issuer url
+        mode=$(web_get_https_mode)
+        domain=$(web_get_https_domain)
+        port=$(web_get_external_port)
+        cert_expiry=$(web_get_https_status_field "cert_expiry")
+        cert_issuer=$(web_get_https_status_field "cert_issuer")
+        url=$(web_get_external_url)
+
+        echo -e "${CYAN}==========================================${NC}"
+        echo -e "         🔒 ${YELLOW}HTTPS / SSL${NC} 🔒"
+        echo -e "${CYAN}==========================================${NC}"
+        echo -e ""
+
+        case "$mode" in
+            letsencrypt)
+                echo -e " Режим:        ${GREEN}Let's Encrypt${NC}"
+                ;;
+            selfsigned)
+                echo -e " Режим:        ${YELLOW}Самоподписанный${NC}"
+                ;;
+            http|*)
+                echo -e " Режим:        ${CYAN}HTTP${NC}"
+                ;;
+        esac
+
+        echo -e " Порт:         ${CYAN}${port:-?}${NC}"
+        echo -e " URL:          ${YELLOW}${url}${NC}"
+
+        if [ -n "$domain" ]; then
+            echo -e " Домен:        ${CYAN}${domain}${NC}"
+        fi
+        if [ -n "$cert_expiry" ]; then
+            echo -e " Истекает:     ${CYAN}${cert_expiry}${NC}"
+        fi
+        if [ -n "$cert_issuer" ]; then
+            echo -e " Issuer:       ${CYAN}${cert_issuer}${NC}"
+        fi
+
+        echo -e ""
+        echo -e "${CYAN}------------------------------------------${NC}"
+        echo -e " ${CYAN}1.${NC} Включить HTTPS (самоподписанный)"
+        echo -e " ${CYAN}2.${NC} Включить HTTPS (Let's Encrypt)"
+        echo -e " ${CYAN}3.${NC} Переключить на HTTP"
+        echo -e " ${CYAN}4.${NC} Обновить сертификат Let's Encrypt"
+        echo -e " ${CYAN}0.${NC} Назад"
+        echo -e "${CYAN}==========================================${NC}"
+
+        read -r -e -p "Выбор: " choice
+        case "${choice:-}" in
+            1)
+                if [ "$mode" = "selfsigned" ]; then
+                    echo -e "${YELLOW}Уже включён самоподписанный HTTPS.${NC}"
+                else
+                    echo ""
+                    if prompt_confirm; then
+                        local output
+                        if output=$(cli_web_https enable-selfsigned 2>&1); then
+                            echo -e "${GREEN}${output}${NC}"
+                            echo -e "${CYAN}Новый URL:${NC} ${YELLOW}$(web_get_external_url)${NC}"
+                        else
+                            echo -e "${RED}${output}${NC}"
+                        fi
+                    fi
+                fi
+                echo ""
+                read -r -p "Нажмите Enter..."
+                ;;
+
+            2)
+                echo ""
+                read -r -e -p "Введите домен (например warp.example.com): " new_domain
+                if [ -z "$new_domain" ]; then
+                    echo -e "${YELLOW}Отмена.${NC}"
+                    sleep 1
+                    continue
+                fi
+
+                if prompt_confirm; then
+                    local output
+                    if output=$(cli_web_https enable-letsencrypt "$new_domain" 2>&1); then
+                        echo -e "${GREEN}${output}${NC}"
+                        echo -e "${CYAN}Новый URL:${NC} ${YELLOW}$(web_get_external_url)${NC}"
+                    else
+                        echo -e "${RED}${output}${NC}"
+                    fi
+                fi
+                echo ""
+                read -r -p "Нажмите Enter..."
+                ;;
+
+            3)
+                if [ "$mode" = "http" ] || [ -z "$mode" ]; then
+                    echo -e "${YELLOW}Панель уже работает по HTTP.${NC}"
+                else
+                    echo ""
+                    if prompt_confirm; then
+                        local output
+                        if output=$(cli_web_https disable 2>&1); then
+                            echo -e "${GREEN}${output}${NC}"
+                            echo -e "${CYAN}Новый URL:${NC} ${YELLOW}$(web_get_external_url)${NC}"
+                        else
+                            echo -e "${RED}${output}${NC}"
+                        fi
+                    fi
+                fi
+                echo ""
+                read -r -p "Нажмите Enter..."
+                ;;
+
+            4)
+                if [ "$mode" != "letsencrypt" ]; then
+                    echo -e "${YELLOW}Обновление доступно только для сертификатов Let's Encrypt.${NC}"
+                else
+                    echo ""
+                    local output
+                    if output=$(cli_web_https renew 2>&1); then
+                        echo -e "${GREEN}${output}${NC}"
+                    else
+                        echo -e "${RED}${output}${NC}"
+                    fi
+                fi
+                echo ""
+                read -r -p "Нажмите Enter..."
+                ;;
+
+            0)
+                return
+                ;;
+
+            *)
+                echo -e "${RED}Неверный выбор.${NC}"
+                sleep 1
+                ;;
+        esac
     done
 }
 

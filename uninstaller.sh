@@ -111,6 +111,8 @@ echo -e "\n${YELLOW}1. Остановка и удаление служб...${NC}
 echo -e " - ${CYAN}Остановка демона sing-box...${NC}"
 systemctl stop sing-box 2>/dev/null
 systemctl stop warper-autopatch 2>/dev/null
+systemctl stop warper-traffic-snapshot.timer 2>/dev/null
+systemctl disable warper-traffic-snapshot.timer 2>/dev/null
 echo -e " - ${CYAN}Удаление из автозагрузки...${NC}"
 systemctl disable sing-box 2>/dev/null
 systemctl disable warper-autopatch 2>/dev/null
@@ -119,6 +121,8 @@ rm -f /etc/systemd/system/sing-box.service
 rm -f /etc/systemd/system/warper-autopatch.service
 rm -f /usr/lib/systemd/system/sing-box.service
 rm -f /usr/lib/systemd/system/warper-autopatch.service
+rm -f /etc/systemd/system/warper-traffic-snapshot.service
+rm -f /etc/systemd/system/warper-traffic-snapshot.timer
 systemctl daemon-reload
 
 echo -e "\n${YELLOW}2. Удаление ядра sing-box и конфигов...${NC}"
@@ -227,6 +231,7 @@ if [ "$KEEP_DOMAINS" = true ]; then
         -not -name 'ip-ranges.txt' \
         -not -name 'slave_mode.conf' \
         -not -name 'wg_mode.conf' \
+        -not -name 'traffic.json' \
         -not -path '*/wgcf/*' \
         -delete 2>/dev/null
     rm -rf /root/warper/download 2>/dev/null

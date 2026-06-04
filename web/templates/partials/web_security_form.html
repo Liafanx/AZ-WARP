@@ -1,0 +1,90 @@
+<form hx-post="{{ url_for('htmx_web_security_save') }}"
+      hx-swap="none"
+      class="space-y-4">
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        <!-- Brute-force защита -->
+        <div class="space-y-3 p-3 bg-surface-950 border border-emerald-900/30 rounded-lg">
+            <div class="text-xs uppercase tracking-wider text-amber-400/70 font-semibold">
+                🛡️ Brute-force защита
+            </div>
+
+            <div>
+                <label class="block text-xs text-emerald-300 mb-1">
+                    Максимум попыток входа
+                </label>
+                <input type="number" name="max_attempts" value="{{ s.max_attempts }}"
+                       min="3" max="100"
+                       class="w-full px-3 py-2 bg-surface-900 border border-emerald-900/50 rounded
+                              text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                <p class="text-xs text-emerald-500/60 mt-1">
+                    Сколько неудачных попыток до блокировки (3-100)
+                </p>
+            </div>
+
+            <div>
+                <label class="block text-xs text-emerald-300 mb-1">
+                    Окно подсчёта попыток (мин.)
+                </label>
+                <input type="number" name="attempt_window_minutes" value="{{ s.attempt_window_minutes }}"
+                       min="1" max="1440"
+                       class="w-full px-3 py-2 bg-surface-900 border border-emerald-900/50 rounded
+                              text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                <p class="text-xs text-emerald-500/60 mt-1">
+                    За какой период считаются попытки (1-1440 мин)
+                </p>
+            </div>
+
+            <div>
+                <label class="block text-xs text-emerald-300 mb-1">
+                    Время блокировки (мин.)
+                </label>
+                <input type="number" name="block_duration_minutes" value="{{ s.block_duration_minutes }}"
+                       min="1" max="1440"
+                       class="w-full px-3 py-2 bg-surface-900 border border-emerald-900/50 rounded
+                              text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                <p class="text-xs text-emerald-500/60 mt-1">
+                    На сколько IP блокируется (1-1440 мин)
+                </p>
+            </div>
+        </div>
+
+        <!-- Сессии -->
+        <div class="space-y-3 p-3 bg-surface-950 border border-emerald-900/30 rounded-lg">
+            <div class="text-xs uppercase tracking-wider text-sky-400/70 font-semibold">
+                🕐 Сессии (cookie)
+            </div>
+
+            <div>
+                <label class="block text-xs text-emerald-300 mb-1">
+                    Длительность cookie (дни)
+                </label>
+                <input type="number" name="cookie_lifetime_days" value="{{ s.cookie_lifetime_days }}"
+                       min="0" max="365"
+                       class="w-full px-3 py-2 bg-surface-900 border border-emerald-900/50 rounded
+                              text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                <p class="text-xs text-emerald-500/60 mt-1">
+                    Сколько дней пользователь не выходит из системы (1-365).<br>
+                    <strong>0</strong> = сессионные cookie (удаляются при закрытии браузера).
+                </p>
+            </div>
+
+            <div class="bg-amber-900/20 border border-amber-700/30 rounded p-2 text-xs text-amber-200/80">
+                ℹ️ При изменении длительности cookie текущие сессии не сбрасываются.
+                Чтобы инвалидировать все сессии, используйте кнопку «Выкинуть всех» выше.
+            </div>
+        </div>
+    </div>
+
+    <div class="flex justify-end gap-2">
+        <button type="submit"
+                class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition">
+            💾 Сохранить настройки безопасности
+        </button>
+    </div>
+
+    <div class="text-xs text-emerald-500/60">
+        Изменения применяются сразу. Brute-force защита проверяет новые лимиты при каждой попытке входа.
+    </div>
+</form>

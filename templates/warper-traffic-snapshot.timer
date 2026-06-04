@@ -1,0 +1,10 @@
+[Unit]
+Description=WARPER Traffic Snapshot Timer (every 10 min)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

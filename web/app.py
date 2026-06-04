@@ -12,7 +12,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from dotenv import load_dotenv
 from flask import (
-    Flask, Response, abort, flash, make_response,
+    Flask, Response, abort, flash, jsonify, make_response,
     redirect, render_template, request, stream_with_context, url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
@@ -138,11 +138,14 @@ def _csrf_origin_check():
 
 # ===== Безопасные cookie при HTTPS =====
 @app.before_request
-def _force_secure_cookies_on_https():
-    """Если запрос пришёл по HTTPS — включаем Secure для cookie."""
-    if request.is_secure:
-        app.config["SESSION_COOKIE_SECURE"] = True
-        app.config["REMEMBER_COOKIE_SECURE"] = True
+def _set_cookie_security_flags():
+    """
+    На HTTPS cookie должны быть Secure, на HTTP — нет.
+    Иначе после перехода HTTPS -> HTTP будет цикл логина.
+    """
+    secure = bool(request.is_secure)
+    app.config["SESSION_COOKIE_SECURE"] = secure
+    app.config["REMEMBER_COOKIE_SECURE"] = secure
 
 logging.basicConfig(
     level=logging.INFO,
@@ -183,6 +186,82 @@ def _result_partial(ok, message, refresh_target=None):
     resp.headers["HX-Trigger"] = header_value
     return resp
 
+def _absolute_web_settings_url(scheme: str, host: str | None = None) -> str:
+    status = api.get_https_status()
+    port = status.get("port")
+    if not port:
+        if ":" in request.host:
+            port = request.host.split(":", 1)[1]
+        else:
+            port = "6060"
+
+    host = host or request.host.split(":", 1)[0]
+    return f"{scheme}://{host}:{port}/web-settings"
+
+def _get_public_ipv4() -> str:
+    import subprocess
+
+    for cmd in (
+        ["curl", "-s", "-4", "--connect-timeout", "3", "ifconfig.me"],
+        ["hostname", "-I"],
+    ):
+        try:
+            out = subprocess.check_output(cmd, text=True, timeout=5).strip()
+            if out:
+                return out.split()[0]
+        except Exception:
+            pass
+    return request.host.split(":", 1)[0]
+
+
+def _absolute_panel_url(scheme: str, host: str | None = None, path: str = "/login") -> str:
+    status = api.get_https_status()
+    port = status.get("port")
+
+    if not port:
+        if ":" in request.host:
+            port = request.host.split(":", 1)[1]
+        else:
+            port = "6060"
+
+    host = host or request.host.split(":", 1)[0]
+    return f"{scheme}://{host}:{port}{path}"
+
+
+def _clear_auth_cookies(resp):
+    session_name = app.config.get("SESSION_COOKIE_NAME", "session")
+    remember_name = app.config.get("REMEMBER_COOKIE_NAME", "remember_token")
+
+    session_path = app.config.get("SESSION_COOKIE_PATH", "/")
+    remember_path = app.config.get("REMEMBER_COOKIE_PATH", "/")
+
+    session_domain = app.config.get("SESSION_COOKIE_DOMAIN")
+    remember_domain = app.config.get("REMEMBER_COOKIE_DOMAIN")
+
+    resp.delete_cookie(session_name, path=session_path, domain=session_domain)
+    resp.delete_cookie(remember_name, path=remember_path, domain=remember_domain)
+    return resp
+
+
+def _https_switch_response(message: str, scheme: str, host: str | None = None):
+    """
+    После смены HTTP/HTTPS:
+    - показываем toast
+    - сбрасываем текущую авторизацию
+    - редиректим на login по НОВОМУ абсолютному URL
+    """
+    url = _absolute_panel_url(scheme, host=host, path="/login")
+
+    triggers = {
+        "showToast": {"message": message, "category": "success"},
+        "redirectAfter": {"url": url, "delay": 2500},
+    }
+
+    logout_user()
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+    _clear_auth_cookies(resp)
+    return resp
 
 # ===== Страницы =====
 
@@ -191,6 +270,13 @@ def _result_partial(ok, message, refresh_target=None):
 def index():
     return redirect(url_for("dashboard"))
 
+@app.route("/health")
+def healthcheck_endpoint():
+    """
+    Простой healthcheck-endpoint для внутренних проверок.
+    Не требует авторизации. Возвращает JSON.
+    """
+    return jsonify({"status": "ok", "service": "warper-web"})
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -274,6 +360,11 @@ def settings_page():
 @login_required
 def web_settings_page():
     return render_template("web_settings.html")
+
+@app.route("/traffic")
+@login_required
+def traffic_page():
+    return render_template("traffic.html")
 
 # ===== HTMX: статус =====
 
@@ -540,6 +631,15 @@ def htmx_logs():
 def htmx_doctor():
     results = api.get_doctor()
     return render_template("partials/doctor_results.html", results=results)
+
+# ===== HTMX: трафик =====
+
+@app.route("/htmx/traffic")
+@login_required
+def htmx_traffic():
+    period = request.args.get("period", "today")
+    data = api.get_traffic_history()
+    return render_template("partials/traffic_stats.html", data=data, current_period=period)
 
 
 # ===== HTMX: настройки =====
@@ -842,6 +942,102 @@ def htmx_web_restart():
         return resp
     return _result_partial(False, msg)
 
+@app.route("/htmx/web/security-settings")
+@login_required
+def htmx_web_security_settings():
+    settings = api.get_security_settings_api()
+    return render_template("partials/web_security_form.html", s=settings)
+
+
+@app.route("/htmx/web/security-settings/save", methods=["POST"])
+@login_required
+def htmx_web_security_save():
+    settings = {
+        "max_attempts": request.form.get("max_attempts", "10"),
+        "block_duration_minutes": request.form.get("block_duration_minutes", "15"),
+        "attempt_window_minutes": request.form.get("attempt_window_minutes", "10"),
+        "cookie_lifetime_days": request.form.get("cookie_lifetime_days", "7"),
+    }
+    ok, msg = api.save_security_settings_api(settings)
+    return _result_partial(ok, msg)
+
+
+@app.route("/htmx/web/sessions")
+@login_required
+def htmx_web_sessions():
+    sessions = api.get_recent_logins(limit=20)
+    return render_template("partials/web_sessions.html", sessions=sessions)
+
+
+@app.route("/htmx/web/sessions/revoke-all", methods=["POST"])
+@login_required
+def htmx_web_revoke_sessions():
+    """Ротирует ключ и ПЕРЕЗАПУСКАЕТ сервис."""
+    ok, msg = api.rotate_session_secret()
+    if ok:
+        # Планируем перезапуск через 1 сек, чтобы успеть отправить ответ
+        api.restart_web_service() 
+        
+        triggers = {
+            "showToast": {"message": "Все сессии аннулированы. Перезапуск...", "category": "success"},
+            "redirectAfter": {"url": "/login", "delay": 2000},
+        }
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+        return resp
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/healthcheck")
+@login_required
+def htmx_web_healthcheck():
+    result = api.healthcheck()
+    return render_template("partials/web_healthcheck.html", h=result)
+
+# ===== HTMX: HTTPS управление =====
+
+@app.route("/htmx/web/https-status")
+@login_required
+def htmx_web_https_status():
+    status = api.get_https_status()
+    return render_template("partials/web_https_status.html", s=status)
+
+
+@app.route("/htmx/web/https/selfsigned", methods=["POST"])
+@login_required
+def htmx_web_https_selfsigned():
+    ok, msg = api.set_https_selfsigned()
+    if ok:
+        return _https_switch_response(msg, "https", host=_get_public_ipv4())
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/https/letsencrypt", methods=["POST"])
+@login_required
+def htmx_web_https_letsencrypt():
+    domain = request.form.get("domain", "").strip()
+    if not domain:
+        return _result_partial(False, "Введите домен")
+    ok, msg = api.set_https_letsencrypt(domain)
+    if ok:
+        return _https_switch_response(msg, "https", host=domain)
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/https/disable", methods=["POST"])
+@login_required
+def htmx_web_https_disable():
+    ok, msg = api.disable_https()
+    if ok:
+        return _https_switch_response(msg, "http", host=_get_public_ipv4())
+    return _result_partial(False, msg)
+
+
+@app.route("/htmx/web/https/renew", methods=["POST"])
+@login_required
+def htmx_web_https_renew():
+    ok, msg = api.renew_certificate()
+    return _result_partial(ok, msg)
 
 # ===== Контекст =====
 
