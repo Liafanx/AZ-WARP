@@ -879,10 +879,14 @@ def htmx_web_sessions():
 @app.route("/htmx/web/sessions/revoke-all", methods=["POST"])
 @login_required
 def htmx_web_revoke_sessions():
+    """Ротирует ключ и ПЕРЕЗАПУСКАЕТ сервис."""
     ok, msg = api.rotate_session_secret()
     if ok:
+        # Планируем перезапуск через 1 сек, чтобы успеть отправить ответ
+        api.restart_web_service() 
+        
         triggers = {
-            "showToast": {"message": msg, "category": "success"},
+            "showToast": {"message": "Все сессии аннулированы. Перезапуск...", "category": "success"},
             "redirectAfter": {"url": "/login", "delay": 2000},
         }
         resp = make_response("", 204)
