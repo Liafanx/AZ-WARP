@@ -296,17 +296,20 @@ def _save_blocks(data: dict) -> None:
 
 
 def _cleanup_blocks(data: dict, now: float) -> dict:
+    """Удаляет устаревшие попытки и истёкшие блокировки."""
+    settings = load_security_settings()
+    attempt_window = settings["attempt_window_minutes"] * 60
+
     data["blocks"] = {ip: until for ip, until in data["blocks"].items() if until > now}
     new_attempts = {}
     for ip, ts_list in data["attempts"].items():
         if not isinstance(ts_list, list):
             continue
-        fresh = [t for t in ts_list if now - t < ATTEMPT_WINDOW]
+        fresh = [t for t in ts_list if now - t < attempt_window]
         if fresh:
             new_attempts[ip] = fresh
     data["attempts"] = new_attempts
     return data
-
 
 def is_ip_blocked(ip: str) -> tuple[bool, int]:
     with _blocks_lock:
@@ -321,6 +324,10 @@ def is_ip_blocked(ip: str) -> tuple[bool, int]:
 
 def _register_failed_attempt(ip: str) -> tuple[int, bool]:
     """Возвращает (попыток_сейчас, заблокирован_только_что)."""
+    settings = load_security_settings()
+    max_attempts = settings["max_attempts"]
+    block_duration = settings["block_duration_minutes"] * 60
+
     with _blocks_lock:
         now = time.time()
         data = _cleanup_blocks(_load_blocks(), now)
@@ -328,11 +335,11 @@ def _register_failed_attempt(ip: str) -> tuple[int, bool]:
         attempts = data["attempts"].setdefault(ip, [])
         attempts.append(now)
 
-        if len(attempts) >= MAX_ATTEMPTS:
-            data["blocks"][ip] = now + BLOCK_DURATION
+        if len(attempts) >= max_attempts:
+            data["blocks"][ip] = now + block_duration
             data["attempts"].pop(ip, None)
             _save_blocks(data)
-            return MAX_ATTEMPTS, True
+            return max_attempts, True
 
         _save_blocks(data)
         return len(attempts), False
@@ -404,8 +411,17 @@ def init_auth(app: Flask) -> None:
     app.config.setdefault("SESSION_COOKIE_SECURE", False)  # станет True автоматом при HTTPS
     app.config.setdefault("REMEMBER_COOKIE_HTTPONLY", True)
     app.config.setdefault("REMEMBER_COOKIE_SAMESITE", "Lax")
-    app.config.setdefault("REMEMBER_COOKIE_DURATION", 60 * 60 * 24 * 7)  # 7 дней
-
+    @app.before_request
+    def _update_cookie_lifetime():
+        """Обновляем длительность cookie из настроек при каждом запросе."""
+        settings = load_security_settings()
+        days = settings.get("cookie_lifetime_days", 7)
+        if days > 0:
+            app.config["REMEMBER_COOKIE_DURATION"] = days * 24 * 60 * 60
+        else:
+            # 0 = сессионные cookie (умирают при закрытии браузера)
+            app.config["REMEMBER_COOKIE_DURATION"] = None
+            
     _ensure_default_user()
 
     @login_manager.user_loader
@@ -418,52 +434,62 @@ def init_auth(app: Flask) -> None:
         return None
 
 
+
 # ===== Проверка пароля =====
 
 def verify_credentials(username: str, password: str) -> tuple[bool, str]:
     """Проверяет пароль. Защита от brute-force и timing-атак."""
     ip = _get_client_ip()
 
-    # 1. Проверка блокировки IP
+    # Загружаем актуальные настройки безопасности
+    settings = load_security_settings()
+    max_attempts = settings["max_attempts"]
+    block_duration = settings["block_duration_minutes"] * 60
+
     blocked, seconds_left = is_ip_blocked(ip)
     if blocked:
         minutes = (seconds_left + 59) // 60
         _audit_log("blocked_attempt", ip, username)
         return False, f"Слишком много попыток. Попробуйте через {minutes} мин."
 
-    # 2. Валидация формата (на стороне клиента не доверяем)
-    username = (username or "").strip()
-    password = password or ""
+    if not username or not password:
+        _register_failed_attempt(ip)
+        _audit_log("empty_credentials", ip)
+        return False, "Неверный логин или пароль"
 
-    # 3. Защита от timing-атак: ВСЕГДА выполняем bcrypt с тем же cost.
-    # Это занимает примерно одинаковое время независимо от того,
-    # существует юзер или нет, корректен пароль или нет.
-    user_exists = bool(LOGIN_RE.match(username)) and (
-        PASSWORD_MIN_LEN <= len(password) <= PASSWORD_MAX_LEN
-    )
+    username = username.strip()
+    if not LOGIN_RE.match(username):
+        _register_failed_attempt(ip)
+        _audit_log("invalid_login_format", ip, username)
+        return False, "Неверный логин или пароль"
+
+    if not (PASSWORD_MIN_LEN <= len(password) <= PASSWORD_MAX_LEN):
+        _register_failed_attempt(ip)
+        _audit_log("invalid_password_length", ip, username)
+        return False, "Неверный логин или пароль"
 
     users = _load_users()
-    user_data = users.get(username) if user_exists else None
-    stored_hash = user_data["password_hash"] if user_data else _FAKE_BCRYPT_HASH
+    user_data = users.get(username)
 
-    # bcrypt всегда выполняется — это самая дорогая операция
+    fake_hash = "$2b$12$fakefakefakefakefakefakefakefakefakefakefakefakefakefakefa"
+    stored_hash = user_data["password_hash"] if user_data else fake_hash
+
     try:
         password_ok = bcrypt.check_password_hash(stored_hash, password)
-    except (ValueError, Exception):
+    except ValueError:
         password_ok = False
 
-    # Окончательное решение
-    if not user_exists or not user_data or not password_ok:
+    if not user_data or not password_ok:
         attempts, just_blocked = _register_failed_attempt(ip)
         if just_blocked:
-            _audit_log("blocked_now", ip, username, f"after {MAX_ATTEMPTS} attempts")
-            return False, f"Превышено число попыток. IP заблокирован на {BLOCK_DURATION // 60} мин."
-        _audit_log("login_failed", ip, username, f"attempt={attempts}/{MAX_ATTEMPTS}")
-        remaining = MAX_ATTEMPTS - attempts
+            _audit_log("blocked_now", ip, username, f"after {max_attempts} attempts")
+            return False, f"Превышено число попыток. IP заблокирован на {block_duration // 60} мин."
+        _audit_log("login_failed", ip, username, f"attempt={attempts}/{max_attempts}")
+        remaining = max_attempts - attempts
         return False, f"Неверный логин или пароль (осталось попыток: {remaining})"
 
-    # Успех
     user_data["last_login"] = datetime.now().isoformat(timespec="seconds")
+    user_data["last_login_ip"] = ip
     users[username] = user_data
     _save_users(users)
 
@@ -471,7 +497,6 @@ def verify_credentials(username: str, password: str) -> tuple[bool, str]:
     _audit_log("login_success", ip, username)
 
     return True, ""
-
 
 def update_credentials(new_username: str, new_password: str, current_username: str) -> tuple[bool, str]:
     """Меняет учётные данные и ротирует SECRET_KEY."""
