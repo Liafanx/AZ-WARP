@@ -1013,7 +1013,7 @@ download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-
 # Скачиваем модули lib/
 echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
 mkdir -p "$WARPER_DIR/lib"
-for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic; do
+for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
     download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
 done
 
