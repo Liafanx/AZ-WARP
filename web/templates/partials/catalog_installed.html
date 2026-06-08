@@ -1,0 +1,71 @@
+{% if installed %}
+<div class="divide-y divide-emerald-900/20">
+    {% for item in installed %}
+    <div class="px-5 py-4 flex items-center justify-between hover:bg-emerald-900/10">
+        <div class="min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+                <span class="font-mono text-sm font-medium text-emerald-100">
+                    {{ item.name }}
+                </span>
+                <span class="text-xs text-emerald-500/60">
+                    {{ item.domains_count }} доменов
+                </span>
+            </div>
+            <div class="text-xs text-emerald-500/60">
+                Добавлен: {{ item.added_at[:10] if item.added_at else '?' }}
+                {% if item.updated_at and item.updated_at != item.added_at %}
+                    · Обновлён: {{ item.updated_at[:10] }}
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 flex-shrink-0">
+            <!-- Обновить этот каталог -->
+            <button hx-post="{{ url_for('htmx_catalog_update') }}"
+                    hx-swap="none"
+                    hx-vals='{"name":"{{ item.name }}"}'
+                    data-confirm="Обновить каталог {{ item.name }}? Домены будут пересинхронизированы."
+                    class="px-3 py-1.5 text-xs bg-surface-950 hover:bg-emerald-900/30
+                           border border-emerald-900/40 text-emerald-300 rounded transition
+                           flex items-center gap-2">
+                <span class="htmx-indicator inline-block w-3 h-3 border-2 border-emerald-300
+                             border-t-transparent rounded-full animate-spin"></span>
+                ↻ Обновить
+            </button>
+
+            <!-- Удалить -->
+            <button hx-post="{{ url_for('htmx_catalog_remove') }}"
+                    hx-swap="none"
+                    hx-vals='{"name":"{{ item.name }}"}'
+                    data-confirm="Удалить каталог {{ item.name }}? Домены будут удалены из списка WARPER."
+                    class="px-3 py-1.5 text-xs bg-red-700/30 hover:bg-red-700/50
+                           border border-red-700/40 text-red-300 rounded transition">
+                Удалить
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- Обновить все -->
+    <div class="px-5 py-3 bg-surface-950/50">
+        <button hx-post="{{ url_for('htmx_catalog_update') }}"
+                hx-swap="none"
+                hx-vals='{"name":""}'
+                data-confirm="Обновить все установленные каталоги? Это может занять несколько минут."
+                class="px-4 py-2 text-xs bg-brand-700/30 hover:bg-brand-700/50
+                       border border-brand-700/40 text-brand-300 rounded-lg transition
+                       flex items-center gap-2">
+            <span class="htmx-indicator inline-block w-3 h-3 border-2 border-brand-300
+                         border-t-transparent rounded-full animate-spin"></span>
+            ↻ Обновить все ({{ installed|length }})
+        </button>
+    </div>
+</div>
+
+{% else %}
+<div class="p-8 text-center text-emerald-500/60">
+    <div class="text-2xl mb-2">📭</div>
+    <div class="text-sm">Нет установленных каталогов</div>
+    <div class="text-xs mt-1">Найдите и добавьте категорию через поиск выше</div>
+</div>
+{% endif %}
