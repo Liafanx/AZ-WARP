@@ -42,6 +42,10 @@ def _run_warper(*args: str, timeout: int = 60) -> tuple[bool, str, str]:
     rc, out, err = _run(cmd, timeout=timeout)
     return rc == 0, out.strip(), err.strip()
 
+def _strip_ansi(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
 # ===== Статус =====
 
@@ -1756,7 +1760,7 @@ def catalog_add(name: str) -> tuple[bool, str]:
         return False, "Некорректное имя каталога"
 
     ok, out, err = _run_warper("catalog", "add", name, timeout=120)
-    return ok, (out or err).strip()
+    return ok, _strip_ansi((out or err).strip())
 
 
 def catalog_remove(name: str) -> tuple[bool, str]:
@@ -1766,7 +1770,7 @@ def catalog_remove(name: str) -> tuple[bool, str]:
         return False, "Некорректное имя каталога"
 
     ok, out, err = _run_warper("catalog", "remove", name, timeout=60)
-    return ok, (out or err).strip()
+    return ok, _strip_ansi((out or err).strip())
 
 
 def catalog_update(name: str = "") -> tuple[bool, str]:
@@ -1778,7 +1782,7 @@ def catalog_update(name: str = "") -> tuple[bool, str]:
         ok, out, err = _run_warper("catalog", "update", name, timeout=300)
     else:
         ok, out, err = _run_warper("catalog", "update", timeout=300)
-    return ok, (out or err).strip()
+    return ok, _strip_ansi((out or err).strip())
 
 
 def catalog_refresh_cache() -> tuple[bool, str]:
@@ -1787,10 +1791,10 @@ def catalog_refresh_cache() -> tuple[bool, str]:
     _catalog_search_cache["data"].clear()
 
     ok, out, err = _run_warper("catalog", "refresh", timeout=45)
-    return ok, (out or err).strip()
+    return ok, _strip_ansi((out or err).strip())
 
 
 def _validate_catalog_name(name: str) -> bool:
     """Проверяет что имя каталога содержит только безопасные символы."""
     import re
-    return bool(re.match(r'^[a-z0-9][a-z0-9_-]*$', name)) and len(name) <= 64
+    return bool(re.match(r'^[a-z0-9][a-z0-9_.!-]*$', name)) and len(name) <= 64
