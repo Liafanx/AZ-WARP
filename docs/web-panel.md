@@ -50,6 +50,11 @@ systemd timer (5 мин)
 
 Веб-панель **не дублирует логику** WARPER — она вызывает CLI-команды `warper add`, `warper sync`, `warper mode wg`, и т.д.
 
+- **Каталог готовых доменов**: поиск и подключение готовых списков из community-репозитория.
+- Поиск идёт по кэшированному списку категорий.
+- Предпросмотр показывает итоговые домены после обработки `include:` и оптимизации.
+- Добавление выполняется через SSE-прогресс, так как некоторые категории могут включать зависимые списки.
+
 ---
 
 <a id="install"></a>
@@ -118,6 +123,8 @@ warper
 │   ├── logs.html
 │   ├── diagnostics.html
 │   ├── settings.html
+│   ├── catalog.html
+│   ├── traffic.html
 │   └── partials/             # HTMX-фрагменты
 │       ├── status_summary.html
 │       ├── domains_list.html
@@ -125,6 +132,9 @@ warper
 │       ├── logs_content.html
 │       ├── doctor_results.html
 │       ├── singbox_status.html
+│       ├── catalog_search_results.html
+│       ├── catalog_installed.html
+│       └── catalog_preview.html
 │       ├── updates_status.html
 │       └── update_progress.html
 └── data/                     # БД (chmod 700, только root)
@@ -132,6 +142,8 @@ warper
     ├── secret.key            # Flask SECRET_KEY (chmod 600)
     ├── blocks.json           # brute-force блокировки (chmod 600)
     └── auth.log              # аудит входов (chmod 600, авторотация)
+| `/root/warper/catalog.json` | Метаданные добавленных каталожных списков |
+| `/root/warper/catalog-cache.json` | Кэш списка категорий каталога |
 ```
 
 ### Системные файлы
