@@ -42,6 +42,10 @@ def _run_warper(*args: str, timeout: int = 60) -> tuple[bool, str, str]:
     rc, out, err = _run(cmd, timeout=timeout)
     return rc == 0, out.strip(), err.strip()
 
+def _strip_ansi(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
 # ===== Статус =====
 
@@ -1683,3 +1687,114 @@ def get_traffic_history() -> dict[str, Any]:
     result["uptime"] = today.get("uptime", "не запущен")
 
     return result
+
+# ===== Каталог доменов =====
+
+_catalog_search_cache: dict[str, Any] = {"ts": 0, "data": {}}
+_CATALOG_CACHE_TTL = 300  # 5 минут для веб-кэша
+
+
+def catalog_search(query: str = "", force: bool = False) -> list[dict[str, Any]]:
+    """
+    Поиск категорий в каталоге v2fly/domain-list-community.
+    Кэш на 5 минут чтобы не дёргать bash при каждом нажатии клавиши.
+    """
+    import time
+
+    cache_key = query.strip().lower()
+    now = time.time()
+
+    if not force and cache_key in _catalog_search_cache["data"]:
+        cached = _catalog_search_cache["data"][cache_key]
+        if now - cached["ts"] < _CATALOG_CACHE_TTL:
+            return cached["result"]
+
+    ok, out, err = _run_warper("catalog", "json", "search", query.strip(), timeout=45)
+    if not ok:
+        return []
+
+    try:
+        result = json.loads(out)
+        if not isinstance(result, list):
+            return []
+        _catalog_search_cache["data"][cache_key] = {"ts": now, "result": result}
+        return result
+    except json.JSONDecodeError:
+        return []
+
+
+def catalog_get_installed() -> list[dict[str, Any]]:
+    """Возвращает список установленных каталогов с метаданными."""
+    ok, out, _ = _run_warper("catalog", "json", "installed", timeout=10)
+    if not ok:
+        return []
+    try:
+        result = json.loads(out)
+        return result if isinstance(result, list) else []
+    except json.JSONDecodeError:
+        return []
+
+
+def catalog_preview(name: str) -> dict[str, Any]:
+    """
+    Предварительный просмотр доменов каталога.
+    Скачивает и резолвит — может занять до 30 сек для больших списков.
+    """
+    name = name.strip().lower()
+    if not name or not _validate_catalog_name(name):
+        return {"error": "Некорректное имя каталога"}
+
+    ok, out, err = _run_warper("catalog", "json", "show", name, timeout=60)
+    if not ok:
+        return {"error": err or "Не удалось загрузить каталог"}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {"error": "Невалидный ответ"}
+
+
+def catalog_add(name: str) -> tuple[bool, str]:
+    """Добавляет каталог доменов в domains.txt."""
+    name = name.strip().lower()
+    if not name or not _validate_catalog_name(name):
+        return False, "Некорректное имя каталога"
+
+    ok, out, err = _run_warper("catalog", "add", name, timeout=120)
+    return ok, _strip_ansi((out or err).strip())
+
+
+def catalog_remove(name: str) -> tuple[bool, str]:
+    """Удаляет каталог доменов из domains.txt."""
+    name = name.strip().lower()
+    if not name or not _validate_catalog_name(name):
+        return False, "Некорректное имя каталога"
+
+    ok, out, err = _run_warper("catalog", "remove", name, timeout=60)
+    return ok, _strip_ansi((out or err).strip())
+
+
+def catalog_update(name: str = "") -> tuple[bool, str]:
+    """Обновляет конкретный или все установленные каталоги."""
+    if name:
+        name = name.strip().lower()
+        if not _validate_catalog_name(name):
+            return False, "Некорректное имя каталога"
+        ok, out, err = _run_warper("catalog", "update", name, timeout=300)
+    else:
+        ok, out, err = _run_warper("catalog", "update", timeout=300)
+    return ok, _strip_ansi((out or err).strip())
+
+
+def catalog_refresh_cache() -> tuple[bool, str]:
+    """Принудительно обновляет кэш списка категорий."""
+    # Сбрасываем веб-кэш
+    _catalog_search_cache["data"].clear()
+
+    ok, out, err = _run_warper("catalog", "refresh", timeout=45)
+    return ok, _strip_ansi((out or err).strip())
+
+
+def _validate_catalog_name(name: str) -> bool:
+    """Проверяет что имя каталога содержит только безопасные символы."""
+    import re
+    return bool(re.match(r'^[a-z0-9][a-z0-9_.!-]*$', name)) and len(name) <= 64

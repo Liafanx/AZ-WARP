@@ -366,6 +366,11 @@ def web_settings_page():
 def traffic_page():
     return render_template("traffic.html")
 
+@app.route("/catalog")
+@login_required
+def catalog_page():
+    return render_template("catalog.html")
+
 # ===== HTMX: статус =====
 
 @app.route("/htmx/status-summary")
@@ -845,6 +850,142 @@ def api_update_stream():
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
+    )
+
+# ===== HTMX: Каталог доменов =====
+
+@app.route("/htmx/catalog/search")
+@login_required
+def htmx_catalog_search():
+    query = request.args.get("q", "").strip()
+    force = request.args.get("force") == "1"
+    results = api.catalog_search(query, force=force)
+    installed = api.catalog_get_installed()
+    installed_names = {i["name"] for i in installed}
+    return render_template(
+        "partials/catalog_search_results.html",
+        results=results,
+        installed_names=installed_names,
+        query=query,
+    )
+
+
+@app.route("/htmx/catalog/installed")
+@login_required
+def htmx_catalog_installed():
+    installed = api.catalog_get_installed()
+    return render_template("partials/catalog_installed.html", installed=installed)
+
+
+@app.route("/htmx/catalog/preview")
+@login_required
+def htmx_catalog_preview():
+    name = request.args.get("name", "").strip()
+    if not name:
+        return _result_partial(False, "Не указано имя каталога")
+    data = api.catalog_preview(name)
+    return render_template("partials/catalog_preview.html", data=data, name=name)
+
+
+@app.route("/htmx/catalog/add", methods=["POST"])
+@login_required
+def htmx_catalog_add():
+    name = request.form.get("name", "").strip()
+    if not name:
+        return _result_partial(False, "Не указано имя каталога")
+    ok, msg = api.catalog_add(name)
+    return _result_partial(ok, msg or ("Каталог добавлен" if ok else "Ошибка"), "refreshDomains")
+
+
+@app.route("/htmx/catalog/remove", methods=["POST"])
+@login_required
+def htmx_catalog_remove():
+    name = request.form.get("name", "").strip()
+    if not name:
+        return _result_partial(False, "Не указано имя каталога")
+    ok, msg = api.catalog_remove(name)
+    return _result_partial(ok, msg or "Удалено", "refreshDomains")
+
+
+@app.route("/htmx/catalog/update", methods=["POST"])
+@login_required
+def htmx_catalog_update():
+    name = request.form.get("name", "").strip()
+    ok, msg = api.catalog_update(name)
+    return _result_partial(ok, msg or "Обновлено", "refreshDomains")
+
+
+@app.route("/htmx/catalog/refresh-cache", methods=["POST"])
+@login_required
+def htmx_catalog_refresh_cache():
+    ok, msg = api.catalog_refresh_cache()
+    triggers = {
+        "showToast": {
+            "message": msg or ("Кэш обновлён" if ok else "Ошибка"),
+            "category": "success" if ok else "error"
+        },
+        "refreshCatalog": True
+    }
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = _json.dumps(triggers, ensure_ascii=True)
+    return resp
+
+
+@app.route("/api/catalog/add-stream")
+@login_required
+def api_catalog_add_stream():
+    """
+    SSE-стрим добавления каталога.
+    Используется для долгих операций (резолвинг include:, крупные списки).
+    """
+    name = request.args.get("name", "").strip().lower()
+    if not name:
+        def _err():
+            import json as _j
+            yield f"event: error\ndata: {_j.dumps({'message': 'Не указано имя'})}\n\n"
+        return Response(_err(), mimetype="text/event-stream")
+
+    import subprocess, re as _re, json as _j, os as _os
+
+    env = _os.environ.copy()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    env["TERM"] = "dumb"
+    env["LANG"] = "C.UTF-8"
+    env["LC_ALL"] = "C.UTF-8"
+
+    proc = subprocess.Popen(
+        ["/usr/local/bin/warper", "catalog", "add", name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        env=env,
+        bufsize=1,
+        text=True,
+        start_new_session=True,
+    )
+
+    @stream_with_context
+    def _stream():
+        yield f"event: start\ndata: {_j.dumps({'message': f'Загрузка каталога {name}...'})}\n\n"
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                clean = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", line).rstrip()
+                if not clean:
+                    continue
+                yield f"event: log\ndata: {_j.dumps({'line': clean})}\n\n"
+            rc = proc.wait(timeout=120)
+            yield f"event: done\ndata: {_j.dumps({'rc': rc, 'success': rc == 0, 'name': name})}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {_j.dumps({'message': str(e)})}\n\n"
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return Response(
+        _stream(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 # ===== HTMX: настройки веб-панели =====

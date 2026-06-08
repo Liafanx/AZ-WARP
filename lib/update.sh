@@ -113,7 +113,7 @@ update_warper() {
 
     # Модули lib/ (cli добавлен в 1.3.3)
     mkdir -p "$tmpdir/lib"
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli; do
+    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         download_file_safe "$REPO_URL/lib/${_libfile}.sh" \
             "$tmpdir/lib/${_libfile}.sh" "lib/${_libfile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
