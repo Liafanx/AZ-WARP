@@ -232,6 +232,8 @@ if [ "$KEEP_DOMAINS" = true ]; then
         -not -name 'slave_mode.conf' \
         -not -name 'wg_mode.conf' \
         -not -name 'traffic.json' \
+        -not -name 'catalog.json' \
+        -not -name 'catalog-cache.json' \
         -not -path '*/wgcf/*' \
         -delete 2>/dev/null
     rm -rf /root/warper/download 2>/dev/null
