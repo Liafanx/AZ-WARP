@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+
+{% block title %}Каталог доменов{% endblock %}
+{% block heading %}Каталог готовых списков{% endblock %}
+
+{% block content %}
+
+<div class="space-y-6">
+
+    <!-- ===== Поиск ===== -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <h3 class="text-sm font-semibold text-emerald-200">Поиск по каталогу</h3>
+                <p class="text-xs text-emerald-500/60 mt-0.5">
+                    Источник: <a href="https://github.com/v2fly/domain-list-community"
+                    class="text-brand-400 hover:underline" target="_blank">v2fly/domain-list-community</a>
+                    (~1400 категорий)
+                </p>
+            </div>
+            <button hx-post="{{ url_for('htmx_catalog_refresh_cache') }}"
+                    hx-swap="none"
+                    class="px-3 py-1.5 text-xs bg-surface-950 hover:bg-emerald-900/30 border
+                           border-emerald-900/40 text-emerald-300 rounded transition flex items-center gap-2">
+                <span class="htmx-indicator inline-block w-3 h-3 border-2 border-emerald-300
+                             border-t-transparent rounded-full animate-spin"></span>
+                ↻ Обновить кэш
+            </button>
+        </div>
+
+        <div class="flex gap-2">
+            <input type="text"
+                   id="catalog-search-input"
+                   name="q"
+                   placeholder="tiktok, netflix, telegram..."
+                   hx-get="{{ url_for('htmx_catalog_search') }}"
+                   hx-trigger="input changed delay:400ms, search"
+                   hx-target="#catalog-results"
+                   hx-swap="innerHTML"
+                   hx-indicator="#catalog-search-indicator"
+                   autocomplete="off"
+                   class="flex-1 px-4 py-2.5 bg-surface-950 border border-emerald-900/50 rounded-lg
+                          text-emerald-100 placeholder-emerald-700 text-sm
+                          focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none">
+            <div id="catalog-search-indicator"
+                 class="htmx-indicator flex items-center px-3 text-emerald-500">
+                <div class="w-4 h-4 border-2 border-emerald-500 border-t-transparent
+                            rounded-full animate-spin"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Результаты поиска ===== -->
+    <div id="catalog-results"
+         hx-get="{{ url_for('htmx_catalog_search') }}"
+         hx-trigger="load, refreshCatalog from:body"
+         hx-swap="innerHTML">
+        <div class="bg-surface-900/40 border border-emerald-900/30 rounded-xl p-8 text-center
+                    text-emerald-500/60">
+            Загрузка популярных категорий...
+        </div>
+    </div>
+
+    <!-- ===== Установленные ===== -->
+    <div class="bg-surface-900/60 border border-emerald-900/40 rounded-xl overflow-hidden">
+        <div class="px-5 py-3 border-b border-emerald-900/40">
+            <h3 class="text-sm font-semibold text-emerald-200">Установленные каталоги</h3>
+            <p class="text-xs text-emerald-500/60 mt-0.5">
+                Добавленные через каталог списки доменов
+            </p>
+        </div>
+        <div id="catalog-installed"
+             hx-get="{{ url_for('htmx_catalog_installed') }}"
+             hx-trigger="load, refreshDomains from:body, refreshCatalog from:body"
+             hx-swap="innerHTML">
+            <div class="p-8 text-center text-emerald-500/60">Загрузка...</div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ===== Модалка: предпросмотр ===== -->
+<div id="modal-catalog-preview"
+     class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl
+                w-full max-w-lg max-h-[80vh] flex flex-col">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between
+                    flex-shrink-0">
+            <h3 class="text-lg font-semibold text-emerald-100">
+                Предпросмотр: <span id="preview-name" class="font-mono text-brand-400"></span>
+            </h3>
+            <button onclick="closeModal('modal-catalog-preview')"
+                    class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">
+                &times;
+            </button>
+        </div>
+        <div id="modal-catalog-preview-content"
+             class="flex-1 overflow-y-auto scroll-thin p-6">
+            <div class="text-emerald-500/60 text-center py-8">Загрузка...</div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== Модалка: прогресс добавления ===== -->
+<div id="modal-catalog-adding"
+     class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl
+                w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">
+                Добавление: <span id="adding-name" class="font-mono text-brand-400"></span>
+            </h3>
+        </div>
+        <div id="adding-console"
+             class="font-mono text-xs leading-relaxed max-h-[300px] overflow-y-auto
+                    scroll-thin p-4 text-emerald-300 bg-black/40 min-h-[100px]">
+        </div>
+        <div class="px-6 py-3 border-t border-emerald-900/40 flex items-center justify-between">
+            <div id="adding-status" class="text-xs text-emerald-500/70">
+                Загрузка и разрешение доменов...
+            </div>
+            <button id="adding-close-btn"
+                    onclick="closeModal('modal-catalog-adding')"
+                    class="hidden px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white
+                           rounded-lg text-sm font-medium transition">
+                Готово
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// Предпросмотр каталога
+function previewCatalog(name) {
+    document.getElementById('preview-name').textContent = name;
+    const content = document.getElementById('modal-catalog-preview-content');
+    content.innerHTML = '<div class="text-emerald-500/60 text-center py-8">Загрузка...</div>';
+    openModal('modal-catalog-preview');
+    htmx.ajax('GET',
+        '{{ url_for("htmx_catalog_preview") }}?name=' + encodeURIComponent(name),
+        {target: '#modal-catalog-preview-content', swap: 'innerHTML'}
+    );
+}
+
+// Добавление каталога через SSE
+function addCatalogWithProgress(name) {
+    document.getElementById('adding-name').textContent = name;
+    const console_ = document.getElementById('adding-console');
+    const status = document.getElementById('adding-status');
+    const closeBtn = document.getElementById('adding-close-btn');
+
+    console_.innerHTML = '';
+    status.textContent = 'Загрузка и разрешение доменов...';
+    status.className = 'text-xs text-emerald-500/70';
+    closeBtn.classList.add('hidden');
+
+    openModal('modal-catalog-adding');
+
+    function appendLine(text, cls) {
+        const div = document.createElement('div');
+        if (cls) div.className = cls;
+        div.textContent = text;
+        console_.appendChild(div);
+        console_.scrollTop = console_.scrollHeight;
+    }
+
+    const evtSource = new EventSource(
+        '/api/catalog/add-stream?name=' + encodeURIComponent(name)
+    );
+
+    evtSource.addEventListener('start', function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            appendLine(d.message, 'text-brand-400');
+        } catch(err) {}
+    });
+
+    evtSource.addEventListener('log', function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            let cls = 'text-emerald-300';
+            if (d.line.match(/Добавлено|Найдено|успешно/i)) cls = 'text-brand-400';
+            else if (d.line.match(/Пропущено|уже|были/i)) cls = 'text-amber-400';
+            else if (d.line.match(/Ошибка|ERROR/i)) cls = 'text-red-400';
+            appendLine(d.line, cls);
+        } catch(err) {}
+    });
+
+    evtSource.addEventListener('done', function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            evtSource.close();
+            if (d.success) {
+                status.textContent = '✓ Каталог успешно добавлен';
+                status.className = 'text-xs text-brand-400';
+                // Обновляем список доменов и установленных
+                htmx.trigger(document.body, 'refreshDomains');
+                htmx.trigger(document.body, 'refreshCatalog');
+            } else {
+                status.textContent = '✕ Ошибка добавления';
+                status.className = 'text-xs text-red-400';
+            }
+            closeBtn.classList.remove('hidden');
+        } catch(err) {}
+    });
+
+    evtSource.addEventListener('error', function(e) {
+        evtSource.close();
+        status.textContent = 'Ошибка соединения';
+        status.className = 'text-xs text-red-400';
+        closeBtn.classList.remove('hidden');
+    });
+}
+</script>
+
+{% endblock %}
