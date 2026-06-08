@@ -1208,7 +1208,7 @@ cli_web_update() {
 
     # Список файлов которые нужно обновить
     echo -e "${CYAN}Обновление Python-кода...${NC}"
-    for f in app.py auth.py warper_api.py requirements.txt; do
+    for f in app.py auth.py web_api.py requirements.txt; do
         if [ -f "repo/web/$f" ]; then
             cp "repo/web/$f" "$web_dir/$f"
             echo -e "  ✓ $f"
@@ -1229,6 +1229,18 @@ cli_web_update() {
         rm -rf "$web_dir/static"
         cp -r "repo/web/static" "$web_dir/static"
         echo -e "  ✓ static/"
+    fi
+
+    echo -e "${CYAN}Обновление Python API (source-only)...${NC}"
+    if [ -d "repo/py/warper_api" ]; then
+        mkdir -p "$WARPER_DIR/py/warper_api"
+        cp -r "repo/py/warper_api/." "$WARPER_DIR/py/warper_api/"
+        echo -e "  ✓ py/warper_api/"
+    fi
+    if [ -f "repo/py/setup.py" ]; then
+        mkdir -p "$WARPER_DIR/py"
+        cp "repo/py/setup.py" "$WARPER_DIR/py/setup.py"
+        echo -e "  ✓ py/setup.py"
     fi
 
     # Восстанавливаем критичные файлы
