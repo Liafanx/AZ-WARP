@@ -19,7 +19,7 @@ from flask_login import current_user, login_required, login_user, logout_user
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import warper_api as api
+import web_api as api
 from auth import (
     AdminUser, init_auth, update_credentials, verify_credentials,
     get_or_create_secret_key, is_ip_blocked,

@@ -25,8 +25,9 @@ FullVPN-клиенты → kresd@2 → всё → встроенный WARP ав
 | ip-ranges.txt | /root/warper/ | Желаемые CIDR (редактируется пользователем) |
 | ip-ranges.applied | /root/warper/ |Последнее применённое состояние |
 | warper-include-ips.txt | /root/antizapret/config/ | Экспорт в AntiZapret |
-| catalog.json | /root/warper/ | Метаданные добавленных каталожных списков |
-| catalog-cache.json | /root/warper/ | Кэш списка доступных категорий |
+| catalog.json | /root/warper/ | Метаданные установленных каталогов |
+| catalog-cache.json | /root/warper/ | Кэш списка категорий (TTL 24ч) |
+| py/warper_api/ | /root/warper/py/ | Python API пакет |
 
 ## Модульная структура (WARPER ≥1.3.1)
 
