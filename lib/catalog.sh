@@ -38,7 +38,6 @@ catalog_refresh_cache() {
     local tmp api_response
     tmp=$(mktemp)
 
-    # Получаем дерево репозитория (рекурсивно)
     api_response=$(curl -sS --max-time 30 \
         -H "User-Agent: warper/1.0" \
         -H "Accept: application/vnd.github.v3+json" \
@@ -50,7 +49,6 @@ catalog_refresh_cache() {
         return 1
     fi
 
-    # Проверяем что это валидный JSON с tree
     if ! echo "$api_response" | jq -e '.tree' >/dev/null 2>&1; then
         echo -e "${RED}Невалидный ответ GitHub API${NC}" >&2
         rm -f "$tmp"
@@ -60,26 +58,29 @@ catalog_refresh_cache() {
     local now
     now=$(date +%s)
 
-    # Извлекаем только файлы из data/ (без поддиректорий)
-    # Формат: имя файла = имя категории
     local popular_json
     popular_json=$(printf '%s\n' $CATALOG_POPULAR | jq -R . | jq -s .)
 
-    echo "$api_response" | jq --argjson popular "$popular_json" --argjson ts "$now" '
+    echo "$api_response" | jq \
+        --argjson popular "$popular_json" \
+        --argjson ts "$now" '
     {
         cached_at: $ts,
-        categories: [
-            .tree[]
-            | select(.path | startswith("data/"))
-            | select(.path | contains("/") | . == ((.path | split("/") | length) == 2))
-            | select(.type == "blob")
-            | .name = (.path | split("/") | last)
-            | select(.name | test("^[a-z0-9]"))
-            | {
-                name: .name,
-                popular: ((.name | ascii_downcase) as $n | ($popular | any(. == $n)))
-              }
-        ] | sort_by(.name)
+        categories: (
+            [
+                .tree[]
+                | select(.type == "blob")
+                | select(.path | startswith("data/"))
+                | select((.path | split("/") | length) == 2)
+                | (.path | split("/") | last) as $name
+                | select($name | test("^[A-Za-z0-9][A-Za-z0-9._!-]*$"))
+                | {
+                    name: $name,
+                    popular: (($name | ascii_downcase) as $n | (($popular | index($n)) != null))
+                }
+            ]
+            | sort_by(.name)
+        )
     }' > "$tmp" 2>/dev/null
 
     if [ ! -s "$tmp" ]; then
