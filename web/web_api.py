@@ -1,5 +1,5 @@
 """
-warper_api.py — обёртка для веб-панели.
+web_api.py — обёртка для веб-панели.
 
 Импортирует всё из пакета warper_api (/root/warper/py/warper_api/)
 и адаптирует под формат Flask endpoints (tuple[bool, str]).
