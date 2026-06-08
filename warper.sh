@@ -112,7 +112,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         return 1
     }
 
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic; do
+    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
@@ -139,6 +139,7 @@ for _lib in \
     "$WARPER_LIB/update.sh" \
     "$WARPER_LIB/cli.sh" \
     "$WARPER_LIB/traffic.sh" \
+    "$WARPER_LIB/catalog.sh" \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
@@ -254,7 +255,12 @@ case "${1:-}" in
     trafficfinalize)
         traffic_finalize_session 2>/dev/null || true
         exit $?
-        ;;    
+        ;;
+    catalog)
+        shift
+        cli_catalog "$@"
+        exit $?
+        ;;
 
     # ===== Команды для веб-панели =====
     toggle)   cli_toggle_warper; exit $? ;;
