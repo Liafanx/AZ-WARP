@@ -21,7 +21,8 @@
 11. [FAQ](#faq)
 12. [Известные ограничения](#limitations)
 13. [Документация](#docs)
-14. [Поддержать проект](#support)
+14. [Python API](#python-api)
+15. [Поддержать проект](#support)
 
 ---
 
@@ -581,6 +582,25 @@ warper catalog add tiktok
 WARPER рекурсивно обрабатывает include: зависимости, оставляет только совместимые с DNS-маршрутизацией правила (domain и full), убирает дубликаты и не плодит одинаковые домены в domains.txt.
 
 </details>
+
+<details>
+<summary><b>Есть ли Python API для интеграции?</b></summary>
+
+Да. Пакет `warper_api` устанавливается автоматически с WARPER. Для сторонних проектов:
+
+```bash
+pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
+```
+
+```python
+from warper_api import WarperAPI
+w = WarperAPI()
+w.add_domain("example.com")
+```
+
+Подробности: [docs/python-api.md](docs/python-api.md)
+</details>
+
 ---
 
 <a id="limitations"></a>
@@ -601,6 +621,8 @@ WARPER рекурсивно обрабатывает include: зависимос
 - При crash/kill sing-box без graceful shutdown может потеряться до 5 минут данных трафика (между snapshot'ами таймера)
 - Каталожные списки доменов используют внешний community-репозиторий; для поиска и обновления требуется доступ к GitHub
 - Правила типов `keyword:` и `regexp:` из внешнего каталога не импортируются, так как WARPER работает через доменную DNS-маршрутизацию и использует только совместимые `domain:` / `full:` записи
+- Python API работает через CLI `warper` (subprocess) — требует root и установленный WARPER
+
 ---
 
 <a id="docs"></a>
@@ -613,6 +635,47 @@ WARPER рекурсивно обрабатывает include: зависимос
 - [Архитектура и совместимость с VPN_WARP](docs/architecture.md)
 - [Устранение неполадок](docs/troubleshooting.md)
 - [WEB панель](docs/web-panel.md)
+- [Python API](docs/python-api.md)
+
+---
+
+<a id="python-api"></a>
+## 🐍 Python API
+
+WARPER предоставляет Python-пакет для интеграции в сторонние проекты.
+
+### Установка
+
+```bash
+pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
+```
+
+### Использование
+
+```python
+from warper_api import WarperAPI
+
+w = WarperAPI()
+print(w.version)           # "1.3.8"
+print(w.is_active())       # True
+
+w.add_domain("example.com")
+w.catalog_add("tiktok")
+w.set_mtu(1400)
+
+t = w.get_traffic("today")
+print(t.data["period_rx"]) # байты
+```
+
+### Требования
+
+- WARPER установлен на сервере
+- Python 3.9+
+- Запуск от root
+- Не требует web-панели
+
+Подробная документация: [docs/python-api.md](docs/python-api.md)
+
 ---
 
 <a id="support"></a>
