@@ -36,6 +36,10 @@ rollback_warper_update() {
         rm -rf "$WARPER_DIR/lib"
         cp -a "$backupdir/lib" "$WARPER_DIR/lib"
     fi
+    if [ -d "$backupdir/py" ]; then
+        rm -rf "$WARPER_DIR/py"
+        cp -a "$backupdir/py" "$WARPER_DIR/py"
+    fi
     if [ -d "$backupdir/menus" ]; then
         rm -rf "$WARPER_DIR/menus"
         cp -a "$backupdir/menus" "$WARPER_DIR/menus"
@@ -119,6 +123,16 @@ update_warper() {
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
     done
 
+    # Python API (добавлено в 1.4.0)
+    mkdir -p "$tmpdir/py/warper_api"
+    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status; do
+        download_file_safe "$REPO_URL/py/warper_api/${_pyfile}.py" \
+            "$tmpdir/py/warper_api/${_pyfile}.py" \
+            "py/warper_api/${_pyfile}.py" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    done
+    download_file_safe "$REPO_URL/py/setup.py" \
+        "$tmpdir/py/setup.py" "py/setup.py" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+
     # Модули menus/ (web-menu добавлен в 1.3.3)
     mkdir -p "$tmpdir/menus"
     for _menufile in main settings singbox-menu ip-menu web-menu; do
@@ -183,6 +197,9 @@ update_warper() {
     # Backup модулей
     if [ -d "$WARPER_DIR/lib" ]; then
         cp -a "$WARPER_DIR/lib" "$backupdir/lib"
+    fi
+    if [ -d "$WARPER_DIR/py" ]; then
+        cp -a "$WARPER_DIR/py" "$backupdir/py"
     fi
     if [ -d "$WARPER_DIR/menus" ]; then
         cp -a "$WARPER_DIR/menus" "$backupdir/menus"
@@ -257,6 +274,23 @@ update_warper() {
             return 1
         }
     done
+    # Python API
+    mkdir -p "$WARPER_DIR/py/warper_api"
+    for _pyfile in "$tmpdir"/py/warper_api/*.py; do
+        install -m 644 "$_pyfile" "$WARPER_DIR/py/warper_api/$(basename "$_pyfile")" || {
+            echo -e "${RED}Ошибка установки $(basename "$_pyfile"), откат.${NC}"
+            rollback_warper_update "$backupdir"
+            rm -rf "$tmpdir" "$backupdir"
+            return 1
+        }
+    done
+    install -m 644 "$tmpdir/py/setup.py" "$WARPER_DIR/py/setup.py" || {
+        echo -e "${RED}Ошибка установки setup.py, откат.${NC}"
+        rollback_warper_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
     for _menufile in "$tmpdir"/menus/*.sh; do
         install -m 644 "$_menufile" "$WARPER_DIR/menus/$(basename "$_menufile")" || {
             echo -e "${RED}Ошибка установки $(basename "$_menufile"), откат.${NC}"
