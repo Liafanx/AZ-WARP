@@ -2,6 +2,19 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.4.0] - 2026-06-08
+
+### Added
+
+- **🐍 Python API для WARPER** — публичный пакет `warper_api` для интеграции в сторонние Python-проекты.
+  - Модульная структура: `domains`, `ip_ranges`, `catalog`, `singbox`, `settings`, `traffic`, `status`
+  - Класс-фасад `WarperAPI` с полным набором методов
+  - Объект результата `WarperResult` с полями `.ok`, `.message`, `.data`
+  - Полные type hints и docstrings
+  - Не требует Flask, gunicorn или web-панели — работает через CLI `warper`
+  - Устанавливается автоматически при установке WARPER (`/root/warper/py/warper_api/`)
+  - Для сторонних проектов: `pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py`
+
 ## [1.3.8] - 2026-06-08
 
 ### Added
