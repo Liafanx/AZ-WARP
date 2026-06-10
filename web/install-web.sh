@@ -14,7 +14,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-REPO_BRANCH="${WARPER_WEB_BRANCH:-main}"
+REPO_BRANCH="${WARPER_WEB_BRANCH:-dev}"
 REPO_RAW="https://raw.githubusercontent.com/Liafanx/AZ-WARP/${REPO_BRANCH}"
 REPO_GIT="https://github.com/Liafanx/AZ-WARP.git"
 
