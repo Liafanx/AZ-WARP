@@ -56,7 +56,7 @@ show_main_menu() {
     fi
 
     # Домены
-    if domains_in_sync; then
+    if domains_in_sync_cached; then
         DOM_STAT="${GREEN}✅ синхронизированы${NC}"
     else
         DOM_STAT="${YELLOW}⚠️  требуется синхронизация${NC}"
