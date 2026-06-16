@@ -27,6 +27,8 @@ from warper_api._result import _strip_ansi
 
 _api = WarperAPI()
 
+_status_cache: dict[str, Any] = {"ts": 0, "data": None}
+_STATUS_CACHE_TTL = 10
 
 # ===== Адаптер: WarperResult → tuple/dict для Flask =====
 
@@ -48,11 +50,22 @@ def _to_dict(result) -> dict[str, Any]:
 #  Статус
 # =====================================================================
 
-def get_status() -> dict[str, Any]:
+def get_status(force: bool = False) -> dict[str, Any]:
+    global _status_cache
+
+    now = _time.time()
+    if not force and _status_cache["data"] is not None:
+        if now - _status_cache["ts"] < _STATUS_CACHE_TTL:
+            return _status_cache["data"]
+
     result = _api.get_status()
     if not result.ok:
-        return {"error": result.message, "raw": result.raw_stdout}
-    return result.data or {}
+        data = {"error": result.message, "raw": result.raw_stdout}
+    else:
+        data = result.data or {}
+
+    _status_cache = {"ts": now, "data": data}
+    return data
 
 
 def get_doctor() -> list[dict[str, Any]]:
