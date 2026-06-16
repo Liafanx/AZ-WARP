@@ -289,7 +289,7 @@ status_cmd() {
     if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then kr_stat="patched"
     else kr_stat="not patched"; fi
 
-    if domains_in_sync; then dom_stat="synced"
+    if domains_in_sync_cached; then dom_stat="synced"
     else dom_stat="not synced"; fi
 
     if grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null; then az_stat="present"
