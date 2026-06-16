@@ -210,7 +210,6 @@ fi
 # ===== Загрузка настроек =====
 load_config
 load_wg_config
-check_and_sync_warp_keys
 
 # ===== CLI-обработка =====
 case "${1:-}" in
@@ -341,4 +340,7 @@ case "${1:-}" in
 esac
 
 # ===== Главное меню =====
+if [ -z "${1:-}" ] && is_interactive; then
+    check_and_sync_warp_keys
+fi
 run_main_menu
