@@ -14,7 +14,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-REPO_BRANCH="${WARPER_WEB_BRANCH:-main}"
+REPO_BRANCH="${WARPER_WEB_BRANCH:-dev}"
 REPO_RAW="https://raw.githubusercontent.com/Liafanx/AZ-WARP/${REPO_BRANCH}"
 REPO_GIT="https://github.com/Liafanx/AZ-WARP.git"
 
@@ -316,7 +316,35 @@ EOF
 # ===== nginx =====
 
 echo -e "${CYAN}6. Настройка nginx...${NC}"
-rm -f "$NGINX_LINK" /etc/nginx/sites-enabled/default
+rm -f "$NGINX_LINK"
+
+# Удаляем default ТОЛЬКО если он является стандартным nginx-заглушкой,
+# а не реальным сайтом пользователя.
+# Критерии стандартной заглушки:
+# - содержит "nginx default" или "Welcome to nginx" или просто listen 80 без реального контента
+# - И при этом не содержит никаких proxy_pass или реальных location
+_default_link="/etc/nginx/sites-enabled/default"
+if [ -L "$_default_link" ] || [ -f "$_default_link" ]; then
+    _default_target=$(readlink -f "$_default_link" 2>/dev/null || echo "$_default_link")
+    _is_placeholder="n"
+
+    # Признак заглушки: нет proxy_pass и нет реального приложения
+    if ! grep -qE 'proxy_pass|fastcgi_pass|uwsgi_pass' "$_default_target" 2>/dev/null; then
+        # И размер маленький (стандартная заглушка ~5-15 строк)
+        _line_count=$(grep -c '' "$_default_target" 2>/dev/null || echo 0)
+        if [ "$_line_count" -lt 30 ]; then
+            _is_placeholder="y"
+        fi
+    fi
+
+    if [ "$_is_placeholder" = "y" ]; then
+        rm -f "$_default_link"
+        echo -e " - ${CYAN}Удалена стандартная nginx-заглушка (default)${NC}"
+    else
+        echo -e " - ${YELLOW}⚠ /etc/nginx/sites-enabled/default не удалён — выглядит как реальный сайт${NC}"
+        echo -e "   ${YELLOW}Убедитесь что порт ${PORT} не конфликтует с существующими сайтами${NC}"
+    fi
+fi
 
 if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ]; then
     # ===== HTTPS с доменом (Let's Encrypt) =====
