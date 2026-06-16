@@ -200,7 +200,7 @@ insert_user_domain() {
 
     # Если файла нет — создаём минимальный
     if [ ! -f "$MASTER_FILE" ]; then
-        cat << EOF > "$MASTER_FILE"
+        cat > "$MASTER_FILE" << EOF
 # ==========================================
 # СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
 # Строки, начинающиеся с '#', игнорируются.
@@ -208,7 +208,7 @@ insert_user_domain() {
 # ==========================================
 
 # Пользовательские домены:
-$domain
+${domain}
 EOF
         return 0
     fi
@@ -464,4 +464,27 @@ cli_disable_list() {
             ;;
         *) echo -e "${RED}Неизвестный список: $list_name${NC}" >&2; return 1 ;;
     esac
+}
+
+domains_in_sync_cached() {
+    local cache_file="$WARPER_DIR/.domains-sync.cache"
+    local master_mtime active_mtime
+
+    master_mtime=$(stat -c %Y "$MASTER_FILE" 2>/dev/null || echo 0)
+    active_mtime=$(stat -c %Y "$ACTIVE_FILE" 2>/dev/null || echo 0)
+
+    if [ -f "$cache_file" ]; then
+        local cached_master cached_active cached_result
+        read -r cached_master cached_active cached_result < "$cache_file" 2>/dev/null || true
+
+        if [ "$cached_master" = "$master_mtime" ] && [ "$cached_active" = "$active_mtime" ]; then
+            return "$cached_result"
+        fi
+    fi
+
+    domains_in_sync
+    local result=$?
+
+    echo "$master_mtime $active_mtime $result" > "$cache_file" 2>/dev/null || true
+    return "$result"
 }

@@ -646,7 +646,7 @@ cli_status_json() {
     systemctl is-active --quiet sing-box && sb_run="true"
     systemctl is-enabled --quiet sing-box 2>/dev/null && sb_en="true"
     grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null && kr_patched="true"
-    domains_in_sync && dom_synced="true"
+    domains_in_sync_cached && dom_synced="true"
     grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null && az_present="true"
     systemctl is-enabled --quiet warper-autopatch 2>/dev/null && ap_en="true"
     subnet_conflicts "$SUBNET" && sub_conflict="true"

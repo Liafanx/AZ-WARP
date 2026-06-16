@@ -210,8 +210,6 @@ fi
 # ===== Загрузка настроек =====
 load_config
 load_wg_config
-rebuild_master_file
-check_and_sync_warp_keys
 
 # ===== CLI-обработка =====
 case "${1:-}" in
@@ -225,8 +223,13 @@ case "${1:-}" in
         fi
         ;;
     sync)
-        if is_warper_active; then patch_kresd
-        else sync_domains; echo -e "${GREEN}Домены синхронизированы.${NC}"; fi
+        rebuild_master_file
+        if is_warper_active; then
+            patch_kresd
+        else
+            sync_domains
+            echo -e "${GREEN}Домены синхронизированы.${NC}"
+        fi
         exit $?
         ;;
     add)      [ -n "${2:-}" ] || { echo "Использование: warper add DOMAIN"; exit 1; }
@@ -337,4 +340,7 @@ case "${1:-}" in
 esac
 
 # ===== Главное меню =====
+if [ -z "${1:-}" ] && is_interactive; then
+    check_and_sync_warp_keys
+fi
 run_main_menu

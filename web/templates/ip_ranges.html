@@ -4,6 +4,12 @@
 {% block heading %}IP-подсети{% endblock %}
 
 {% block content %}
+{% if status.error %}
+    <div class="bg-red-900/40 border border-red-700/50 rounded-xl p-6 text-red-200">
+        <div class="font-semibold mb-2">⚠ Не удалось получить статус</div>
+        <div class="text-sm">{{ status.error }}</div>
+    </div>
+{% else %}
 
 <!-- ===== Управление: режим + экспорт + sync ===== -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -113,4 +119,5 @@
 </form>
 </div>
 
+{% endif %}
 {% endblock %}
