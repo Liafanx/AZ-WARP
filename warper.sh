@@ -17,7 +17,7 @@ SINGBOX_CONF="/etc/sing-box/config.json"
 SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
 SLAVE_TEMPLATE="$WARPER_DIR/config-slave-master.json.template"
 SLAVE_MODE_FILE="$WARPER_DIR/slave_mode.conf"
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/dev"
 LOCAL_VER=$(cat "$WARPER_DIR/version" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 CONF_FILE="$WARPER_DIR/warper.conf"
 WARP_SYSTEM_CONF="/etc/wireguard/warp.conf"
@@ -210,7 +210,6 @@ fi
 # ===== Загрузка настроек =====
 load_config
 load_wg_config
-rebuild_master_file
 check_and_sync_warp_keys
 
 # ===== CLI-обработка =====
@@ -225,8 +224,13 @@ case "${1:-}" in
         fi
         ;;
     sync)
-        if is_warper_active; then patch_kresd
-        else sync_domains; echo -e "${GREEN}Домены синхронизированы.${NC}"; fi
+        rebuild_master_file
+        if is_warper_active; then
+            patch_kresd
+        else
+            sync_domains
+            echo -e "${GREEN}Домены синхронизированы.${NC}"
+        fi
         exit $?
         ;;
     add)      [ -n "${2:-}" ] || { echo "Использование: warper add DOMAIN"; exit 1; }
