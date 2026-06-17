@@ -233,6 +233,24 @@ class WarperAPI:
         """Включить/выключить экспорт CIDR в AntiZapret."""
         return ip_ranges.set_ip_export(enable)
 
+    def get_ip_ranges_text(self) -> WarperResult:
+        """
+        Возвращает текст ip-ranges.txt для редактирования в textarea.
+
+        Returns:
+            WarperResult с data=str — содержимое без стандартной шапки.
+        """
+        return ip_ranges.get_ip_ranges_text()
+
+    def save_ip_ranges_text(self, text: str) -> WarperResult:
+        """
+        Сохраняет текст в ip-ranges.txt и запускает синхронизацию маршрутов.
+
+        Args:
+            text: Содержимое для записи (с комментариями и пустыми строками).
+        """
+        return ip_ranges.save_ip_ranges_text(text)
+
     # ==================== Каталог ====================
 
     def catalog_search(self, query: str = "") -> WarperResult:
