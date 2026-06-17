@@ -134,6 +134,8 @@ if result:          # эквивалентно if result.ok:
 | `enable_list(name)` | Включить встроенный список (`gemini` / `chatgpt`) |
 | `disable_list(name)` | Выключить встроенный список |
 | `patch_kresd()` | Переприменить патч DNS |
+| `get_user_domains_text()` | Получить пользовательский блок domains.txt как текст для редактирования |
+| `save_user_domains_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
 
 ### IP-подсети
 
