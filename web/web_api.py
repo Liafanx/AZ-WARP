@@ -208,45 +208,15 @@ def set_ip_export(enable: bool) -> tuple[bool, str]:
 
 
 def get_ip_ranges_content() -> str:
-    result = run_warper("ipranges", "list", timeout=10)
-    return result.raw_stdout if result.ok else ""
+    """Возвращает содержимое ip-ranges.txt (через warper_api)."""
+    result = _api.get_ip_ranges_text()
+    return result.data if result.ok else ""
 
 
 def save_ip_ranges_content(text: str) -> tuple[bool, str]:
-    lines = text.splitlines()
-    invalid = []
-    valid_count = 0
-    for raw in lines:
-        s = raw.strip()
-        if not s or s.startswith("#"):
-            continue
-        cidr = s if "/" in s else f"{s}/32"
-        m = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})$", cidr)
-        if not m or any(int(x) > 255 for x in m.groups()[:4]) or not 1 <= int(m.group(5)) <= 32:
-            invalid.append(s)
-        else:
-            valid_count += 1
-
-    if invalid:
-        msg = "Некорректные CIDR: " + ", ".join(invalid[:5])
-        if len(invalid) > 5:
-            msg += f" (и ещё {len(invalid) - 5})"
-        return False, msg
-
-    content = text if text.endswith("\n") else text + "\n"
-    try:
-        proc = subprocess.run(
-            [WARPER_BIN, "ipranges", "save"],
-            input=content, capture_output=True, text=True, timeout=180,
-        )
-        if proc.returncode != 0:
-            return False, _strip_ansi((proc.stderr or proc.stdout).strip()) or "Ошибка сохранения"
-        return True, f"Сохранено {valid_count} подсетей"
-    except subprocess.TimeoutExpired:
-        return False, "Таймаут операции"
-    except Exception as e:
-        return False, str(e)
-
+    """Сохраняет содержимое ip-ranges.txt (через warper_api)."""
+    result = _api.save_ip_ranges_text(text)
+    return result.ok, result.message
 
 # =====================================================================
 #  Sing-box
