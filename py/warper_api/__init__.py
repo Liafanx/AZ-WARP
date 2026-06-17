@@ -165,6 +165,24 @@ class WarperAPI:
         """Переприменить патч DNS (kresd)."""
         return domains.patch_kresd()
 
+    def get_user_domains_text(self) -> WarperResult:
+        """
+        Возвращает текст domains.txt для редактирования в textarea.
+
+        Returns:
+            WarperResult с data=str — содержимое без шапки и встроенных блоков.
+        """
+        return domains.get_user_domains_text()
+
+    def save_user_domains_text(self, text: str) -> WarperResult:
+        """
+        Сохраняет текст в domains.txt и запускает синхронизацию.
+
+        Args:
+            text: Содержимое для записи (с комментариями и пустыми строками).
+        """
+        return domains.save_user_domains_text(text)    
+
     # ==================== IP-подсети ====================
 
     def add_ip_range(self, cidr: str) -> WarperResult:
