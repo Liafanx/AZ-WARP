@@ -2,6 +2,12 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.4.2] - 2026-06-17
+- В Python API (`warper_api.domains` и `warper_api.ip_ranges`) добавлены функции для прямого редактирования файлов как текст:
+  - `get_user_domains_text()` / `save_user_domains_text(text)` — для `domains.txt`
+  - `get_ip_ranges_text()` / `save_ip_ranges_text(text)` — для `ip-ranges.txt`
+  - Сохраняются комментарии (`# ...`) и пустые строки — идеально для отображения в textarea сторонних панелей
+
 ## [1.4.1] - 2026-06-16
 
 ### Changed

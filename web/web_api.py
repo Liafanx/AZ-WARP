@@ -139,134 +139,14 @@ def sync_domains() -> tuple[bool, str]:
 
 
 def get_user_domains_block() -> str:
-    """Возвращает пользовательский блок domains.txt (web-specific)."""
-    domains_file = "/root/warper/domains.txt"
-    if not os.path.exists(domains_file):
-        return ""
-    try:
-        with open(domains_file, "r", encoding="utf-8") as f:
-            content = f.read()
-    except OSError:
-        return ""
-
-    lines = content.splitlines()
-    user_lines: list[str] = []
-    in_block = False
-    skip_header = True
-
-    for ln in lines:
-        if skip_header:
-            if ln.strip() == "# Пользовательские домены:":
-                skip_header = False
-            continue
-        if re.match(r"^# --- [A-Z0-9_]+ ---$", ln.strip()):
-            in_block = True
-            continue
-        if re.match(r"^# --- END [A-Z0-9_]+ ---$", ln.strip()):
-            in_block = False
-            continue
-        if in_block:
-            continue
-        user_lines.append(ln)
-
-    while user_lines and not user_lines[-1].strip():
-        user_lines.pop()
-    return "\n".join(user_lines)
-
+    """Возвращает пользовательский блок domains.txt (через warper_api)."""
+    result = _api.get_user_domains_text()
+    return result.data if result.ok else ""
 
 def save_user_domains_block(text: str) -> tuple[bool, str]:
-    """Сохраняет пользовательский блок domains.txt (web-specific)."""
-    domains_file = "/root/warper/domains.txt"
-    header_marker = "# Пользовательские домены:"
-
-    raw_lines = [ln for ln in text.splitlines() if ln.strip() != header_marker]
-
-    invalid = []
-    valid_count = 0
-    for raw in raw_lines:
-        s = raw.strip()
-        if not s or s.startswith("#"):
-            continue
-        if not _validate_domain_format(s.lower()):
-            invalid.append(s)
-        else:
-            valid_count += 1
-
-    if invalid:
-        msg = "Некорректные домены: " + ", ".join(invalid[:5])
-        if len(invalid) > 5:
-            msg += f" (и ещё {len(invalid) - 5})"
-        return False, msg
-
-    while raw_lines and not raw_lines[-1].strip():
-        raw_lines.pop()
-
-    gemini_block, chatgpt_block = [], []
-    if os.path.exists(domains_file):
-        try:
-            with open(domains_file, "r", encoding="utf-8") as f:
-                existing = f.read().splitlines()
-        except OSError:
-            existing = []
-
-        block = None
-        for ln in existing:
-            stripped = ln.strip()
-            if stripped == "# --- GEMINI ---":
-                block = "gemini"; gemini_block.append(ln); continue
-            if stripped == "# --- END GEMINI ---":
-                gemini_block.append(ln); block = None; continue
-            if stripped == "# --- CHATGPT ---":
-                block = "chatgpt"; chatgpt_block.append(ln); continue
-            if stripped == "# --- END CHATGPT ---":
-                chatgpt_block.append(ln); block = None; continue
-            if block == "gemini":
-                gemini_block.append(ln)
-            elif block == "chatgpt":
-                chatgpt_block.append(ln)
-
-    out_lines = [
-        "# ==========================================",
-        "# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP",
-        "# Строки, начинающиеся с '#', игнорируются.",
-        "# ⚠️ НЕ удаляйте служебные маркеры блоков GEMINI/CHATGPT",
-        "# ==========================================",
-        "",
-        header_marker,
-    ]
-    out_lines.extend(raw_lines)
-    if gemini_block:
-        out_lines.append("")
-        out_lines.extend(gemini_block)
-    if chatgpt_block:
-        out_lines.append("")
-        out_lines.extend(chatgpt_block)
-
-    try:
-        with open(domains_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(out_lines) + "\n")
-    except OSError as e:
-        return False, f"Ошибка записи: {e}"
-
-    ok, msg = sync_domains()
-    if not ok:
-        return False, f"Файл сохранён, но sync упал: {msg}"
-    return True, f"Сохранено {valid_count} доменов, синхронизация выполнена"
-
-
-def _validate_domain_format(domain: str) -> bool:
-    if not domain or len(domain) > 253 or "." not in domain:
-        return False
-    parts = domain.split(".")
-    if len(parts) < 2 or len(parts[-1]) < 2:
-        return False
-    for part in parts:
-        if not part or len(part) > 63 or part.startswith("-") or part.endswith("-"):
-            return False
-        if not re.match(r"^[a-z0-9_-]+$", part):
-            return False
-    return True
-
+    """Сохраняет пользовательский блок domains.txt (через warper_api)."""
+    result = _api.save_user_domains_text(text)
+    return result.ok, result.message
 
 # =====================================================================
 #  IP-подсети
@@ -328,45 +208,15 @@ def set_ip_export(enable: bool) -> tuple[bool, str]:
 
 
 def get_ip_ranges_content() -> str:
-    result = run_warper("ipranges", "list", timeout=10)
-    return result.raw_stdout if result.ok else ""
+    """Возвращает содержимое ip-ranges.txt (через warper_api)."""
+    result = _api.get_ip_ranges_text()
+    return result.data if result.ok else ""
 
 
 def save_ip_ranges_content(text: str) -> tuple[bool, str]:
-    lines = text.splitlines()
-    invalid = []
-    valid_count = 0
-    for raw in lines:
-        s = raw.strip()
-        if not s or s.startswith("#"):
-            continue
-        cidr = s if "/" in s else f"{s}/32"
-        m = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})$", cidr)
-        if not m or any(int(x) > 255 for x in m.groups()[:4]) or not 1 <= int(m.group(5)) <= 32:
-            invalid.append(s)
-        else:
-            valid_count += 1
-
-    if invalid:
-        msg = "Некорректные CIDR: " + ", ".join(invalid[:5])
-        if len(invalid) > 5:
-            msg += f" (и ещё {len(invalid) - 5})"
-        return False, msg
-
-    content = text if text.endswith("\n") else text + "\n"
-    try:
-        proc = subprocess.run(
-            [WARPER_BIN, "ipranges", "save"],
-            input=content, capture_output=True, text=True, timeout=180,
-        )
-        if proc.returncode != 0:
-            return False, _strip_ansi((proc.stderr or proc.stdout).strip()) or "Ошибка сохранения"
-        return True, f"Сохранено {valid_count} подсетей"
-    except subprocess.TimeoutExpired:
-        return False, "Таймаут операции"
-    except Exception as e:
-        return False, str(e)
-
+    """Сохраняет содержимое ip-ranges.txt (через warper_api)."""
+    result = _api.save_ip_ranges_text(text)
+    return result.ok, result.message
 
 # =====================================================================
 #  Sing-box

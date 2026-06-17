@@ -134,6 +134,8 @@ if result:          # эквивалентно if result.ok:
 | `enable_list(name)` | Включить встроенный список (`gemini` / `chatgpt`) |
 | `disable_list(name)` | Выключить встроенный список |
 | `patch_kresd()` | Переприменить патч DNS |
+| `get_user_domains_text()` | Получить пользовательский блок domains.txt как текст для редактирования |
+| `save_user_domains_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
 
 ### IP-подсети
 
@@ -146,6 +148,8 @@ if result:          # эквивалентно if result.ok:
 | `list_ip_routes()` | Список применённых маршрутов в ядре |
 | `set_ip_route_mode(mode)` | Режим: `antizapret` / `all_vpn` / `all` |
 | `set_ip_export(enable)` | Экспорт CIDR в AntiZapret |
+| `get_ip_ranges_text()` | Получить содержимое ip-ranges.txt как текст для редактирования |
+| `save_ip_ranges_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
 
 ### Каталог
 
