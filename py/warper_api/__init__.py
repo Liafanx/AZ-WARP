@@ -33,6 +33,7 @@ from . import singbox
 from . import settings
 from . import traffic
 from . import status
+from . import updates
 
 __version__: str = "0.0.0"
 
@@ -307,6 +308,57 @@ class WarperAPI:
         """Принудительно обновить кэш списка категорий."""
         return catalog.refresh_cache()
 
+    # ==================== Обновления ====================
+
+    def check_for_updates(self, force: bool = False) -> WarperResult:
+        """
+        Проверить наличие новой версии WARPER.
+
+        Args:
+            force: True — игнорировать кэш и сделать новый запрос.
+
+        Returns:
+            WarperResult с data={current, remote, update_available, error}.
+        """
+        return updates.check_for_updates(force=force)
+
+    def update(self, timeout: int = 600) -> WarperResult:
+        """
+        Запустить обновление WARPER (blocking, до 5 минут).
+
+        Args:
+            timeout: Максимальное время выполнения в секундах.
+        """
+        return updates.update(timeout=timeout)
+
+    def update_async(self) -> WarperResult:
+        """
+        Запустить обновление WARPER в фоне (non-blocking).
+
+        Returns:
+            WarperResult с data={"pid": int}.
+        """
+        return updates.update_async()
+
+    def update_stream(self):
+        """
+        Запустить обновление с возможностью стриминга логов.
+
+        Returns:
+            tuple[subprocess.Popen | None, str | None]: (proc, error).
+
+        Example:
+            >>> proc, err = w.update_stream()
+            >>> if proc:
+            ...     for line in iter(proc.stdout.readline, ""):
+            ...         print(line.strip())
+        """
+        return updates.update_stream()
+
+    def invalidate_version_cache(self) -> None:
+        """Сбросить кэш проверки версии (после обновления)."""
+        updates.invalidate_version_cache()
+    
     # ==================== Sing-box ====================
 
     def singbox_start(self) -> WarperResult:

@@ -199,6 +199,19 @@ if result:          # эквивалентно if result.ok:
 | `get_traffic(period)` | Трафик за период (`today` / `week` / `month` / `all`) |
 | `get_traffic_today()` | Краткая строка: `↑ X ↓ Y` |
 
+## Обновления WARPER
+
+### Методы
+
+| Метод | Описание |
+|---|---|
+| `check_for_updates(force=False)` | Проверить наличие новой версии (кэш 60 сек) |
+| `update(timeout=600)` | Запустить обновление синхронно |
+| `update_async()` | Запустить обновление в фоне |
+| `update_stream()` | Запустить со стримингом логов (для SSE/WebSocket) |
+| `invalidate_version_cache()` | Сбросить кэш версии |
+
+
 ## Модульный импорт
 
 Помимо фасада `WarperAPI`, можно импортировать модули напрямую:
@@ -226,6 +239,7 @@ from warper_api.status import is_active, doctor
     ├── settings.py      # настройки
     ├── singbox.py       # sing-box
     ├── status.py        # статус и диагностика
+    ├── updates.py       # Обновление warper
     └── traffic.py       # трафик
 ```
 
