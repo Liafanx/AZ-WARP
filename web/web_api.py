@@ -405,99 +405,27 @@ def catalog_refresh_cache() -> tuple[bool, str]:
 #  Обновления
 # =====================================================================
 
-_version_cache: dict[str, Any] = {"checked_at": 0, "data": None}
-_VERSION_CACHE_TTL = 60
-
-
 def check_for_updates(force: bool = False) -> dict[str, Any]:
-    import urllib.request
-    import base64
-
-    now = _time.time()
-    if not force and _version_cache["data"] and \
-       (now - _version_cache["checked_at"] < _VERSION_CACHE_TTL):
-        return _version_cache["data"]
-
-    result: dict[str, Any] = {"current": _api.version, "remote": None,
-                               "update_available": False, "error": None}
-
-    branch = _detect_warper_branch()
-    api_url = f"https://api.github.com/repos/Liafanx/AZ-WARP/contents/version?ref={branch}"
-
-    try:
-        req = urllib.request.Request(api_url, headers={
-            "User-Agent": "warper-web/1.0",
-            "Accept": "application/vnd.github.v3+json",
-        })
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            content_b64 = data.get("content", "").replace("\n", "")
-            if content_b64:
-                remote = base64.b64decode(content_b64).decode("utf-8").strip()
-                if re.match(r"^\d+\.\d+\.\d+$", remote):
-                    result["remote"] = remote
-                    result["update_available"] = _version_gt(remote, result["current"])
-    except Exception as e:
-        try:
-            raw_url = f"https://raw.githubusercontent.com/Liafanx/AZ-WARP/{branch}/version?_={int(now)}"
-            req = urllib.request.Request(raw_url, headers={
-                "User-Agent": "warper-web/1.0", "Cache-Control": "no-cache"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                remote = resp.read().decode("utf-8").strip()
-                if re.match(r"^\d+\.\d+\.\d+$", remote):
-                    result["remote"] = remote
-                    result["update_available"] = _version_gt(remote, result["current"])
-        except Exception as e2:
-            result["error"] = f"API: {str(e)[:80]} / RAW: {str(e2)[:80]}"
-
-    _version_cache["checked_at"] = now
-    _version_cache["data"] = result
-    return result
+    """Проверяет обновления (через warper_api)."""
+    result = _api.check_for_updates(force=force)
+    if result.data:
+        return result.data
+    return {
+        "current": _api.version,
+        "remote": None,
+        "update_available": False,
+        "error": result.message,
+    }
 
 
 def update_warper_from_web():
-    try:
-        env = os.environ.copy()
-        env.update({"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                     "DEBIAN_FRONTEND": "noninteractive", "SYSTEMD_PAGER": "",
-                     "TERM": "dumb", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
-        proc = subprocess.Popen(
-            [WARPER_BIN, "update"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, env=env,
-            bufsize=1, text=True, start_new_session=True,
-        )
-        return proc, None
-    except Exception as e:
-        return None, f"Не удалось запустить обновление: {e}"
+    """Запускает обновление со стримом для SSE (через warper_api)."""
+    return _api.update_stream()
 
 
 def invalidate_version_cache():
-    global _version_cache
-    _version_cache = {"checked_at": 0, "data": None}
-
-
-def _detect_warper_branch() -> str:
-    warper_sh = "/root/warper/warper.sh"
-    if os.path.exists(warper_sh):
-        try:
-            with open(warper_sh, "r") as f:
-                for line in f:
-                    m = re.match(
-                        r'^REPO_URL="https://raw\.githubusercontent\.com/[^/]+/[^/]+/([^"]+)"',
-                        line)
-                    if m:
-                        return m.group(1)
-        except OSError:
-            pass
-    return "main"
-
-
-def _version_gt(a: str, b: str) -> bool:
-    try:
-        return tuple(int(p) for p in a.split(".")) > tuple(int(p) for p in b.split("."))
-    except (ValueError, AttributeError):
-        return False
+    """Сбросить кэш проверки версии."""
+    _api.invalidate_version_cache()
 
 
 # =====================================================================
