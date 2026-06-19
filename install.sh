@@ -1020,7 +1020,7 @@ done
 # Скачиваем Python API
 echo -e " - ${CYAN}Скачивание Python API...${NC}"
 mkdir -p "$WARPER_DIR/py/warper_api"
-for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status; do
+for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates; do
     download_file "$REPO_URL/py/warper_api/${_pyfile}.py" \
         "$WARPER_DIR/py/warper_api/${_pyfile}.py" \
         "py/warper_api/${_pyfile}.py" || exit 1
