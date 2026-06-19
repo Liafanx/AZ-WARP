@@ -125,7 +125,7 @@ update_warper() {
 
     # Python API (добавлено в 1.4.0)
     mkdir -p "$tmpdir/py/warper_api"
-    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status; do
+    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates; do
         download_file_safe "$REPO_URL/py/warper_api/${_pyfile}.py" \
             "$tmpdir/py/warper_api/${_pyfile}.py" \
             "py/warper_api/${_pyfile}.py" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
