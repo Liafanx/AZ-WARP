@@ -372,6 +372,58 @@ while true; do
     fi
 done
 
+# ===== Проверка и расчет MTU =====
+detect_physical_mtu() {
+    local iface
+    iface=$(ip route show 2>/dev/null | grep '^default' | awk '{print $5}' | head -n1)
+    if [ -z "$iface" ]; then
+        iface=$(ip -o link show | awk -F': ' '{print $2}' | grep -Ev 'lo|tun|tap|wg|singbox|docker|veth|br-' | head -n1)
+    fi
+    if [ -n "$iface" ] && [ -f "/sys/class/net/$iface/mtu" ]; then
+        cat "/sys/class/net/$iface/mtu"
+    else
+        echo "1500"
+    fi
+}
+
+PHYS_MTU=$(detect_physical_mtu)
+REC_MTU=$((PHYS_MTU - 80))
+if (( REC_MTU < 1280 )); then
+    REC_MTU=1280
+fi
+
+echo -e "\n${YELLOW}⚙️  Настройка MTU для туннеля sing-box${NC}"
+echo -e " - Обнаружен MTU физического интерфейса: ${GREEN}$PHYS_MTU${NC}"
+echo -e " - Рекомендуемый MTU для туннеля: ${GREEN}$REC_MTU${NC} (с учетом WireGuard оверхеда)"
+
+CHOSEN_MTU="$REC_MTU"
+while true; do
+    read -r -p "Использовать рекомендуемый MTU $REC_MTU? [Y/n] (или введите вручную от 1280 до 1500): " prompt_mtu < /dev/tty
+    if [[ -z "$prompt_mtu" || "$prompt_mtu" =~ ^[Yy]$ ]]; then
+        CHOSEN_MTU="$REC_MTU"
+        break
+    elif [[ "$prompt_mtu" =~ ^[0-9]+$ ]]; then
+        if (( prompt_mtu >= 1280 && prompt_mtu <= 1500 )); then
+            CHOSEN_MTU="$prompt_mtu"
+            break
+        else
+            echo -e "${RED}Ошибка: MTU должен быть в диапазоне от 1280 до 1500.${NC}"
+        fi
+    elif [[ "$prompt_mtu" =~ ^[Nn]$ ]]; then
+        while true; do
+            read -r -p "Введите MTU (1280-1500): " custom_mtu < /dev/tty
+            if [[ "$custom_mtu" =~ ^[0-9]+$ ]] && (( custom_mtu >= 1280 && custom_mtu <= 1500 )); then
+                CHOSEN_MTU="$custom_mtu"
+                break 2
+            else
+                echo -e "${RED}Некорректный MTU! Введите число от 1280 до 1500.${NC}"
+            fi
+        done
+    else
+        echo -e "${RED}Ошибка: Пожалуйста, выберите Y, n или введите число.${NC}"
+    fi
+done
+
 {
     echo "SUBNET=$SUBNET"
     echo "TUN_IP=$TUN_IP"
@@ -381,6 +433,7 @@ done
 } > "$CONF_FILE"
 chmod 600 "$CONF_FILE"
 echo -e "${GREEN}✔ Подсеть $SUBNET установлена.${NC}"
+echo -e "${GREEN}✔ Выбран MTU $CHOSEN_MTU.${NC}"
 
 # ===== Выбор режима работы =====
 
@@ -850,7 +903,11 @@ if [ "$INSTALL_MODE" = "slave" ]; then
         -e "s|__SLAVE_SERVER__|$SLAVE_SERVER_INSTALL|g" \
         -e "s|__SLAVE_PORT__|$SLAVE_PORT_INSTALL|g" \
         -e "s|__SLAVE_PASSWORD__|$SLAVE_PASSWORD_INSTALL|g" \
-        "$WARPER_DIR/config-slave-master.json.template" > "$SINGBOX_CONF"
+    "$WARPER_DIR/config-slave-master.json.template" > "$SINGBOX_CONF"
+    if [ -n "${CHOSEN_MTU:-}" ]; then
+        sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
+    fi
+
 
     # Сохраняем slave-настройки
     {
@@ -883,7 +940,10 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     fi
 
     mv "$tmp_wg" "$SINGBOX_CONF"
-
+    if [ -n "${CHOSEN_MTU:-}" ]; then
+      sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
+    fi
+    
     # Сохраняем WG-настройки
     {
         echo "OUTBOUND_MODE=wg"
@@ -913,6 +973,9 @@ else
         -e "s|__SUBNET__|$SUBNET|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
+    if [ -n "${CHOSEN_MTU:-}" ]; then
+        sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
+    fi
 
     # Сохраняем warp-режим
     {
