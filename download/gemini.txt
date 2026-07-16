@@ -19,3 +19,5 @@ bard.google.com
 cloudaicompanion.googleapis.com
 cloudcode-pa.googleapis.com
 daily-cloudcode-pa.googleapis.com
+#подписка
+one.google.com
