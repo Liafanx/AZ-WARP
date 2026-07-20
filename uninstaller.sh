@@ -33,6 +33,70 @@ normalize_include_ips() {
     awk 'NF && !seen[$0]++' "$file" > "$tmp" && mv "$tmp" "$file"
 }
 
+strip_warper_blocks_from_kresd() {
+    local src="$1"
+    local dst="$2"
+    [ -f "$src" ] || return 1
+
+    sed \
+        -e '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' \
+        -e '/-- \[FULLVPN-WARP-START\]/,/-- \[FULLVPN-WARP-END\]/d' \
+        "$src" | awk '
+        BEGIN {
+            seen_nonblank = 0
+            prev_blank = 0
+        }
+        /^[[:space:]]*$/ {
+            if (seen_nonblank && !prev_blank) {
+                print ""
+            }
+            prev_blank = 1
+            next
+        }
+        {
+            print
+            seen_nonblank = 1
+            prev_blank = 0
+        }
+    ' > "$dst"
+}
+
+restore_or_clean_kresd() {
+    local conf="$1"
+    local backup="$2"
+    local clean_tmp
+
+    clean_tmp=$(mktemp) || return 1
+
+    if strip_warper_blocks_from_kresd "$conf" "$clean_tmp"; then
+        if [ -f "$backup" ] && cmp -s "$clean_tmp" "$backup"; then
+            cp -a "$backup" "$conf" || {
+                rm -f "$clean_tmp"
+                return 1
+            }
+        else
+            cp -a "$clean_tmp" "$conf" || {
+                rm -f "$clean_tmp"
+                return 1
+            }
+            cp -a "$clean_tmp" "$backup" 2>/dev/null || true
+            chmod 644 "$backup" 2>/dev/null || true
+        fi
+    elif [ -f "$backup" ]; then
+        cp -a "$backup" "$conf" || {
+            rm -f "$clean_tmp"
+            return 1
+        }
+    else
+        rm -f "$clean_tmp"
+        return 1
+    fi
+
+    chmod 644 "$conf" 2>/dev/null || true
+    rm -f "$clean_tmp"
+    return 0
+}
+
 while true; do
     read -r -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
     if [[ -z "$conf" || "$conf" =~ ^[Nn]$ ]]; then
@@ -144,20 +208,15 @@ echo -e "\n${YELLOW}3. Восстановление исходного kresd.con
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
 KRESD_BACKUP="/etc/knot-resolver/kresd.conf.warper.bak"
 
-if [ -f "$KRESD_BACKUP" ]; then
-    echo -e " - ${CYAN}Восстановление kresd.conf из резервной копии...${NC}"
-    cp -a "$KRESD_BACKUP" "$KRESD_CONF"
-    chmod 644 "$KRESD_CONF" 2>/dev/null || true
-    systemctl restart kresd@1 kresd@2 2>/dev/null
-    rm -f "$KRESD_BACKUP"
-elif grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
-    echo -e " - ${CYAN}Очистка WARP-блока из конфигурации DNS (kresd@1)...${NC}"
-    # Удаляем WARP-блок и лишние пустые строки после него
-    sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
-    # Удаляем двойные пустые строки, которые могли остаться
-    sed -i '/^$/N;/^\n$/d' "$KRESD_CONF"
-    echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
-    systemctl restart kresd@1 kresd@2 2>/dev/null
+if [ -f "$KRESD_BACKUP" ] || grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
+    echo -e " - ${CYAN}Безопасное восстановление kresd.conf...${NC}"
+    if restore_or_clean_kresd "$KRESD_CONF" "$KRESD_BACKUP"; then
+        echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
+        systemctl restart kresd@1 kresd@2 2>/dev/null || true
+        rm -f "$KRESD_BACKUP"
+    else
+        echo -e " - ${YELLOW}Предупреждение: не удалось безопасно восстановить kresd.conf${NC}"
+    fi
 else
     echo -e " - ${GREEN}kresd.conf уже чист.${NC}"
 fi
