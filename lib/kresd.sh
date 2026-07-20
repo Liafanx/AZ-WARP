@@ -6,25 +6,100 @@
 
 # ===== Backup =====
 
-# Создаёт резервную копию kresd.conf перед первым патчингом.
-# Повторно не перезаписывает если backup уже существует.
+# Строит "чистую" версию kresd.conf без WARPER-блоков.
+# Это позволяет:
+#  - безопасно обновлять backup после апдейта AntiZapret
+#  - не откатывать kresd на устаревшую версию при disable/uninstall
+strip_warper_blocks_from_kresd() {
+    local src="$1"
+    local dst="$2"
+    [ -f "$src" ] || return 1
+
+    sed \
+        -e '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' \
+        -e '/-- \[FULLVPN-WARP-START\]/,/-- \[FULLVPN-WARP-END\]/d' \
+        "$src" | awk '
+        BEGIN {
+            seen_nonblank = 0
+            prev_blank = 0
+        }
+        /^[[:space:]]*$/ {
+            if (seen_nonblank && !prev_blank) {
+                print ""
+            }
+            prev_blank = 1
+            next
+        }
+        {
+            print
+            seen_nonblank = 1
+            prev_blank = 0
+        }
+    ' > "$dst"
+}
+
+# Создаёт или ОБНОВЛЯЕТ резервную копию kresd.conf.
+# Backup всегда должен содержать актуальный "чистый" kresd без WARPER-блоков.
 backup_kresd() {
-    if [ -f "$KRESD_CONF" ] && [ ! -f "$KRESD_BACKUP" ]; then
-        cp -a "$KRESD_CONF" "$KRESD_BACKUP" || return 1
+    [ -f "$KRESD_CONF" ] || return 1
+
+    local clean_tmp
+    clean_tmp=$(mktemp /tmp/kresd.clean.XXXXXX) || return 1
+
+    if ! strip_warper_blocks_from_kresd "$KRESD_CONF" "$clean_tmp"; then
+        rm -f "$clean_tmp"
+        return 1
+    fi
+
+    if [ ! -f "$KRESD_BACKUP" ] || ! cmp -s "$clean_tmp" "$KRESD_BACKUP"; then
+        cp -a "$clean_tmp" "$KRESD_BACKUP" || {
+            rm -f "$clean_tmp"
+            return 1
+        }
         chmod 644 "$KRESD_BACKUP" 2>/dev/null || true
     fi
+
+    rm -f "$clean_tmp"
     return 0
 }
 
-# Восстанавливает kresd.conf из резервной копии и перезапускает kresd
+# Восстанавливает kresd.conf.
+# Если backup совпадает с "очищенным" текущим файлом — восстанавливаем backup.
+# Если НЕ совпадает — backup устарел, используем очищенный текущий файл
+# и одновременно обновляем backup.
 restore_kresd_backup() {
-    if [ -f "$KRESD_BACKUP" ]; then
-        cp -a "$KRESD_BACKUP" "$KRESD_CONF" || return 1
-        chmod 644 "$KRESD_CONF" 2>/dev/null || true
-        systemctl restart kresd@1 kresd@2 || return 1
-        return 0
+    local clean_tmp
+    clean_tmp=$(mktemp /tmp/kresd.restore.XXXXXX) || return 1
+
+    if strip_warper_blocks_from_kresd "$KRESD_CONF" "$clean_tmp"; then
+        if [ -f "$KRESD_BACKUP" ] && cmp -s "$clean_tmp" "$KRESD_BACKUP"; then
+            cp -a "$KRESD_BACKUP" "$KRESD_CONF" || {
+                rm -f "$clean_tmp"
+                return 1
+            }
+        else
+            cp -a "$clean_tmp" "$KRESD_CONF" || {
+                rm -f "$clean_tmp"
+                return 1
+            }
+            cp -a "$clean_tmp" "$KRESD_BACKUP" 2>/dev/null || true
+            chmod 644 "$KRESD_BACKUP" 2>/dev/null || true
+        fi
+    elif [ -f "$KRESD_BACKUP" ]; then
+        cp -a "$KRESD_BACKUP" "$KRESD_CONF" || {
+            rm -f "$clean_tmp"
+            return 1
+        }
+    else
+        rm -f "$clean_tmp"
+        return 1
     fi
-    return 1
+
+    chmod 644 "$KRESD_CONF" 2>/dev/null || true
+    rm -f "$clean_tmp"
+
+    systemctl restart kresd@1 kresd@2 || return 1
+    return 0
 }
 
 # ===== Патчинг =====
@@ -32,7 +107,7 @@ restore_kresd_backup() {
 # Вставляет WARP-блок в kresd.conf для kresd@1.
 # Блок читает warper-domains.txt и направляет DNS-запросы
 # для этих доменов на 127.0.0.1:40000 (sing-box DNS-in).
-# Перед патчингом синхронизирует домены и создаёт backup.
+# Перед патчингом синхронизирует домены и создаёт/обновляет backup.
 patch_kresd() {
     if check_antizapret_warp; then
         echo -e "${RED}ANTIZAPRET_WARP=y — патч kresd.conf не может быть применён.${NC}" >&2
@@ -52,7 +127,7 @@ patch_kresd() {
     fi
 
     backup_kresd || {
-        echo -e "${RED}Не удалось создать backup $KRESD_CONF.${NC}" >&2
+        echo -e "${RED}Не удалось создать/обновить backup $KRESD_CONF.${NC}" >&2
         return 1
     }
 
@@ -125,13 +200,17 @@ patch_kresd() {
 }
 
 # Удаляет WARP-блок из kresd.conf.
-# Сначала пробует восстановить из backup, затем — через sed.
+# Сначала пробует безопасное восстановление из backup/текущего clean-state.
 unpatch_kresd() {
     if [ -f "$KRESD_BACKUP" ]; then
         restore_kresd_backup && return 0
     fi
-    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
-        sed -i '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF"
+
+    if grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
+        sed -i \
+            -e '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' \
+            -e '/-- \[FULLVPN-WARP-START\]/,/-- \[FULLVPN-WARP-END\]/d' \
+            "$KRESD_CONF"
         sed -i '/^$/N;/^\n$/d' "$KRESD_CONF"
         chmod 644 "$KRESD_CONF"
         systemctl restart kresd@1 kresd@2 || return 1
