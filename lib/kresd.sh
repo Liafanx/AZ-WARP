@@ -261,7 +261,7 @@ patch_kresd_fullvpn() {
     }
     /^elseif string.match\(systemd_instance, .?\^2.?\) then$/ { in_inst2=1; print; next }
     /^end$/ { if (in_inst2) in_inst2=0; print; next }
-    in_inst2 && /Resolve blocked domains/ && inserted2==0 {
+    in_inst2 && /Resolve blocked and full VPN domains/ && inserted2==0 {
         print_warp_block()
         inserted2=1
     }
