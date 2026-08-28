@@ -2,6 +2,11 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.4.7] - 2026-08-28
+- Kresd обновлен, вставка warp блока заменена:
+- было: in_inst1 && /Resolve blocked domains using Proxy Resolver/ && inserted1==0
+- стало: in_inst1 && (/Resolve blocked domains using Proxy Resolver/ || /Resolve WARP domains/) && inserted1==0
+
 ## [1.4.6] - 2026-08-19
 
 -kresd обновлен, изменена строчка поиска вставки для поиска full vpn части
