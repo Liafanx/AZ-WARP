@@ -160,7 +160,7 @@ patch_kresd() {
     }
     /^if string.match\(systemd_instance, .?\^1.?\) then$/ { in_inst1=1; print; next }
     /^elseif string.match\(systemd_instance, .?\^2.?\) then$/ { in_inst1=0; print; next }
-    in_inst1 && /Resolve blocked domains using Proxy Resolver/ && inserted1==0 {
+    in_inst1 && (/Resolve blocked domains using Proxy Resolver/ || /Resolve WARP domains/) && inserted1==0 {
         print_warp_block()
         inserted1=1
         print
