@@ -41,9 +41,10 @@ check_warp_rules_active() {
     if ip link show warp >/dev/null 2>&1; then
         return 0
     fi
-    if ip rule show 2>/dev/null | grep -q "lookup 13335"; then
-        return 0
-    fi
+    #убрано , 28.08.26, у антизапрета появился свой варп селектив 
+    #if ip rule show 2>/dev/null | grep -q "lookup 13335"; then
+    #    return 0
+    #fi
     return 1
 }
 
