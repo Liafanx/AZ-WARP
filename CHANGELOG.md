@@ -2,10 +2,15 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
-## [1.4.7] - 2026-08-28
+## [1.4.7-1.4.8] - 2026-08-28
 - Kresd обновлен, вставка warp блока заменена:
 - было: in_inst1 && /Resolve blocked domains using Proxy Resolver/ && inserted1==0
 - стало: in_inst1 && (/Resolve blocked domains using Proxy Resolver/ || /Resolve WARP domains/) && inserted1==0
+
+- в diagnostic.sh. закомментироованы строки, так как добавлен в антизапрет warp selective с той же цепочкой 
+#if ip rule show 2>/dev/null | grep -q "lookup 13335"; then
+    #    return 0
+    #fi
 
 ## [1.4.6] - 2026-08-19
 
