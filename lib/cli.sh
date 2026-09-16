@@ -58,6 +58,7 @@ cli_toggle_warper() {
             echo "ERROR: failed to patch kresd" >&2
             return 1
         fi
+        ensure_subnet_in_include_ips
         resync_ip_routes_if_needed
         echo "WARPER enabled"
         return 0
@@ -1637,6 +1638,27 @@ HTTPEOF
 
 # ===== РЕСИНК СОСТОЯНИЯ =====
 
+# Fake-подсеть должна быть в include-ips.txt, иначе kresd отдаёт клиентам
+# fake-IP, а маршрута до него AntiZapret им не пушит.
+# При выключении WARPER подсеть намеренно остаётся (как после установки).
+ensure_subnet_in_include_ips() {
+    [ -f "$AZ_INC" ] || return 0
+    grep -qxF "$SUBNET" "$AZ_INC" 2>/dev/null && return 0
+
+    echo "$SUBNET" >> "$AZ_INC"
+    normalize_include_ips "$AZ_INC"
+
+    # Вызваны из custom-doall.sh — doall.sh уже идёт, второй запуск не нужен
+    [ "${WARPER_FROM_DOALL:-}" = "1" ] && return 0
+
+    export DEBIAN_FRONTEND=noninteractive
+    export SYSTEMD_PAGER=""
+    timeout 180 bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1 || {
+        echo "WARNING: doall.sh ip exited non-zero or timed out" >&2
+    }
+    return 0
+}
+
 # Идемпотентно переприменяет состояние WARPER, которое может затереть
 # AntiZapret: правила FORWARD, ipset antizapret-forward, ip rule,
 # маршруты (включая fake-подсеть в таблицах 13335/13336) и патч kresd.
@@ -1672,6 +1694,8 @@ cli_resync() {
     if ! grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
         patch_kresd >/dev/null 2>&1 && fixed=1
     fi
+
+    ensure_subnet_in_include_ips
 
     # Маршруты и ipset: up.sh пересоздаёт antizapret-forward с нуля
     resync_ip_routes_if_needed

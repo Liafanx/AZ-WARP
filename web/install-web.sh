@@ -1140,6 +1140,10 @@ else
     echo -e "  URL:    ${CYAN}http://$EXTERNAL_IP:$PORT${NC}"
 fi
 
+if [ "$WEB_MODE" = "standalone" ]; then
+    echo -e "  Режим:  ${CYAN}без nginx${NC} (gunicorn слушает порт напрямую)"
+fi
+
 echo -e "  Логин:  ${CYAN}$ADMIN_USER${NC}"
 if [ "$PASSWORD_GENERATED" = "y" ]; then
     echo -e "  Пароль: ${CYAN}$ADMIN_PASSWORD${NC}"
