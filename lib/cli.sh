@@ -70,6 +70,18 @@ cli_toggle_warper() {
             echo "ERROR: failed to patch kresd" >&2
             return 1
         fi
+        # Fake-подсеть должна быть в include-ips.txt, иначе клиенты
+        # получают fake-IP от kresd, но не имеют маршрута через AntiZapret.
+        # При выключении подсеть намеренно оставляем (как было при установке).
+        if [ -f "$AZ_INC" ] && ! grep -qxF "$SUBNET" "$AZ_INC" 2>/dev/null; then
+            echo "$SUBNET" >> "$AZ_INC"
+            normalize_include_ips "$AZ_INC"
+            export DEBIAN_FRONTEND=noninteractive
+            export SYSTEMD_PAGER=""
+            timeout 180 bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1 || {
+                echo "WARNING: doall.sh ip exited non-zero or timed out" >&2
+            }
+        fi
         if [ "$(count_ip_ranges)" -gt 0 ]; then
             sync_ip_ranges >/dev/null 2>&1 || true
         fi
