@@ -116,3 +116,23 @@ def doctor() -> WarperResult:
         raw_stderr=result.raw_stderr,
         return_code=result.return_code,
     )
+
+
+def resync(timeout: int = 300) -> WarperResult:
+    """
+    Идемпотентно восстановить состояние WARPER.
+
+    Переприменяет правила FORWARD, ipset antizapret-forward, ip rule,
+    маршруты (включая fake-подсеть в таблицах AntiZapret) и патч kresd.
+    Ничего не меняет, если всё на месте.
+
+    Вызывается автоматически таймером warper-resync.timer раз в 10 минут
+    и из /root/antizapret/custom-doall.sh после пересборки правил AntiZapret.
+
+    Args:
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+    """
+    return run_warper("resync", "-v", timeout=timeout)

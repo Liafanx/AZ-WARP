@@ -307,3 +307,68 @@ def _is_valid_cidr_format(cidr: str) -> bool:
         return False
 
     return True
+
+
+def resolve_sync(force: bool = False, timeout: int = 300) -> WarperResult:
+    """
+    Резолвить домены из domains.txt в IP и обновить блок RESOLVED.
+
+    Список накопительный: адреса из прошлых прогонов не удаляются, так как
+    CDN отдаёт разные IP в разные моменты. Маршруты синхронизируются только
+    если блок реально изменился.
+
+    Args:
+        force: Синхронизировать даже без изменений.
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+
+    Example:
+        >>> resolve_sync()
+        WarperResult(OK, 'Resolved block updated (67 addresses)')
+    """
+    args = ["resolvesync"]
+    if force:
+        args.append("--force")
+    return run_warper(*args, timeout=timeout)
+
+
+def resolve_clean(domain: str | None = None, timeout: int = 120) -> WarperResult:
+    """
+    Очистить блок RESOLVED целиком или записи одного домена.
+
+    Args:
+        domain: Домен-источник. Если не задан — удаляется весь блок.
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+    """
+    args = ["resolveclean"]
+    if domain:
+        args.append(domain)
+    return run_warper(*args, timeout=timeout)
+
+
+def set_auto_resolve(enabled: bool) -> WarperResult:
+    """
+    Включить или выключить почасовой авто-резолв (warper-resolve.timer).
+
+    Args:
+        enabled: True — включить, False — выключить.
+
+    Returns:
+        WarperResult.
+    """
+    return run_warper("resolve", "on" if enabled else "off")
+
+
+def get_auto_resolve() -> WarperResult:
+    """
+    Состояние авто-резолва.
+
+    Returns:
+        WarperResult, где message — "enabled" или "disabled".
+    """
+    return run_warper("resolve", "status")

@@ -9,18 +9,92 @@ warperslave doctor     # WARPERSLAVE
 
 ## Типичные проблемы
 
-### ANTIZAPRET_WARP=y — конфликт
+### Домены перестают открываться через сутки-двое
 
-**Симптом:** WARPER не работает, в меню предупреждение.
+**Симптом:** всё работает, потом конкретные сайты перестают открываться,
+а панель показывает, что всё активно. Помогает выключить и включить WARPER
+или перезагрузить сервер.
 
-**Решение:**
+**Причины и что проверить:**
+
 ```bash
-# В /root/antizapret/setup:
-ANTIZAPRET_WARP=n
-
-/root/antizapret/down.sh
-/root/antizapret/up.sh
+warper doctor        # ёмкость пула fake-IP, маршруты, правила
+warper resync -v     # восстановить состояние вручную
 ```
+
+1. **Мал пул fake-IP.** kresd выдаёт fake-IP каждому ПОДдомену, поэтому `/24`
+   (254 адреса) исчерпывается за сутки-двое: sing-box переиспользует адрес и
+   стирает старый маппинг, а kresd продолжает отдавать клиентам старый.
+   `warper doctor` покажет ёмкость. Лечится сменой подсети:
+   ```bash
+   warper subnet 10.224.0.0/16
+   ```
+   После смены клиентам нужно переподключиться — им пушится маршрут
+   фейковой подсети.
+
+2. **Ночная пересборка правил AntiZapret.** `antizapret-update.timer`
+   пересобирает ipset `antizapret-forward` и правила `FORWARD`. Начиная с
+   1.5.0 состояние восстанавливает `warper resync`: таймер раз в 10 минут
+   плюс хук в `/root/antizapret/custom-doall.sh`. Проверить:
+   ```bash
+   systemctl status warper-resync.timer
+   grep WARPER /root/antizapret/custom-doall.sh
+   ```
+
+### Домены не работают после обновления sing-box до 1.14
+
+**Симптом:** соединения обрываются сразу, в логе:
+`a resolve action is required before routing to outbound/wireguard`.
+
+**Причина:** 1.14 требует явного `action: resolve` перед маршрутизацией
+fake-адреса в wireguard-endpoint.
+
+**Решение:** обновить WARPER до 1.5.0+ и пересобрать конфиг
+(`warper toggle` дважды либо `warper mode warp`). В `route.rules` должно
+появиться правило `{ "inbound": "tun-in", "action": "resolve", "server": "real-dns" }`.
+
+### Встроенный WARP AntiZapret (ANTIZAPRET_WARP / VPN_WARP)
+
+Начиная с 1.5.0 WARPER совместим со всеми режимами (`0`-`4`). В режиме `2`
+AntiZapret добавляет `ip rule` без fwmark, который перехватывает и трафик на
+fake-подсеть, поэтому WARPER прописывает её в таблицы 13335/13336:
+
+```bash
+ip route show table 13335 | grep 10.224
+ip route show table 13336 | grep 10.224
+warper resync        # если маршрута нет
+```
+
+### Веб-панель недоступна, nginx не стартует
+
+**Симптом:** `Job for nginx.service failed`, при этом `nginx -t` проходит.
+
+**Причина:** `nginx -t` проверяет только синтаксис. Порт из `listen`
+какого-то vhost занят другим процессом.
+
+```bash
+systemctl status nginx --no-pager -l     # покажет bind() ... Address already in use
+ss -ltnp | grep ':80 '                   # кто держит порт
+```
+
+Чаще всего виноват оставшийся `/etc/nginx/sites-enabled/default` с
+`listen 80`, когда 80-й занят сторонним сервисом:
+
+```bash
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl start nginx
+```
+
+Если освободить порт нельзя, панель можно поставить **без nginx** — gunicorn
+будет слушать внешний порт сам (вопрос задаётся при установке).
+
+### ProtonVPN и другие WG-конфиги не импортируются
+
+**Симптом:** `В файле отсутствуют обязательные параметры: PresharedKey`.
+
+**Решение:** обновить WARPER до 1.5.0+ — `PresharedKey` стал опциональным,
+как и должно быть по спецификации WireGuard. Заодно `MTU` и `DNS` теперь
+берутся из импортируемого файла.
 
 ### Предупреждение "Требуется перезапуск правил AntiZapret"
 

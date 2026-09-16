@@ -133,3 +133,37 @@ def _action(action: str) -> WarperResult:
         return WarperResult(ok=False, message=f"Таймаут: sing-box {action}")
     except Exception as e:
         return WarperResult(ok=False, message=f"Ошибка: {e}")
+
+
+def version() -> WarperResult:
+    """
+    Установленная версия sing-box.
+
+    Returns:
+        WarperResult, где message — строка версии (например "1.14.1").
+
+    Example:
+        >>> version()
+        WarperResult(OK, '1.14.1')
+    """
+    return run_warper("singbox", "version")
+
+
+def upgrade(target: str | None = None, timeout: int = 300) -> WarperResult:
+    """
+    Обновить бинарь sing-box.
+
+    Бинарь общий с sing-box-slave, поэтому перезапускаются обе службы.
+    Конфиг проверяется до рестарта: при ошибке службы не трогаются.
+
+    Args:
+        target: Версия (например "1.14.1"). По умолчанию — версия из установщика.
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+    """
+    args = ["singbox", "upgrade"]
+    if target:
+        args.append(target)
+    return run_warper(*args, timeout=timeout)

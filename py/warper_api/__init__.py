@@ -103,6 +103,18 @@ class WarperAPI:
         """
         return status.doctor()
 
+    def resync(self) -> WarperResult:
+        """
+        Идемпотентно восстановить состояние WARPER.
+
+        Переприменяет правила FORWARD, ipset, маршруты и патч kresd.
+        Ничего не меняет, если всё на месте.
+
+        Returns:
+            WarperResult.
+        """
+        return status.resync()
+
     # ==================== WARPER toggle ====================
 
     def toggle(self) -> WarperResult:
@@ -202,6 +214,32 @@ class WarperAPI:
     def sync_ip_ranges(self) -> WarperResult:
         """Синхронизировать IP-маршруты (файл → ядро)."""
         return ip_ranges.sync_ip_ranges()
+
+    def resolve_sync(self, force: bool = False) -> WarperResult:
+        """
+        Резолвить домены в IP и обновить накопительный блок RESOLVED.
+
+        Args:
+            force: Синхронизировать маршруты даже без изменений.
+        """
+        return ip_ranges.resolve_sync(force)
+
+    def resolve_clean(self, domain: str | None = None) -> WarperResult:
+        """
+        Очистить блок RESOLVED целиком или записи одного домена.
+
+        Args:
+            domain: Домен-источник. Без него удаляется весь блок.
+        """
+        return ip_ranges.resolve_clean(domain)
+
+    def set_auto_resolve(self, enabled: bool) -> WarperResult:
+        """Включить или выключить почасовой авто-резолв."""
+        return ip_ranges.set_auto_resolve(enabled)
+
+    def get_auto_resolve(self) -> WarperResult:
+        """Состояние авто-резолва: "enabled" или "disabled"."""
+        return ip_ranges.get_auto_resolve()
 
     def list_ip_ranges(self) -> WarperResult:
         """
@@ -381,6 +419,21 @@ class WarperAPI:
         """Выключить автозагрузку sing-box."""
         return singbox.disable()
 
+    def singbox_version(self) -> WarperResult:
+        """Установленная версия sing-box."""
+        return singbox.version()
+
+    def singbox_upgrade(self, target: str | None = None) -> WarperResult:
+        """
+        Обновить бинарь sing-box.
+
+        Бинарь общий с sing-box-slave — перезапускаются обе службы.
+
+        Args:
+            target: Версия. По умолчанию — версия из установщика.
+        """
+        return singbox.upgrade(target)
+
     def get_logs(self, lines: int = 100) -> WarperResult:
         """
         Получить логи sing-box.
@@ -447,6 +500,14 @@ class WarperAPI:
             mtu: Значение MTU.
         """
         return settings.set_mtu(mtu)
+
+    def get_mtu(self) -> WarperResult:
+        """Текущий MTU sing-box."""
+        return settings.get_mtu()
+
+    def get_log_level(self) -> WarperResult:
+        """Текущий log level sing-box."""
+        return settings.get_log_level()
 
     def set_log_level(self, level: str) -> WarperResult:
         """

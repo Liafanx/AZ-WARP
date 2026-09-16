@@ -112,22 +112,30 @@ WARPER позволяет **точечно направлять только н�
 - Нужен выход через конкретный IP без Cloudflare
 - WARP не подходит, донор-сервер не нужен
 
-### Совместимость с VPN_WARP при работе с доменами
+### Совместимость со встроенным WARP AntiZapret
 
-| Параметр | Поведение |
+Актуальный AntiZapret хранит в `ANTIZAPRET_WARP` и `VPN_WARP` **число**, а не
+`y`/`n`:
+
+| Значение | Что делает AntiZapret |
 |---|---|
-| `ANTIZAPRET_WARP=n` + `VPN_WARP=n` | WARPER работает для AntiZapret-клиентов + есть возможность включить для FullVPN |
-| `ANTIZAPRET_WARP=n` + `VPN_WARP=y` | ✅ WARPER для AntiZapret, FullVPN через встроенный WARP |
-| `ANTIZAPRET_WARP=y` | ❌ Конфликт — WARPER не работает |
+| `0`, `1` | встроенный WARP выключен |
+| `2` | весь трафик подсети идёт через `warp-antizapret` / `warp-vpn` |
+| `3`, `4` | выборочно, по `fwmark 0x2` |
+
+WARPER совместим со **всеми** режимами. В режиме `2` AntiZapret добавляет
+`ip rule ... lookup 13335` (или `13336`) без fwmark, который перехватывал бы и
+трафик на fake-подсеть — поэтому WARPER прописывает fake-подсеть и свои CIDR
+прямо в эти таблицы. Наличие маршрута проверяет `warper doctor`.
 
 ### FullVPN WARP-резолвинг доменов
 
 WARPER умеет применять патч для `kresd@2` (FullVPN-клиенты), чтобы заданные домены также маршрутизировались через WARP/Slave/WG, как и для AntiZapret.
 
 - По умолчанию **выключен**.
-- Требует `VPN_WARP=n` в `/root/antizapret/setup`.
-- При включении `VPN_WARP=y` опция автоматически отключается.
-- Управляется в меню: `Настройки → FullVPN WARP-резолвинг`.
+- Совместим с любым значением `VPN_WARP` (см. таблицу выше).
+- Управляется в меню: `Настройки → FullVPN WARP-резолвинг` или
+  `warper fullvpn on|off`.
 - Статус отображается в главном меню, `warper status` и `warper doctor`.
 
 ### Совместимость ANTIZAPRET_WARP=y/n + VPN_WARP=y/n c IPv4-подсетями (CIDR)
@@ -384,8 +392,40 @@ warper traffic              # статистика трафика (сегодн�
 warper traffic week         # за неделю
 warper traffic month        # за месяц
 warper traffic all          # за всё время
+warper resync               # восстановить правила, ipset, маршруты и патч DNS
+warper singbox version      # версия sing-box
+warper singbox upgrade      # обновить sing-box до версии из установщика
+```
+
+`warper resync` вызывается автоматически: таймером `warper-resync.timer`
+раз в 10 минут и из `/root/antizapret/custom-doall.sh` сразу после ночной
+пересборки правил AntiZapret. Вручную нужен редко.
+
+### Авто-резолв доменов в IP-маршруты
+
+Резолвит домены из `domains.txt` и складывает адреса в блок `RESOLVED`
+внутри `ip-ranges.txt`. По умолчанию **выключен**.
+
+```bash
+warper resolve on                  # включить (раз в час)
+warper resolve off                 # выключить
+warper resolve status              # состояние
+warper resolvesync                 # резолвить сейчас
+warper resolvesync --force         # даже если список не изменился
+warper resolveclean                # очистить блок целиком
+warper resolveclean gemini.google  # убрать записи одного домена
+```
+
+Список **накопительный**: CDN отдаёт разные адреса в разные моменты, и
+удаление прошлого адреса рвало бы уже установленные соединения. Каждая
+строка аннотирована источником, чтобы было видно, откуда адрес:
 
 ```
+142.251.13.100/32 #ai.google.dev,aistudio.google.com
+```
+
+Аннотации видны только в файле — в маршруты и в экспорт AntiZapret уходят
+чистые CIDR.
 
 ### IP-подсети
 
@@ -464,13 +504,16 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/uninstall-slav
 
 WARPER — менеджер доменной маршрутизации. Когда вы добавляете домен, система возвращает для него fake-ip, перенаправляет трафик в sing-box и отправляет его в WARP, на донор-сервер или через WG-туннель. Остальной трафик работает через AntiZapret как обычно.
 
-Примечание: WARPER не работает для типа подключения FullVPN, так как патч kresd не затрагивает `kresd@2`. Этот режим пока в разработке.
+Для FullVPN-клиентов доменная маршрутизация тоже доступна — включается
+отдельно: `warper fullvpn on` (патч для `kresd@2`).
 </details>
 
 <details>
 <summary><b>Можно ли использовать WARPER вместе с VPN_WARP=y?</b></summary>
 
-Да. AntiZapret-клиенты используют WARPER, FullVPN-клиенты — встроенный WARP. WARPER патчит только `kresd@1`, не затрагивая `kresd@2`.
+Да, с любым значением `VPN_WARP`. По умолчанию WARPER патчит только
+`kresd@1` (AntiZapret-клиенты), а FullVPN-клиенты идут через встроенный WARP.
+Если нужна доменная маршрутизация и для них — `warper fullvpn on`.
 </details>
 
 <details>
@@ -657,7 +700,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.3.8"
+print(w.version)           # "1.5.0"
 print(w.is_active())       # True
 
 w.add_domain("example.com")

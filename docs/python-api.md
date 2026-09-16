@@ -109,6 +109,18 @@ if result:          # эквивалентно if result.ok:
     print("OK!")
 ```
 
+**`message` обрезается до 3 строк.** Для многострочного вывода
+(`doctor`, `list_ip_ranges`, `get_logs`) читайте `raw_stdout`:
+
+```python
+print(w.doctor().raw_stdout)   # весь вывод
+print(w.doctor().message)      # первые 3 строки + "... (N строк всего)"
+```
+
+Таймауты по умолчанию — 60 секунд, но у долгих операций больше:
+`toggle()` 180, `set_subnet()` / `catalog_update()` / `resync()` /
+`resolve_sync()` / `singbox_upgrade()` — 300, `update()` — 600.
+
 ## Полный список методов
 
 ### Статус и управление
@@ -119,6 +131,7 @@ if result:          # эквивалентно if result.ok:
 | `is_active()` | Проверка: WARPER активен (sing-box + kresd) |
 | `get_version()` | Версия WARPER |
 | `doctor()` | Полная диагностика |
+| `resync()` | Восстановить правила FORWARD, ipset, маршруты и патч kresd |
 | `toggle()` | Включить/выключить WARPER |
 | `enable()` | Включить WARPER (если выключен) |
 | `disable()` | Выключить WARPER (если включён) |
@@ -137,6 +150,10 @@ if result:          # эквивалентно if result.ok:
 | `get_user_domains_text()` | Получить пользовательский блок domains.txt как текст для редактирования |
 | `save_user_domains_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
 
+> `get_user_domains_text()` / `save_user_domains_text()` — единственные методы,
+> которые работают с `/root/warper/domains.txt` напрямую, минуя CLI. Им нужен
+> доступ к файлу на запись, и они не переживут смену его формата.
+
 ### IP-подсети
 
 | Метод | Описание |
@@ -150,6 +167,15 @@ if result:          # эквивалентно if result.ok:
 | `set_ip_export(enable)` | Экспорт CIDR в AntiZapret |
 | `get_ip_ranges_text()` | Получить содержимое ip-ranges.txt как текст для редактирования |
 | `save_ip_ranges_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
+| `resolve_sync(force=False)` | Резолвить домены в IP, обновить накопительный блок `RESOLVED` |
+| `resolve_clean(domain=None)` | Очистить блок `RESOLVED` целиком или записи одного домена |
+| `set_auto_resolve(enable)` | Включить/выключить почасовой авто-резолв |
+| `get_auto_resolve()` | Состояние авто-резолва: `enabled` / `disabled` |
+
+Блок `RESOLVED` накопительный: адреса из прошлых прогонов не удаляются, так
+как CDN отдаёт разные IP в разные моменты. Строки аннотированы источником
+(`1.2.3.4/32 #gemini.google.com`), но `list_ip_ranges()` и экспорт в
+AntiZapret отдают чистые CIDR.
 
 ### Каталог
 
@@ -172,6 +198,8 @@ if result:          # эквивалентно if result.ok:
 | `singbox_restart()` | Перезапустить |
 | `singbox_enable()` | Включить автозагрузку |
 | `singbox_disable()` | Выключить автозагрузку |
+| `singbox_version()` | Установленная версия sing-box |
+| `singbox_upgrade(target=None)` | Обновить бинарь (общий с `sing-box-slave` — перезапускаются обе службы) |
 | `get_logs(lines)` | Получить логи (1-2000 строк) |
 
 ### Настройки
@@ -207,8 +235,8 @@ if result:          # эквивалентно if result.ok:
 |---|---|
 | `check_for_updates(force=False)` | Проверить наличие новой версии (кэш 60 сек) |
 | `update(timeout=600)` | Запустить обновление синхронно |
-| `update_async()` | Запустить обновление в фоне |
-| `update_stream()` | Запустить со стримингом логов (для SSE/WebSocket) |
+| `update_async()` | Запустить обновление в фоне. Возвращает `subprocess.Popen` |
+| `update_stream()` | Запустить со стримингом логов. Возвращает `tuple[Popen \| None, str \| None]` |
 | `invalidate_version_cache()` | Сбросить кэш версии |
 
 
