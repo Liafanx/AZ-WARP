@@ -37,9 +37,12 @@ app = Flask(
     static_url_path="/static",
 )
 
-# Доверяем заголовкам от nginx (X-Forwarded-Proto, X-Real-IP).
-# Это нужно чтобы Flask понимал что мы за реверс-прокси.
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+# Доверяем заголовкам X-Forwarded-* только когда перед нами реально
+# стоит nginx. Без прокси клиент подделал бы X-Forwarded-For и обошёл
+# бан по IP в auth._get_client_ip().
+WEB_MODE = os.environ.get("WEB_MODE", "nginx")
+if WEB_MODE != "standalone":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config["SECRET_KEY"] = get_or_create_secret_key()
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024

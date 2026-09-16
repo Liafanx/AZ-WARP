@@ -78,7 +78,7 @@ ip-ranges.txt → extract_ip_ranges()
 ## Режим WARP
 
 ```
-kresd@1/ip route → fake-ip (198.20.0.0/24) → singbox-tun → WireGuard endpoint → Cloudflare WARP
+kresd@1/ip route → fake-ip (100.85.0.0/16) → singbox-tun → WireGuard endpoint → Cloudflare WARP
 ```
 
 ## Режим Slave

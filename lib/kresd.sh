@@ -296,3 +296,15 @@ unpatch_kresd_fullvpn() {
     fi
     return 0
 }
+
+# Сбрасывает кэш обоих инстансов kresd.
+# Нужен после смены fake-подсети: иначе клиенты продолжают получать
+# адреса из старого пула, которые больше никуда не маршрутизируются.
+flush_kresd_cache() {
+    local inst
+    for inst in 1 2; do
+        [ -S "/run/knot-resolver/control/$inst" ] || continue
+        echo 'cache.clear()' \
+            | socat - "/run/knot-resolver/control/$inst" >/dev/null 2>&1 || true
+    done
+}

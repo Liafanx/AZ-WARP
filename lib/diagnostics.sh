@@ -493,10 +493,18 @@ doctor() {
     if [[ "$pool_mask" =~ ^[0-9]+$ ]] && (( pool_mask >= 8 && pool_mask <= 32 )); then
         pool_size=$(( 2 ** (32 - pool_mask) - 2 ))
         if (( pool_size < 1024 )); then
-            echo -e " ${YELLOW}!${NC} Пул fake-IP $SUBNET мал ($pool_size адресов) — расширьте: warper subnet ${SUBNET%/*}/16"
+            echo -e " ${YELLOW}!${NC} Пул fake-IP $SUBNET мал ($pool_size адресов) — смените: warper subnet $DEFAULT_SUBNET"
         else
             echo -e " ${GREEN}✔${NC} Пул fake-IP $SUBNET ($pool_size адресов)"
         fi
+
+        # 198.18/198.20 — не bogon: 198.18.0.0/15 занят AntiZapret,
+        # 198.20.0.0/16 публичное пространство ARIN
+        case "$SUBNET" in
+            198.18.*|198.19.*|198.20.*)
+                echo -e " ${YELLOW}!${NC} $SUBNET не является приватным диапазоном — смените: warper subnet $DEFAULT_SUBNET"
+                ;;
+        esac
     fi
 
     # Конфликт fake-подсети

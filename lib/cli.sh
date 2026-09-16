@@ -352,7 +352,7 @@ cli_subnet() {
     local new_subnet="$1"
 
     if [ -z "$new_subnet" ]; then
-        echo "Usage: warper subnet NEW_SUBNET (e.g. 198.20.0.0/16)" >&2
+        echo "Usage: warper subnet NEW_SUBNET (e.g. 100.85.0.0/16)" >&2
         return 1
     fi
 
@@ -412,7 +412,12 @@ cli_subnet() {
     }
 
     if systemctl is-active --quiet sing-box; then
-        systemctl restart sing-box
+        # Маппинги из старого пула переживают рестарт (store_fakeip),
+        # а kresd продолжает отдавать клиентам старые адреса — без сброса
+        # обоих кэшей домены остаются на неотмаршрутизированных IP.
+        systemctl stop sing-box
+        rm -f /var/lib/sing-box/cache.db
+        systemctl start sing-box
         if ! ensure_singbox_running; then
             echo "ERROR: sing-box failed to restart" >&2
             return 1
@@ -421,6 +426,7 @@ cli_subnet() {
         ensure_iptables_rule FORWARD -i singbox-tun
         resync_ip_routes_if_needed
     fi
+    flush_kresd_cache
 
     echo "Subnet changed: $old_subnet -> $new_subnet"
     return 0
@@ -1299,6 +1305,22 @@ cli_web_update() {
 
 cli_web_https() {
     local web_dir="/root/warper/web"
+
+    # В режиме без nginx TLS держит сам gunicorn — управлять vhost нечем
+    if grep -qx "WEB_MODE=standalone" "$web_dir/.env" 2>/dev/null; then
+        if [ "${1:-status}" = "status" ]; then
+            if grep -q -- "--certfile" /etc/systemd/system/warper-web.service 2>/dev/null; then
+                echo "https (standalone, gunicorn TLS)"
+            else
+                echo "http (standalone)"
+            fi
+            return 0
+        fi
+        echo "ERROR: панель установлена без nginx — сертификатом управляет gunicorn." >&2
+        echo "Переустановите панель или правьте --certfile/--keyfile в warper-web.service" >&2
+        return 1
+    fi
+
     local nginx_conf="/etc/nginx/sites-available/warper-web"
     local nginx_link="/etc/nginx/sites-enabled/warper-web"
     local ssl_dir="/etc/nginx/ssl"

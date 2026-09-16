@@ -64,25 +64,35 @@ rollback_warper_update() {
 #   8. Перезапустить sing-box и проверить
 #   9. Обновить домены и IP-маршруты
 #  При любой ошибке — откат к backup.
-# Пул fake-IP по умолчанию расширен с /24 (254 адреса) до /16.
-# kresd раздаёт fake-IP каждому ПОДдомену, поэтому на /24 пул исчерпывался
-# за сутки-двое: sing-box переиспользовал адрес и стирал старый маппинг,
-# а kresd продолжал отдавать клиентам закэшированный старый fake-IP.
+# Миграция fake-подсети на актуальный дефолт.
+# Две причины: старый /24 (254 адреса) исчерпывался за сутки-двое, так как
+# kresd раздаёт fake-IP каждому ПОДдомену; и 198.18/198.20 — не bogon,
+# а реальное публичное пространство (198.18.0.0/15 к тому же занят
+# AntiZapret). Новый дефолт лежит в CGNAT-диапазоне RFC 6598.
 migrate_fakeip_pool() {
-    local mask="${SUBNET##*/}"
-    [ "$mask" -ge 20 ] 2>/dev/null || return 0
+    local new_subnet="$DEFAULT_SUBNET"
+    [ "$SUBNET" = "$new_subnet" ] && return 0
 
-    local new_subnet="${SUBNET%/*}/16"
+    local reason="" mask="${SUBNET##*/}"
+    case "$SUBNET" in
+        198.18.*|198.19.*|198.20.*)
+            reason="подсеть $SUBNET занимает публичное адресное пространство" ;;
+    esac
+    if [ -z "$reason" ] && [ "$mask" -ge 20 ] 2>/dev/null; then
+        reason="пул $SUBNET вмещает мало адресов"
+    fi
+    [ -n "$reason" ] || return 0
+
     echo ""
-    echo -e "${YELLOW}Фейковая подсеть $SUBNET вмещает мало адресов.${NC}"
-    echo -e "${YELLOW}kresd выдаёт fake-IP каждому поддомену, поэтому пул${NC}"
-    echo -e "${YELLOW}исчерпывается и домены перестают открываться.${NC}"
-    echo -e "${CYAN}Рекомендуется расширить до $new_subnet.${NC}"
+    echo -e "${YELLOW}Фейковая подсеть: ${reason}.${NC}"
+    echo -e "${YELLOW}kresd выдаёт fake-IP каждому поддомену, поэтому мелкий${NC}"
+    echo -e "${YELLOW}пул исчерпывается и домены перестают открываться.${NC}"
+    echo -e "${CYAN}Рекомендуется перейти на $new_subnet (CGNAT, RFC 6598).${NC}"
     echo -e "${YELLOW}Клиентам после этого потребуется переподключение —${NC}"
     echo -e "${YELLOW}AntiZapret пушит им маршрут фейковой подсети.${NC}"
 
     if [ -t 0 ] && [ -t 1 ]; then
-        read -r -e -p "Расширить сейчас? [Y/n] (по умолчанию Y): " answer
+        read -r -e -p "Перейти сейчас? [Y/n] (по умолчанию Y): " answer
         [[ -n "$answer" && ! "$answer" =~ ^[Yy]$ ]] && {
             echo -e "${CYAN}Пропущено. Позже: warper subnet $new_subnet${NC}"
             return 0
@@ -93,9 +103,9 @@ migrate_fakeip_pool() {
     fi
 
     if cli_subnet "$new_subnet"; then
-        echo -e "${GREEN}Фейковая подсеть расширена до $new_subnet.${NC}"
+        echo -e "${GREEN}Фейковая подсеть переведена на $new_subnet.${NC}"
     else
-        echo -e "${RED}Не удалось расширить подсеть, оставлена $SUBNET.${NC}"
+        echo -e "${RED}Не удалось сменить подсеть, оставлена $SUBNET.${NC}"
     fi
 }
 

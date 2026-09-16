@@ -124,7 +124,7 @@ def set_subnet(subnet: str) -> WarperResult:
     Может занять 30-60 секунд.
 
     Args:
-        subnet: Подсеть формата X.X.X.0/M (например '198.20.0.0/16').
+        subnet: Подсеть формата X.X.X.0/M (например '100.85.0.0/16').
 
     Returns:
         WarperResult.
