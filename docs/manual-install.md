@@ -68,7 +68,7 @@ systemctl start sing-box
 ## Шаг 6. Добавление fake-подсети в AntiZapret
 
 ```bash
-echo "100.85.0.0/16" >> /root/antizapret/config/include-ips.txt
+echo "10.224.0.0/16" >> /root/antizapret/config/include-ips.txt
 /root/antizapret/doall.sh
 ```
 
@@ -77,8 +77,8 @@ echo "100.85.0.0/16" >> /root/antizapret/config/include-ips.txt
 ```bash
 mkdir -p /root/warper
 cat > /root/warper/warper.conf <<EOF
-SUBNET=100.85.0.0/16
-TUN_IP=100.85.0.1/16
+SUBNET=10.224.0.0/16
+TUN_IP=10.224.0.1/16
 EOF
 chmod 600 /root/warper/warper.conf
 

@@ -123,7 +123,7 @@ while true; do
 done
 
 CONF_FILE="/root/warper/warper.conf"
-SUBNET="100.85.0.0/16"
+SUBNET="10.224.0.0/16"
 if [ -f "$CONF_FILE" ]; then
     loaded_subnet=$(load_config_value "SUBNET" "$CONF_FILE")
     if [ -n "$loaded_subnet" ]; then

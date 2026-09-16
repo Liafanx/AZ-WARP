@@ -305,8 +305,8 @@ fi
 
 ADD_GEMINI="n"
 ADD_CHATGPT="n"
-SUBNET="100.85.0.0/16"
-TUN_IP="100.85.0.1/16"
+SUBNET="10.224.0.0/16"
+TUN_IP="10.224.0.1/16"
 
 echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
 

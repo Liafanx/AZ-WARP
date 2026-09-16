@@ -435,7 +435,7 @@ class WarperAPI:
         Изменить fake-подсеть.
 
         Args:
-            subnet: Подсеть формата X.X.X.0/M (например '100.85.0.0/16').
+            subnet: Подсеть формата X.X.X.0/M (например '10.224.0.0/16').
         """
         return settings.set_subnet(subnet)
 

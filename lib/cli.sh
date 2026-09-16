@@ -353,7 +353,7 @@ cli_subnet() {
     local new_subnet="$1"
 
     if [ -z "$new_subnet" ]; then
-        echo "Usage: warper subnet NEW_SUBNET (e.g. 100.85.0.0/16)" >&2
+        echo "Usage: warper subnet NEW_SUBNET (e.g. 10.224.0.0/16)" >&2
         return 1
     fi
 

@@ -68,7 +68,8 @@ rollback_warper_update() {
 # Две причины: старый /24 (254 адреса) исчерпывался за сутки-двое, так как
 # kresd раздаёт fake-IP каждому ПОДдомену; и 198.18/198.20 — не bogon,
 # а реальное публичное пространство (198.18.0.0/15 к тому же занят
-# AntiZapret). Новый дефолт лежит в CGNAT-диапазоне RFC 6598.
+# AntiZapret). Новый дефолт — приватный диапазон RFC1918, свободный
+# и от Docker, и от подсетей клиентов AntiZapret.
 migrate_fakeip_pool() {
     local new_subnet="$DEFAULT_SUBNET"
     [ "$SUBNET" = "$new_subnet" ] && return 0
@@ -87,7 +88,7 @@ migrate_fakeip_pool() {
     echo -e "${YELLOW}Фейковая подсеть: ${reason}.${NC}"
     echo -e "${YELLOW}kresd выдаёт fake-IP каждому поддомену, поэтому мелкий${NC}"
     echo -e "${YELLOW}пул исчерпывается и домены перестают открываться.${NC}"
-    echo -e "${CYAN}Рекомендуется перейти на $new_subnet (CGNAT, RFC 6598).${NC}"
+    echo -e "${CYAN}Рекомендуется перейти на $new_subnet.${NC}"
     echo -e "${YELLOW}Клиентам после этого потребуется переподключение —${NC}"
     echo -e "${YELLOW}AntiZapret пушит им маршрут фейковой подсети.${NC}"
 
