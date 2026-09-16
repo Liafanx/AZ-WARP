@@ -18,6 +18,7 @@ SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
 SLAVE_TEMPLATE="$WARPER_DIR/config-slave-master.json.template"
 SLAVE_MODE_FILE="$WARPER_DIR/slave_mode.conf"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+SB_VERSION="1.14.1"
 LOCAL_VER=$(cat "$WARPER_DIR/version" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 CONF_FILE="$WARPER_DIR/warper.conf"
 # Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
@@ -227,6 +228,7 @@ load_wg_config
 case "${1:-}" in
     patch)    patch_kresd >/dev/null 2>&1; exit $? ;;
     resync)   cli_resync "${2:-}"; exit $? ;;
+    singbox)  cli_singbox "${2:-}" "${3:-}"; exit $? ;;
     doctor)   doctor; exit $? ;;
     status)
         if [ "${2:-}" = "json" ]; then

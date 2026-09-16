@@ -315,3 +315,60 @@ show_logs() {
     journalctl -u sing-box -n 20 -f
     trap - SIGINT
 }
+
+# ===== CLI: версия и обновление sing-box =====
+
+# Установленная версия sing-box (пусто, если бинарник не найден).
+get_singbox_version() {
+    command -v sing-box >/dev/null 2>&1 || return 1
+    sing-box version 2>/dev/null | head -1 | awk '{print $3}'
+}
+
+# CLI: warper singbox version|upgrade [VERSION]
+cli_singbox() {
+    local action="${1:-}" arg="${2:-}"
+    case "$action" in
+        version)
+            local ver
+            ver=$(get_singbox_version) || { echo "ERROR: sing-box not installed" >&2; return 1; }
+            echo "$ver"
+            ;;
+        upgrade)
+            local target="${arg:-$SB_VERSION}"
+            local current
+            current=$(get_singbox_version || echo "none")
+            if [ "$current" = "$target" ]; then
+                echo "sing-box already $target"
+                return 0
+            fi
+            echo "Upgrading sing-box: $current -> $target"
+            if ! curl -fsSL https://sing-box.app/install.sh \
+                | bash -s -- --version "$target" >/dev/null 2>&1; then
+                echo "ERROR: sing-box install failed" >&2
+                return 1
+            fi
+            current=$(get_singbox_version || echo "none")
+            if [ "$current" != "$target" ]; then
+                echo "ERROR: expected $target, got $current" >&2
+                return 1
+            fi
+            if ! validate_singbox_config; then
+                echo "ERROR: config invalid on $target, not restarting" >&2
+                return 1
+            fi
+            # Бинарник общий с sing-box-slave, перезапускаем обе службы
+            local unit
+            for unit in sing-box sing-box-slave; do
+                systemctl is-active --quiet "$unit" 2>/dev/null || continue
+                systemctl restart "$unit" || echo "WARNING: $unit restart failed" >&2
+            done
+            ensure_singbox_running >/dev/null 2>&1 || true
+            cli_resync >/dev/null 2>&1 || true
+            echo "sing-box upgraded to $target"
+            ;;
+        *)
+            echo "Usage: warper singbox version|upgrade [VERSION]" >&2
+            return 1
+            ;;
+    esac
+}

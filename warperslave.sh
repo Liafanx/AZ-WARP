@@ -8,6 +8,7 @@ WGCF_DIR="$SLAVE_DIR/wgcf"
 SINGBOX_SLAVE_CONF="/etc/sing-box-slave/config.json"
 SERVICE_NAME="sing-box-slave"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+SB_VERSION="1.14.1"
 LOCAL_VER=$(cat "$SLAVE_DIR/versionslave" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 
 RED='\033[0;31m'
@@ -197,6 +198,58 @@ set_mtu() {
     rm -f "$backup"
     echo -e "${GREEN}MTU изменён: ${old_mtu} → ${new_mtu}${NC}"
     return 0
+}
+
+# Установленная версия sing-box (пусто, если бинарник не найден).
+get_singbox_version() {
+    command -v sing-box >/dev/null 2>&1 || return 1
+    sing-box version 2>/dev/null | head -1 | awk '{print $3}'
+}
+
+# CLI: warperslave singbox version|upgrade [VERSION]
+singbox_cmd() {
+    local action="${1:-}" arg="${2:-}"
+    case "$action" in
+        version)
+            local ver
+            ver=$(get_singbox_version) || { echo "ERROR: sing-box not installed" >&2; return 1; }
+            echo "$ver"
+            ;;
+        upgrade)
+            local target="${arg:-$SB_VERSION}" current
+            current=$(get_singbox_version || echo "none")
+            if [ "$current" = "$target" ]; then
+                echo "sing-box already $target"
+                return 0
+            fi
+            echo "Upgrading sing-box: $current -> $target"
+            if ! curl -fsSL https://sing-box.app/install.sh \
+                | bash -s -- --version "$target" >/dev/null 2>&1; then
+                echo "ERROR: sing-box install failed" >&2
+                return 1
+            fi
+            current=$(get_singbox_version || echo "none")
+            if [ "$current" != "$target" ]; then
+                echo "ERROR: expected $target, got $current" >&2
+                return 1
+            fi
+            if ! validate_singbox_config; then
+                echo "ERROR: config invalid on $target, not restarting" >&2
+                return 1
+            fi
+            # Бинарник общий с основным sing-box, перезапускаем обе службы
+            local unit
+            for unit in "$SERVICE_NAME" sing-box; do
+                systemctl is-active --quiet "$unit" 2>/dev/null || continue
+                systemctl restart "$unit" || echo "WARNING: $unit restart failed" >&2
+            done
+            echo "sing-box upgraded to $target"
+            ;;
+        *)
+            echo "Usage: warperslave singbox version|upgrade [VERSION]" >&2
+            return 1
+            ;;
+    esac
 }
 
 validate_singbox_config() {
@@ -655,8 +708,7 @@ switch_mode() {
         "server": "8.8.8.8"
       }
     ],
-    "strategy": "ipv4_only",
-    "independent_cache": true
+    "strategy": "ipv4_only"
   },
   "inbounds": [
     {
@@ -723,8 +775,7 @@ WARPEOF
         "server": "1.1.1.1"
       }
     ],
-    "strategy": "ipv4_only",
-    "independent_cache": true
+    "strategy": "ipv4_only"
   },
   "inbounds": [
     {
@@ -1108,6 +1159,7 @@ case "${1:-}" in
     doctor) doctor_cmd; exit $? ;;
     update) update_warperslave; exit $? ;;
     uninstall) uninstall_cmd; exit $? ;;
+    singbox) singbox_cmd "${2:-}" "${3:-}"; exit $? ;;
     help|--help|-h)
         echo "Использование: warperslave [команда]"
         echo ""
@@ -1119,6 +1171,7 @@ case "${1:-}" in
         echo "  doctor     Диагностика"
         echo "  update     Обновить warperslave"
         echo "  uninstall  Удалить warperslave"
+        echo "  singbox    version | upgrade [ВЕРСИЯ] — версия sing-box"
         echo "  help       Показать эту справку"
         echo ""
         echo "Без аргументов — интерактивное меню."

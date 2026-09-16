@@ -456,19 +456,19 @@ echo -e "\n${YELLOW}[3/7] Создание конфигурации...${NC}"
 mkdir -p /etc/sing-box-slave
 
 if [ "$SLAVE_MODE" = "direct" ]; then
-    download_file "$REPO_URL/templates/config-slave-direct.json.template" "$SLAVE_DIR/config-slave.json.template" "шаблон конфигурации (direct)" || exit 1
+    download_file "$REPO_URL/templates/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" "шаблон конфигурации (direct)" || exit 1
     sed \
         -e "s|__SLAVE_PORT__|$SLAVE_PORT|g" \
         -e "s|__SLAVE_PASSWORD__|$SS_PASSWORD|g" \
-        "$SLAVE_DIR/config-slave.json.template" > "$SINGBOX_SLAVE_CONF"
+        "$SLAVE_DIR/config-slave-direct.json.template" > "$SINGBOX_SLAVE_CONF"
 else
-    download_file "$REPO_URL/templates/config-slave-warp.json.template" "$SLAVE_DIR/config-slave.json.template" "шаблон конфигурации (warp)" || exit 1
+    download_file "$REPO_URL/templates/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" "шаблон конфигурации (warp)" || exit 1
     sed \
         -e "s|__SLAVE_PORT__|$SLAVE_PORT|g" \
         -e "s|__SLAVE_PASSWORD__|$SS_PASSWORD|g" \
         -e "s|__WARP_ADDRESS__|$WARP_ADDRESS|g" \
         -e "s|__WARP_PRIVATE_KEY__|$WARP_PRIVATE_KEY|g" \
-        "$SLAVE_DIR/config-slave.json.template" > "$SINGBOX_SLAVE_CONF"
+        "$SLAVE_DIR/config-slave-warp.json.template" > "$SINGBOX_SLAVE_CONF"
 fi
 
 chmod 600 "$SINGBOX_SLAVE_CONF"
