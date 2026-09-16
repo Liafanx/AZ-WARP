@@ -1011,6 +1011,8 @@ download_file "$REPO_URL/templates/sing-box.service" "/etc/systemd/system/sing-b
 download_file "$REPO_URL/templates/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
 download_file "$REPO_URL/templates/warper-traffic-snapshot.service" "/etc/systemd/system/warper-traffic-snapshot.service" "служба warper-traffic-snapshot.service" || exit 1
 download_file "$REPO_URL/templates/warper-traffic-snapshot.timer" "/etc/systemd/system/warper-traffic-snapshot.timer" "таймер warper-traffic-snapshot.timer" || exit 1
+download_file "$REPO_URL/templates/warper-resync.service" "/etc/systemd/system/warper-resync.service" "служба warper-resync.service" || exit 1
+download_file "$REPO_URL/templates/warper-resync.timer" "/etc/systemd/system/warper-resync.timer" "таймер warper-resync.timer" || exit 1
 systemctl daemon-reload
 
 if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
@@ -1028,6 +1030,8 @@ else
     # Таймер периодических snapshot'ов трафика
     systemctl enable warper-traffic-snapshot.timer > /dev/null 2>&1
     systemctl start warper-traffic-snapshot.timer > /dev/null 2>&1 || true
+    systemctl enable warper-resync.timer > /dev/null 2>&1
+    systemctl start warper-resync.timer > /dev/null 2>&1 || true
 
     sleep 2
 fi
@@ -1050,6 +1054,23 @@ if [ -f "$AZ_INC" ]; then
         normalize_include_ips "$AZ_INC"
         echo -e " - ${GREEN}Подсеть $SUBNET уже присутствует в include-ips.txt.${NC}"
     fi
+fi
+
+# Ночной doall.sh пересобирает ipset и правила FORWARD, затирая состояние
+# WARPER. custom-doall.sh — официальная точка расширения AntiZapret.
+AZ_CUSTOM_DOALL="/root/antizapret/custom-doall.sh"
+if [ -f "$AZ_CUSTOM_DOALL" ] && ! grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null; then
+    echo -e " - ${CYAN}Регистрация в custom-doall.sh...${NC}"
+    cat >> "$AZ_CUSTOM_DOALL" <<'HOOKEOF'
+
+# --- WARPER ---
+# Восстанавливает состояние WARPER после пересборки правил AntiZapret
+if [ -x /usr/local/bin/warper ]; then
+    WARPER_FROM_DOALL=1 /usr/local/bin/warper resync >/dev/null 2>&1 || true
+fi
+# --- END WARPER ---
+HOOKEOF
+    chmod +x "$AZ_CUSTOM_DOALL" 2>/dev/null || true
 fi
 
 echo -e "\n${YELLOW}[6/8] Скачивание базовых списков с GitHub...${NC}"

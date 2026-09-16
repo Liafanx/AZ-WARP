@@ -246,6 +246,15 @@ az_table_active() {
 sync_az_table_routes() {
     local desired_file="${1:-}" table cidr
     ip link show singbox-tun >/dev/null 2>&1 || return 0
+
+    # При RESTRICT_FORWARD=y AntiZapret дропает всё, чего нет в
+    # antizapret-forward, а fake-подсеть под его маркировку попадает
+    # (up.sh исключает только собственный fake-диапазон).
+    if command -v ipset >/dev/null 2>&1 && \
+       ipset list antizapret-forward >/dev/null 2>&1; then
+        ipset add antizapret-forward "$SUBNET" -exist 2>/dev/null || true
+    fi
+
     for table in $AZ_WARP_TABLES; do
         az_table_active "$table" || continue
         ip route replace "$SUBNET" dev singbox-tun table "$table" 2>/dev/null || true
@@ -498,6 +507,11 @@ sync_ip_ranges_to_antizapret() {
             rm -f "$AZ_WARPER_INCLUDE_IPS"
             changed=1
         fi
+    fi
+
+    # Сами вызваны из doall.sh — рекурсивный запуск не нужен
+    if [ "$changed" -eq 1 ] && [ "${WARPER_FROM_DOALL:-}" = "1" ]; then
+        return 0
     fi
 
     if [ "$changed" -eq 1 ]; then

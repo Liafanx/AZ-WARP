@@ -92,8 +92,10 @@ trap 'release_lock' EXIT
 
 # Lock берём ТОЛЬКО для тяжёлых команд по первому аргументу
 case "${1:-}" in
-    toggle|sync|ipsync|patch|mode|subnet|update)
-        acquire_lock
+    toggle|sync|ipsync|patch|mode|subnet|update|resync)
+        # Вызов из custom-doall.sh идёт внутри уже запущенного warper —
+        # повторный lock привёл бы к ожиданию самого себя
+        [ "${WARPER_FROM_DOALL:-}" = "1" ] || acquire_lock
         ;;
     *)
         :  # без lock - TUI и быстрые команды
@@ -174,20 +176,18 @@ done
 unset _lib _rel_path
 
 # Опциональные модули
-for _opt_module in "$WARPER_MENUS/web-menu.sh"; do
-    if [ ! -f "$_opt_module" ]; then
-        local_name=$(basename "$_opt_module" .sh)
-        if curl -fsSL --connect-timeout 5 \
-            "$REPO_URL/menus/${local_name}.sh?t=$(date +%s)" \
-            -o "$_opt_module" 2>/dev/null; then
-            chmod 644 "$_opt_module"
-        fi
+_opt_module="$WARPER_MENUS/web-menu.sh"
+if [ ! -f "$_opt_module" ]; then
+    if curl -fsSL --connect-timeout 5 \
+        "$REPO_URL/menus/web-menu.sh?t=$(date +%s)" \
+        -o "$_opt_module" 2>/dev/null; then
+        chmod 644 "$_opt_module"
     fi
-    if [ -f "$_opt_module" ]; then
-        # shellcheck disable=SC1090
-        source "$_opt_module"
-    fi
-done
+fi
+if [ -f "$_opt_module" ]; then
+    # shellcheck disable=SC1090
+    source "$_opt_module"
+fi
 unset _opt_module
 
 # Системный WARP-конфиг определяем после загрузки модулей
@@ -226,6 +226,7 @@ load_wg_config
 # ===== CLI-обработка =====
 case "${1:-}" in
     patch)    patch_kresd >/dev/null 2>&1; exit $? ;;
+    resync)   cli_resync "${2:-}"; exit $? ;;
     doctor)   doctor; exit $? ;;
     status)
         if [ "${2:-}" = "json" ]; then

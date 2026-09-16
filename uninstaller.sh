@@ -177,6 +177,8 @@ systemctl stop sing-box 2>/dev/null
 systemctl stop warper-autopatch 2>/dev/null
 systemctl stop warper-traffic-snapshot.timer 2>/dev/null
 systemctl disable warper-traffic-snapshot.timer 2>/dev/null
+systemctl stop warper-resync.timer 2>/dev/null
+systemctl disable warper-resync.timer 2>/dev/null
 echo -e " - ${CYAN}Удаление из автозагрузки...${NC}"
 systemctl disable sing-box 2>/dev/null
 systemctl disable warper-autopatch 2>/dev/null
@@ -187,7 +189,16 @@ rm -f /usr/lib/systemd/system/sing-box.service
 rm -f /usr/lib/systemd/system/warper-autopatch.service
 rm -f /etc/systemd/system/warper-traffic-snapshot.service
 rm -f /etc/systemd/system/warper-traffic-snapshot.timer
+rm -f /etc/systemd/system/warper-resync.service
+rm -f /etc/systemd/system/warper-resync.timer
 systemctl daemon-reload
+
+# Убираем хук из точки расширения AntiZapret
+AZ_CUSTOM_DOALL="/root/antizapret/custom-doall.sh"
+if [ -f "$AZ_CUSTOM_DOALL" ] && grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null; then
+    echo -e " - ${CYAN}Удаление хука из custom-doall.sh...${NC}"
+    sed -i '/^# --- WARPER ---$/,/^# --- END WARPER ---$/d' "$AZ_CUSTOM_DOALL"
+fi
 
 echo -e "\n${YELLOW}2. Удаление ядра sing-box и конфигов...${NC}"
 echo -e " - ${CYAN}Удаление папки с конфигурацией /etc/sing-box...${NC}"

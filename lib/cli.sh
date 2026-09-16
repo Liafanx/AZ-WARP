@@ -1612,3 +1612,86 @@ HTTPEOF
             ;;
     esac
 }
+
+# ===== РЕСИНК СОСТОЯНИЯ =====
+
+# Идемпотентно переприменяет состояние WARPER, которое может затереть
+# AntiZapret: правила FORWARD, ipset antizapret-forward, ip rule,
+# маршруты (включая fake-подсеть в таблицах 13335/13336) и патч kresd.
+# Ничего не трогает, если всё на месте. Рассчитан на вызов по таймеру
+# и из custom-doall.sh после ночного обновления AntiZapret.
+cli_resync() {
+    local verbose="${1:-}" fixed=0
+
+    ensure_az_doall_hook
+
+    # Отключённый WARPER не восстанавливаем — это осознанное состояние
+    if ! systemctl is-enabled --quiet sing-box 2>/dev/null; then
+        [ "$verbose" = "-v" ] && echo "sing-box disabled, nothing to do"
+        return 0
+    fi
+
+    if ! systemctl is-active --quiet sing-box; then
+        systemctl start sing-box 2>/dev/null || true
+        ensure_singbox_running >/dev/null 2>&1 || true
+        fixed=1
+    fi
+
+    if ! iptables -C FORWARD -o singbox-tun -j ACCEPT 2>/dev/null; then
+        ensure_iptables_rule FORWARD -o singbox-tun
+        fixed=1
+    fi
+    if ! iptables -C FORWARD -i singbox-tun -j ACCEPT 2>/dev/null; then
+        ensure_iptables_rule FORWARD -i singbox-tun
+        fixed=1
+    fi
+
+    # AntiZapret пересобирает kresd.conf при обновлении
+    if ! grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+        patch_kresd >/dev/null 2>&1 && fixed=1
+    fi
+
+    # Маршруты и ipset: up.sh пересоздаёт antizapret-forward с нуля
+    resync_ip_routes_if_needed
+
+    if [ "$verbose" = "-v" ]; then
+        if [ "$fixed" -eq 1 ]; then
+            echo "State restored"
+        else
+            echo "State OK"
+        fi
+    fi
+    return 0
+}
+
+# ===== ХУК В ANTIZAPRET =====
+
+AZ_CUSTOM_DOALL="/root/antizapret/custom-doall.sh"
+
+# Прописывает вызов warper resync в custom-doall.sh — официальную точку
+# расширения AntiZapret. Нужно потому, что ночной doall.sh пересобирает
+# ipset antizapret-forward и правила FORWARD, затирая состояние WARPER.
+ensure_az_doall_hook() {
+    [ -f "$AZ_CUSTOM_DOALL" ] || return 0
+    grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null && return 0
+
+    cat >> "$AZ_CUSTOM_DOALL" <<'EOF'
+
+# --- WARPER ---
+# Восстанавливает состояние WARPER после пересборки правил AntiZapret
+if [ -x /usr/local/bin/warper ]; then
+    WARPER_FROM_DOALL=1 /usr/local/bin/warper resync >/dev/null 2>&1 || true
+fi
+# --- END WARPER ---
+EOF
+    chmod +x "$AZ_CUSTOM_DOALL" 2>/dev/null || true
+    return 0
+}
+
+# Удаляет блок WARPER из custom-doall.sh (деинсталляция).
+remove_az_doall_hook() {
+    [ -f "$AZ_CUSTOM_DOALL" ] || return 0
+    grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null || return 0
+    sed -i '/^# --- WARPER ---$/,/^# --- END WARPER ---$/d' "$AZ_CUSTOM_DOALL"
+    return 0
+}
