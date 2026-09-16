@@ -241,12 +241,15 @@ az_table_active() {
     ip route show table "$1" 2>/dev/null | grep -q "dev"
 }
 
-# Прописывает fake-подсеть и все желаемые CIDR в активные таблицы AntiZapret.
+# Прописывает fake-подсеть и, если передан файл, все желаемые CIDR
+# в активные таблицы AntiZapret.
 sync_az_table_routes() {
-    local desired_file="$1" table cidr
+    local desired_file="${1:-}" table cidr
+    ip link show singbox-tun >/dev/null 2>&1 || return 0
     for table in $AZ_WARP_TABLES; do
         az_table_active "$table" || continue
         ip route replace "$SUBNET" dev singbox-tun table "$table" 2>/dev/null || true
+        [ -n "$desired_file" ] && [ -f "$desired_file" ] || continue
         while IFS= read -r cidr; do
             [ -z "$cidr" ] && continue
             ip route replace "$cidr" dev singbox-tun table "$table" 2>/dev/null || true

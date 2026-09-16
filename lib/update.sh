@@ -62,6 +62,41 @@ rollback_warper_update() {
 #   8. Перезапустить sing-box и проверить
 #   9. Обновить домены и IP-маршруты
 #  При любой ошибке — откат к backup.
+# Пул fake-IP по умолчанию расширен с /24 (254 адреса) до /16.
+# kresd раздаёт fake-IP каждому ПОДдомену, поэтому на /24 пул исчерпывался
+# за сутки-двое: sing-box переиспользовал адрес и стирал старый маппинг,
+# а kresd продолжал отдавать клиентам закэшированный старый fake-IP.
+migrate_fakeip_pool() {
+    local mask="${SUBNET##*/}"
+    [ "$mask" -ge 20 ] 2>/dev/null || return 0
+
+    local new_subnet="${SUBNET%/*}/16"
+    echo ""
+    echo -e "${YELLOW}Фейковая подсеть $SUBNET вмещает мало адресов.${NC}"
+    echo -e "${YELLOW}kresd выдаёт fake-IP каждому поддомену, поэтому пул${NC}"
+    echo -e "${YELLOW}исчерпывается и домены перестают открываться.${NC}"
+    echo -e "${CYAN}Рекомендуется расширить до $new_subnet.${NC}"
+    echo -e "${YELLOW}Клиентам после этого потребуется переподключение —${NC}"
+    echo -e "${YELLOW}AntiZapret пушит им маршрут фейковой подсети.${NC}"
+
+    if [ -t 0 ] && [ -t 1 ]; then
+        read -r -e -p "Расширить сейчас? [Y/n] (по умолчанию Y): " answer
+        [[ -n "$answer" && ! "$answer" =~ ^[Yy]$ ]] && {
+            echo -e "${CYAN}Пропущено. Позже: warper subnet $new_subnet${NC}"
+            return 0
+        }
+    else
+        echo -e "${CYAN}Неинтерактивный режим. Выполните: warper subnet $new_subnet${NC}"
+        return 0
+    fi
+
+    if cli_subnet "$new_subnet"; then
+        echo -e "${GREEN}Фейковая подсеть расширена до $new_subnet.${NC}"
+    else
+        echo -e "${RED}Не удалось расширить подсеть, оставлена $SUBNET.${NC}"
+    fi
+}
+
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     mkdir -p "$DOWNLOAD_DIR"
@@ -391,13 +426,13 @@ update_warper() {
         sync_domains >/dev/null 2>&1 || true
     fi
 
+    migrate_fakeip_pool
+
     # Пересинхронизируем IP-маршруты уже новым экземпляром warper
     if is_warper_active && [ "$(count_ip_ranges)" -gt 0 ]; then
         echo -e "${CYAN}Синхронизация IP-маршрутов...${NC}"
         /usr/local/bin/warper ipsync >/dev/null 2>&1 || true
     fi
-
-    rm -rf "$tmpdir" "$backupdir"
 
     rm -rf "$tmpdir" "$backupdir"
 

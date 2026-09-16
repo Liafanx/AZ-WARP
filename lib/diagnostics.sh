@@ -205,10 +205,8 @@ toggle_warper() {
                 echo -e "${RED}Не удалось применить патч DNS.${NC}"
                 sleep 2; return
             fi
-            if [ "$(count_ip_ranges)" -gt 0 ]; then
-                echo -e "${CYAN}Синхронизация IP-маршрутов...${NC}"
-                sync_ip_ranges || true
-            fi
+            echo -e "${CYAN}Синхронизация IP-маршрутов...${NC}"
+            resync_ip_routes_if_needed
             echo -e "${GREEN}WARPER успешно включен!${NC}"
         fi
         sleep 2
@@ -477,6 +475,19 @@ doctor() {
         fi
     else
         echo -e " ${CYAN}!${NC} Экспорт WARPER CIDR в AntiZapret выключен"
+    fi
+
+    # Ёмкость пула fake-IP. kresd выдаёт адрес каждому ПОДдомену,
+    # поэтому /24 (254 адреса) исчерпывается за сутки-двое.
+    local pool_mask pool_size
+    pool_mask="${SUBNET##*/}"
+    if [[ "$pool_mask" =~ ^[0-9]+$ ]] && (( pool_mask >= 8 && pool_mask <= 32 )); then
+        pool_size=$(( 2 ** (32 - pool_mask) - 2 ))
+        if (( pool_size < 1024 )); then
+            echo -e " ${YELLOW}!${NC} Пул fake-IP $SUBNET мал ($pool_size адресов) — расширьте: warper subnet ${SUBNET%/*}/16"
+        else
+            echo -e " ${GREEN}✔${NC} Пул fake-IP $SUBNET ($pool_size адресов)"
+        fi
     fi
 
     # Конфликт fake-подсети

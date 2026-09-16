@@ -58,9 +58,7 @@ cli_toggle_warper() {
             echo "ERROR: failed to patch kresd" >&2
             return 1
         fi
-        if [ "$(count_ip_ranges)" -gt 0 ]; then
-            sync_ip_ranges >/dev/null 2>&1 || true
-        fi
+        resync_ip_routes_if_needed
         echo "WARPER enabled"
         return 0
     fi
@@ -354,7 +352,7 @@ cli_subnet() {
     local new_subnet="$1"
 
     if [ -z "$new_subnet" ]; then
-        echo "Usage: warper subnet NEW_SUBNET (e.g. 198.20.0.0/24)" >&2
+        echo "Usage: warper subnet NEW_SUBNET (e.g. 198.20.0.0/16)" >&2
         return 1
     fi
 

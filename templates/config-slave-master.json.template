@@ -9,12 +9,11 @@
     "rules": [
       { "query_type": ["A"], "server": "fakeip-dns" }
     ],
-    "independent_cache": true,
     "strategy": "ipv4_only"
   },
   "inbounds": [
     { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
-    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "mtu": 1420, "auto_route": false, "strict_route": false, "stack": "system" }
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "mtu": 1420, "auto_route": false, "strict_route": false, "stack": "system", "dns_mode": "disabled" }
   ],
   "outbounds": [
     {
@@ -36,5 +35,12 @@
     "default_domain_resolver": "local",
     "auto_detect_interface": true,
     "final": "direct"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/var/lib/sing-box/cache.db",
+      "store_fakeip": true
+    }
   }
 }

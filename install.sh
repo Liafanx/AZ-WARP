@@ -3,7 +3,7 @@
 set -uo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
-SB_VERSION="1.13.11"
+SB_VERSION="1.14.1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -305,8 +305,8 @@ fi
 
 ADD_GEMINI="n"
 ADD_CHATGPT="n"
-SUBNET="198.20.0.0/24"
-TUN_IP="198.20.0.1/24"
+SUBNET="198.20.0.0/16"
+TUN_IP="198.20.0.1/16"
 
 echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
 

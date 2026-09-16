@@ -16,8 +16,7 @@
         "server": "8.8.8.8"
       }
     ],
-    "strategy": "ipv4_only",
-    "independent_cache": true
+    "strategy": "ipv4_only"
   },
   "inbounds": [
     {
