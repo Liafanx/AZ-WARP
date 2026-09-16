@@ -441,10 +441,11 @@ if [ -L "$_default_link" ] || [ -f "$_default_link" ]; then
 
     # Признак заглушки: нет проксирования на приложение и виден стоковый
     # корень Debian/Ubuntu. По числу строк судить нельзя — стоковый default
-    # занимает ~91 строку, почти целиком из комментариев.
-    if ! grep -qE 'proxy_pass|fastcgi_pass|uwsgi_pass' "$_default_target" 2>/dev/null; then
-        if grep -qE 'index\.nginx-debian\.html|/var/www/html|Welcome to nginx' \
-            "$_default_target" 2>/dev/null; then
+    # занимает ~91 строку, почти целиком из комментариев. По этой же причине
+    # комментарии отбрасываем: в стоковом файле fastcgi_pass закомментирован.
+    _default_active=$(sed 's/#.*//' "$_default_target" 2>/dev/null)
+    if ! echo "$_default_active" | grep -qE 'proxy_pass|fastcgi_pass|uwsgi_pass'; then
+        if echo "$_default_active" | grep -qE 'index\.nginx-debian\.html|/var/www/html'; then
             _is_placeholder="y"
         fi
     fi
