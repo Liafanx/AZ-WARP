@@ -6,45 +6,44 @@
 
 # ===== Проверки AntiZapret =====
 
-# Проверяет: включён ли ANTIZAPRET_WARP=y в /root/antizapret/setup.
-# При включённом ANTIZAPRET_WARP WARPER работать не может.
+# Читает значение параметра из /root/antizapret/setup.
+az_setup_value() {
+    local key="$1" setup_file="/root/antizapret/setup"
+    [ -f "$setup_file" ] || return 1
+    grep -E "^${key}=" "$setup_file" 2>/dev/null \
+        | head -n1 | cut -d'=' -f2 | tr -d '"'\''[:space:]'
+}
+
+# Режим WARP в AntiZapret: off | all | selective.
+# Раньше параметр был y/n, в актуальных версиях это число 0-4:
+# 2 — вся подсеть через WARP, 3/4 — выборочно по fwmark 0x2.
+az_warp_mode() {
+    local value
+    value=$(az_setup_value "$1") || { echo "off"; return 0; }
+    case "$value" in
+        y|2) echo "all" ;;
+        3|4) echo "selective" ;;
+        *)   echo "off" ;;
+    esac
+}
+
+# Проверяет: включён ли WARP для подсети AntiZapret.
 check_antizapret_warp() {
-    local setup_file="/root/antizapret/setup"
-    if [ -f "$setup_file" ]; then
-        local az_warp
-        az_warp=$(grep -E '^ANTIZAPRET_WARP=' "$setup_file" 2>/dev/null \
-            | cut -d'=' -f2 | tr -d '"'\''[:space:]')
-        if [ "$az_warp" = "y" ]; then
-            return 0
-        fi
-    fi
-    return 1
+    [ "$(az_warp_mode ANTIZAPRET_WARP)" != "off" ]
 }
 
-# Проверяет: включён ли VPN_WARP=y в /root/antizapret/setup.
+# Проверяет: включён ли WARP для подсети FullVPN.
 check_vpn_warp() {
-    local setup_file="/root/antizapret/setup"
-    if [ -f "$setup_file" ]; then
-        local vpn_warp
-        vpn_warp=$(grep -E '^VPN_WARP=' "$setup_file" 2>/dev/null \
-            | cut -d'=' -f2 | tr -d '"'\''[:space:]')
-        if [ "$vpn_warp" = "y" ]; then
-            return 0
-        fi
-    fi
-    return 1
+    [ "$(az_warp_mode VPN_WARP)" != "off" ]
 }
 
-# Проверяет: активны ли правила от up.sh AntiZapret
-# (интерфейс warp или ip rule lookup 13335 при VPN_WARP=n).
+# Проверяет: активны ли WARP-интерфейсы AntiZapret.
+# Старые версии поднимали warp, актуальные — warp-antizapret/warp-vpn.
 check_warp_rules_active() {
-    if ip link show warp >/dev/null 2>&1; then
-        return 0
-    fi
-    #убрано , 28.08.26, у антизапрета появился свой варп селектив 
-    #if ip rule show 2>/dev/null | grep -q "lookup 13335"; then
-    #    return 0
-    #fi
+    local iface
+    for iface in warp-antizapret warp-vpn warp; do
+        ip link show "$iface" >/dev/null 2>&1 && return 0
+    done
     return 1
 }
 
@@ -78,21 +77,6 @@ show_down_sh_warning() {
     echo -e "${RED}================================================${NC}"
 }
 
-# Выводит предупреждение о конфликте с ANTIZAPRET_WARP=y
-show_antizapret_warp_warning() {
-    echo -e "${RED}================================================${NC}"
-    echo -e "${RED}⚠️  ANTIZAPRET_WARP=y включён!${NC}"
-    echo -e "${RED}================================================${NC}"
-    echo -e "${YELLOW}WARPER не может работать при включённом ANTIZAPRET_WARP,${NC}"
-    echo -e "${YELLOW}так как встроенный WARP AntiZapret конфликтует с WARPER.${NC}"
-    echo -e ""
-    echo -e "${CYAN}Для использования WARPER:${NC}"
-    echo -e "1. Установите ANTIZAPRET_WARP=n в /root/antizapret/setup"
-    echo -e "2. Выполните: /root/antizapret/down.sh"
-    echo -e "3. Выполните: /root/antizapret/up.sh"
-    echo -e "4. Запустите: warper"
-    echo -e "${RED}================================================${NC}"
-}
 
 # ===== Состояние WARPER =====
 
@@ -111,11 +95,6 @@ is_warper_active() {
 # Предлагает применить изменения к DNS после редактирования доменов.
 # Учитывает: ANTIZAPRET_WARP, needs_down_sh, is_warper_active.
 prompt_apply() {
-    if check_antizapret_warp; then
-        echo -e "\n${RED}⚠️  ANTIZAPRET_WARP=y — изменения НЕ будут применены к DNS.${NC}"
-        read -r -p "Нажмите Enter для продолжения..."
-        return
-    fi
     if needs_down_sh; then
         show_down_sh_warning
         read -r -p "Нажмите Enter для продолжения..."
@@ -158,26 +137,12 @@ prompt_confirm() {
 # При выключении: останавливает sing-box, удаляет патч, удаляет IP-маршруты.
 toggle_warper() {
 
-    if check_antizapret_warp; then
-        show_antizapret_warp_warning
-        read -r -p "Нажмите Enter для продолжения..."
-        return
-    fi
-    
     if needs_down_sh; then
         show_down_sh_warning
         read -r -p "Нажмите Enter для продолжения..."
         return
     fi
 
-    # Автоотключение FullVPN WARP-резолвинга при включённом VPN_WARP
-    if [ "$FULLVPN_WARP_RESOLVE" = "y" ] && check_vpn_warp; then
-        echo -e "${RED}FullVPN WARP-резолвинг несовместим с VPN_WARP=y. Автоматическое отключение.${NC}"
-        unpatch_kresd_fullvpn
-        FULLVPN_WARP_RESOLVE="n"
-        save_main_config
-    fi   
-    
     check_and_sync_warp_keys || return
 
     local action="ВКЛЮЧИТЬ"
@@ -302,8 +267,7 @@ status_cmd() {
     if subnet_conflicts "$SUBNET"; then subnet_conflict="yes"
     else subnet_conflict="no"; fi
 
-    if check_antizapret_warp; then az_warp_stat="ENABLED (conflict!)"
-    else az_warp_stat="disabled"; fi
+    az_warp_stat=$(az_warp_mode ANTIZAPRET_WARP)
 
     if needs_down_sh; then warp_rules_stat="active (run down.sh + up.sh!)"
     else warp_rules_stat="ok"; fi
@@ -313,7 +277,7 @@ status_cmd() {
 
     echo "Version: $LOCAL_VER"
     echo "ANTIZAPRET_WARP: $az_warp_stat"
-    echo "VPN_WARP: $(check_vpn_warp && echo "enabled" || echo "disabled")"
+    echo "VPN_WARP: $(az_warp_mode VPN_WARP)"
     echo "WARP rules from up.sh: $warp_rules_stat"
     echo "outbound mode: $CURRENT_OUTBOUND_MODE"
 
@@ -394,12 +358,23 @@ doctor() {
         fi
     }
 
-    # ANTIZAPRET_WARP
-    if check_antizapret_warp; then
-        echo -e " ${RED}✘${NC} ANTIZAPRET_WARP=n (сейчас: ANTIZAPRET_WARP=y — WARPER не работает!)"
+    # WARP AntiZapret: режимы 2/3/4 совместимы, нужен лишь маршрут fake-подсети
+    local az_mode vpn_mode
+    az_mode=$(az_warp_mode ANTIZAPRET_WARP)
+    vpn_mode=$(az_warp_mode VPN_WARP)
+    echo -e " ${GREEN}✔${NC} ANTIZAPRET_WARP: ${az_mode}, VPN_WARP: ${vpn_mode}"
+
+    # При режиме "all" AntiZapret ловит весь трафик подсети правилом
+    # без fwmark, поэтому fake-подсеть обязана быть в его таблице.
+    if [ "$az_mode" = "all" ] && \
+       ! ip route show table 13335 2>/dev/null | grep -qF "$SUBNET"; then
+        echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table 13335 — домены уйдут в warp-antizapret"
         failed=1
-    else
-        echo -e " ${GREEN}✔${NC} ANTIZAPRET_WARP=n"
+    fi
+    if [ "$vpn_mode" = "all" ] && \
+       ! ip route show table 13336 2>/dev/null | grep -qF "$SUBNET"; then
+        echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table 13336 — домены FullVPN уйдут в warp-vpn"
+        failed=1
     fi
 
     # Правила от up.sh
@@ -410,12 +385,6 @@ doctor() {
         echo -e " ${GREEN}✔${NC} Правила от up.sh неактивны"
     fi
     
-    # Проверка конфликта FullVPN WARP-резолвинга
-    if [ "$FULLVPN_WARP_RESOLVE" = "y" ] && check_vpn_warp; then
-        echo -e " ${RED}✘${NC} FullVPN WARP resolve: CONFLICT (VPN_WARP=y включён)"
-        failed=1
-    fi    
-
     # Режим маршрутизации
     load_wg_config
     if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then

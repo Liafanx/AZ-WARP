@@ -221,6 +221,24 @@ validate_template_marker() {
     return 0
 }
 
+# ===== WARP-конфиг AntiZapret =====
+
+# Возвращает первый существующий системный WARP-конфиг AntiZapret.
+# Если ни одного нет — печатает последний кандидат и возвращает 1,
+# чтобы вызывающий код мог показать осмысленный путь в сообщении.
+resolve_warp_system_conf() {
+    local candidate last=""
+    for candidate in $WARP_SYSTEM_CANDIDATES; do
+        last="$candidate"
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    echo "$last"
+    return 1
+}
+
 # ===== Управление iptables =====
 
 # Добавляет правило iptables если оно ещё не существует

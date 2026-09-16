@@ -451,10 +451,7 @@ settings_menu() {
 
             # ── Патч Kresd для full vpn конфигов ────────────────────────────────────────────────
             9)
-                if check_vpn_warp; then
-                    echo -e "${RED}VPN_WARP=y — нельзя включить FullVPN WARP-резолвинг!${NC}"
-                    sleep 2
-                elif grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
+                if grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
                     if prompt_confirm; then
                         unpatch_kresd_fullvpn
                         FULLVPN_WARP_RESOLVE="n"

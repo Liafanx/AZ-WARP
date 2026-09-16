@@ -20,6 +20,9 @@ SLAVE_MODE_FILE="$WARPER_DIR/slave_mode.conf"
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
 LOCAL_VER=$(cat "$WARPER_DIR/version" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 CONF_FILE="$WARPER_DIR/warper.conf"
+# Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
+# warp-vpn/warp-antizapret, старые — единый warp. Порядок = приоритет.
+WARP_SYSTEM_CANDIDATES="/etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf"
 WARP_SYSTEM_CONF="/etc/wireguard/warp.conf"
 LOCK_FILE="/var/run/warper.lock"
 WG_TEMPLATE="$WARPER_DIR/config-wg.json.template"
@@ -40,6 +43,9 @@ NC='\033[0m'
 SUBNET="198.20.0.0/24"
 TUN_IP="198.20.0.1/24"
 FULLVPN_WARP_RESOLVE="n"
+# Источник WARP-ключей: system | local. Только при system warper
+# следует за ключами AntiZapret и пересобирает конфиг при их смене.
+WARP_KEY_SOURCE="local"
 CURRENT_OUTBOUND_MODE="warp"
 SLAVE_SERVER=""
 SLAVE_PORT="8444"
@@ -181,6 +187,10 @@ for _opt_module in "$WARPER_MENUS/web-menu.sh"; do
     fi
 done
 unset _opt_module
+
+# Системный WARP-конфиг определяем после загрузки модулей
+# shellcheck disable=SC2034  # используется в lib/*.sh
+WARP_SYSTEM_CONF=$(resolve_warp_system_conf)
 
 # ===== Инициализация файлов =====
 if [ ! -f "$MASTER_FILE" ]; then

@@ -9,21 +9,9 @@
 # Включает или выключает WARPER (без интерактивности).
 # Аналог пункта 8 в главном меню, но без вопросов.
 cli_toggle_warper() {
-    if check_antizapret_warp; then
-        echo "ERROR: ANTIZAPRET_WARP=y - WARPER cannot work" >&2
-        return 1
-    fi
-
     if needs_down_sh; then
         echo "ERROR: WARP rules from up.sh are active. Run /root/antizapret/down.sh && /root/antizapret/up.sh" >&2
         return 1
-    fi
-
-    # Автоотключение FullVPN при VPN_WARP=y
-    if [ "$FULLVPN_WARP_RESOLVE" = "y" ] && check_vpn_warp; then
-        unpatch_kresd_fullvpn
-        FULLVPN_WARP_RESOLVE="n"
-        save_main_config
     fi
 
     if systemctl is-active --quiet sing-box || \
@@ -139,6 +127,14 @@ cli_mode_warp() {
                 return 1
                 ;;
         esac
+
+        # Следовать за ключами AntiZapret только при явном выборе system
+        if [ "$key_source" = "system" ]; then
+            WARP_KEY_SOURCE="system"
+        else
+            WARP_KEY_SOURCE="local"
+        fi
+        save_main_config
 
         if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
             echo "ERROR: failed to extract WARP keys" >&2
@@ -337,6 +333,7 @@ cli_config_get() {
         IP_ROUTE_MODE) echo "$IP_ROUTE_MODE" ;;
         IP_EXPORT_TO_ANTIZAPRET) echo "$IP_EXPORT_TO_ANTIZAPRET" ;;
         FULLVPN_WARP_RESOLVE) echo "$FULLVPN_WARP_RESOLVE" ;;
+        WARP_KEY_SOURCE) echo "$WARP_KEY_SOURCE" ;;
         OUTBOUND_MODE) echo "$CURRENT_OUTBOUND_MODE" ;;
         SLAVE_SERVER) echo "$SLAVE_SERVER" ;;
         SLAVE_PORT) echo "$SLAVE_PORT" ;;
@@ -492,10 +489,6 @@ cli_fullvpn() {
     local action="$1"
     case "$action" in
         on|enable)
-            if check_vpn_warp; then
-                echo "ERROR: VPN_WARP=y - cannot enable FullVPN WARP resolve" >&2
-                return 1
-            fi
             if patch_kresd_fullvpn; then
                 FULLVPN_WARP_RESOLVE="y"
                 save_main_config
@@ -652,6 +645,9 @@ cli_status_json() {
     subnet_conflicts "$SUBNET" && sub_conflict="true"
     check_antizapret_warp && az_warp_en="true"
     check_vpn_warp && vpn_warp_en="true"
+    local az_warp_mode_v vpn_warp_mode_v
+    az_warp_mode_v=$(az_warp_mode ANTIZAPRET_WARP)
+    vpn_warp_mode_v=$(az_warp_mode VPN_WARP)
     needs_down_sh && warp_rules="true"
     grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null && fullvpn_patched="true"
     ip_ranges_in_sync && ip_synced="true"
@@ -676,7 +672,9 @@ cli_status_json() {
         --arg remote_version "$remote_ver" \
         --argjson update_available "$update_avail" \
         --argjson antizapret_warp "$az_warp_en" \
+        --arg antizapret_warp_mode "$az_warp_mode_v" \
         --argjson vpn_warp "$vpn_warp_en" \
+        --arg vpn_warp_mode "$vpn_warp_mode_v" \
         --argjson warp_rules_active "$warp_rules" \
         --arg outbound_mode "$CURRENT_OUTBOUND_MODE" \
         --arg slave_server "$SLAVE_SERVER" \
@@ -710,7 +708,9 @@ cli_status_json() {
             remote_version: $remote_version,
             update_available: $update_available,
             antizapret_warp: $antizapret_warp,
+            antizapret_warp_mode: $antizapret_warp_mode,
             vpn_warp: $vpn_warp,
+            vpn_warp_mode: $vpn_warp_mode,
             warp_rules_active: $warp_rules_active,
             outbound_mode: $outbound_mode,
             slave: {

@@ -39,6 +39,11 @@ load_config() {
     if [ -n "$value" ]; then
         FULLVPN_WARP_RESOLVE="$value"
     fi
+
+    value=$(grep -E '^WARP_KEY_SOURCE=' "$CONF_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '"'\''[:space:]')
+    if [ -n "$value" ]; then
+        WARP_KEY_SOURCE="$value"
+    fi
 }
 
 # Сохраняет основную конфигурацию в warper.conf
@@ -49,6 +54,7 @@ save_main_config() {
         echo "IP_ROUTE_MODE=$IP_ROUTE_MODE"
         echo "IP_EXPORT_TO_ANTIZAPRET=$IP_EXPORT_TO_ANTIZAPRET"
         echo "FULLVPN_WARP_RESOLVE=$FULLVPN_WARP_RESOLVE"
+        echo "WARP_KEY_SOURCE=$WARP_KEY_SOURCE"
     } > "$CONF_FILE"
     chmod 600 "$CONF_FILE"
 }

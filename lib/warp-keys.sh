@@ -1,14 +1,14 @@
 #!/bin/bash
 # warper lib: warp-keys.sh
 # Получение, синхронизация и управление WARP-ключами.
-# Источники: /etc/wireguard/warp.conf, локальный wgcf-profile, конфиг sing-box.
+# Источники: системный WARP-конфиг AntiZapret, локальный wgcf-profile, конфиг sing-box.
 # Подключается через source из warper.sh
 
 # ===== Получение ключей =====
 
 # Возвращает адрес и приватный ключ WARP из первого доступного источника.
 # Порядок приоритета:
-#   1. /etc/wireguard/warp.conf (системный, от AntiZapret VPN_WARP)
+#   1. системный конфиг AntiZapret (warp-vpn/warp-antizapret/warp)
 #   2. текущий config.json sing-box
 #   3. /root/warper/wgcf/wgcf-profile.conf
 get_warp_credentials() {
@@ -147,6 +147,9 @@ check_and_sync_warp_keys() {
         return 0
     fi
 
+    [ "$WARP_KEY_SOURCE" = "system" ] || return 0
+
+    WARP_SYSTEM_CONF=$(resolve_warp_system_conf)
     if [ ! -f "$WARP_SYSTEM_CONF" ]; then
         return 0
     fi
@@ -378,6 +381,14 @@ manage_warp_keys() {
             ;;
     esac
 
+    # Следовать за ключами AntiZapret только при явном выборе system
+    if [ "$selected" = "system" ]; then
+        WARP_KEY_SOURCE="system"
+    else
+        WARP_KEY_SOURCE="local"
+    fi
+    save_main_config
+
     if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
         echo -e "${RED}Не удалось получить ключи.${NC}"
         sleep 2
@@ -424,7 +435,11 @@ auto_sync_warp_keys_on_boot() {
         return 0
     fi
 
+    # Следуем за ключами AntiZapret только при выбранном системном источнике
+    [ "$WARP_KEY_SOURCE" = "system" ] || return 0
+
     # Нет системного файла — нечего синхронизировать
+    WARP_SYSTEM_CONF=$(resolve_warp_system_conf)
     if [ ! -f "$WARP_SYSTEM_CONF" ]; then
         return 0
     fi

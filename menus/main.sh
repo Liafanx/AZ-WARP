@@ -28,12 +28,12 @@ show_main_menu() {
         VER_STR="${GREEN}$LOCAL_VER${NC} (✅ актуальная)"
     fi
 
-    # ANTIZAPRET_WARP
-    if check_antizapret_warp; then
-        AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ!)${NC}"
-    else
-        AZ_WARP_STAT="${GREEN}✅ OK${NC}"
-    fi
+    # WARP AntiZapret
+    case "$(az_warp_mode ANTIZAPRET_WARP)" in
+        all)       AZ_WARP_STAT="${YELLOW}вся подсеть через WARP${NC}" ;;
+        selective) AZ_WARP_STAT="${GREEN}выборочно${NC}" ;;
+        *)         AZ_WARP_STAT="${GREEN}✅ OK${NC}" ;;
+    esac
 
     # Sing-box
     if systemctl is-active --quiet sing-box; then
@@ -169,11 +169,7 @@ show_main_menu() {
 
     local fullvpn_resolve_display
     if [ "$FULLVPN_WARP_RESOLVE" = "y" ]; then
-        if check_vpn_warp; then
-            fullvpn_resolve_display="${RED}ВКЛ (конфликт VPN_WARP=y)${NC}"
-        else
-            fullvpn_resolve_display="${GREEN}ВКЛ${NC}"
-        fi
+        fullvpn_resolve_display="${GREEN}ВКЛ${NC}"
     else
         fullvpn_resolve_display="${RED}ВЫКЛ${NC}"
     fi

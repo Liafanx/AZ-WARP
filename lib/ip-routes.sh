@@ -226,6 +226,42 @@ remove_all_ip_rules() {
     done
 }
 
+# ===== Таблицы WARP AntiZapret =====
+#
+# При ANTIZAPRET_WARP/VPN_WARP AntiZapret добавляет ip rule на table 13335
+# (подсеть AntiZapret) и 13336 (подсеть FullVPN) с приоритетом 10000.
+# В режиме "вся подсеть" правило идёт без fwmark и перехватывает в том числе
+# трафик на fake-подсеть WARPER, поэтому наши маршруты обязаны быть в этих
+# таблицах — иначе домены уйдут в warp-* вместо singbox-tun.
+
+AZ_WARP_TABLES="13335 13336"
+
+# Таблица существует и непуста?
+az_table_active() {
+    ip route show table "$1" 2>/dev/null | grep -q "dev"
+}
+
+# Прописывает fake-подсеть и все желаемые CIDR в активные таблицы AntiZapret.
+sync_az_table_routes() {
+    local desired_file="$1" table cidr
+    for table in $AZ_WARP_TABLES; do
+        az_table_active "$table" || continue
+        ip route replace "$SUBNET" dev singbox-tun table "$table" 2>/dev/null || true
+        while IFS= read -r cidr; do
+            [ -z "$cidr" ] && continue
+            ip route replace "$cidr" dev singbox-tun table "$table" 2>/dev/null || true
+        done < "$desired_file"
+    done
+}
+
+# Удаляет один CIDR из всех таблиц AntiZapret.
+remove_from_az_tables() {
+    local cidr="$1" table
+    for table in $AZ_WARP_TABLES; do
+        ip route del "$cidr" dev singbox-tun table "$table" 2>/dev/null || true
+    done
+}
+
 # ===== Основная синхронизация =====
 
 # Синхронизирует ip-ranges.txt с реальными kernel routes.
@@ -289,9 +325,8 @@ sync_ip_ranges() {
             # Сейчас main table — удаляем старые из table 100
             ip route del "$cidr" dev singbox-tun table "$IP_ROUTE_TABLE" 2>/dev/null || true
         else
-            # Сейчас table 100 — удаляем старые из main и table 13335
+            # Сейчас table 100 — удаляем старые из main
             ip route del "$cidr" dev singbox-tun 2>/dev/null || true
-            ip route del "$cidr" dev singbox-tun table 13335 2>/dev/null || true
         fi
     done < "$applied_tmp"
 
@@ -300,7 +335,7 @@ sync_ip_ranges() {
         [ -z "$cidr" ] && continue
         ip route del "$cidr" dev singbox-tun table "$IP_ROUTE_TABLE" 2>/dev/null || true
         ip route del "$cidr" dev singbox-tun 2>/dev/null || true
-        ip route del "$cidr" dev singbox-tun table 13335 2>/dev/null || true
+        remove_from_az_tables "$cidr"
         ((removed+=1))
 
         if [ "$use_ipset" = true ]; then
@@ -319,10 +354,6 @@ sync_ip_ranges() {
             else
                 echo -e "${YELLOW}Не удалось добавить маршрут: $cidr${NC}"
                 ((errors+=1))
-            fi
-            # При VPN_WARP=y — добавляем ещё и в table 13335
-            if ip route show table 13335 2>/dev/null | grep -q "dev"; then
-                ip route replace "$cidr" dev singbox-tun table 13335 2>/dev/null || true
             fi
         else
             # Режим policy routing — отдельная таблица
@@ -345,6 +376,9 @@ sync_ip_ranges() {
     elif [ "$total" -eq 0 ]; then
         remove_all_ip_rules
     fi
+
+    # Маршруты в таблицы WARP AntiZapret (если они подняты)
+    sync_az_table_routes "$desired_tmp"
 
     # ipset: добавляем ВСЕ желаемые CIDR (не только новые).
     # Важно при перезагрузке ipset через doall.sh / up.sh.
@@ -403,7 +437,7 @@ remove_all_ip_routes() {
             [ -z "$cidr" ] && continue
             ip route del "$cidr" dev singbox-tun table "$IP_ROUTE_TABLE" 2>/dev/null && ((removed+=1))
             ip route del "$cidr" dev singbox-tun 2>/dev/null && ((removed+=1))
-            ip route del "$cidr" dev singbox-tun table 13335 2>/dev/null || true
+            remove_from_az_tables "$cidr"
             if [ "$use_ipset" = true ]; then
                 ipset del antizapret-forward "$cidr" 2>/dev/null || true
             fi
@@ -411,6 +445,7 @@ remove_all_ip_routes() {
         : > "$applied_file"
     fi
 
+    remove_from_az_tables "$SUBNET"
     remove_all_ip_rules
     echo -e "${GREEN}Удалено маршрутов: ${removed}${NC}"
 }

@@ -109,11 +109,6 @@ restore_kresd_backup() {
 # для этих доменов на 127.0.0.1:40000 (sing-box DNS-in).
 # Перед патчингом синхронизирует домены и создаёт/обновляет backup.
 patch_kresd() {
-    if check_antizapret_warp; then
-        echo -e "${RED}ANTIZAPRET_WARP=y — патч kresd.conf не может быть применён.${NC}" >&2
-        return 1
-    fi
-
     if needs_down_sh; then
         echo -e "${RED}Активны правила от up.sh — сначала выполните /root/antizapret/down.sh${NC}" >&2
         return 1
@@ -220,11 +215,6 @@ unpatch_kresd() {
 
 # Включает WARP-резолвинг для FullVPN-клиентов (kresd@2)
 patch_kresd_fullvpn() {
-    if check_vpn_warp; then
-        echo -e "${RED}VPN_WARP=y — нельзя включить FullVPN WARP-резолвинг!${NC}" >&2
-        return 1
-    fi
-
     sync_domains
     if [ ! -f "$KRESD_CONF" ]; then
         echo -e "${RED}Файл $KRESD_CONF не найден.${NC}" >&2
