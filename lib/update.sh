@@ -5,6 +5,12 @@
 # Подключается через source из warper.sh
 
 # Откатывает обновление: восстанавливает все файлы из backup-директории.
+# Systemd-юниты, которыми управляет WARPER
+WARPER_UNITS="sing-box.service warper-autopatch.service \
+warper-traffic-snapshot.service warper-traffic-snapshot.timer \
+warper-resync.service warper-resync.timer \
+warper-resolve.service warper-resolve.timer"
+
 rollback_warper_update() {
     local backupdir="$1"
 
@@ -19,14 +25,10 @@ rollback_warper_update() {
     restore_if_exists "$backupdir/gemini.txt" "$DOWNLOAD_DIR/gemini.txt"
     restore_if_exists "$backupdir/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt"
 
-    restore_if_exists "$backupdir/sing-box.service" \
-        "/etc/systemd/system/sing-box.service"
-    restore_if_exists "$backupdir/warper-autopatch.service" \
-        "/etc/systemd/system/warper-autopatch.service"
-    restore_if_exists "$backupdir/warper-traffic-snapshot.service" \
-        "/etc/systemd/system/warper-traffic-snapshot.service"
-    restore_if_exists "$backupdir/warper-traffic-snapshot.timer" \
-        "/etc/systemd/system/warper-traffic-snapshot.timer"        
+    local _unit
+    for _unit in $WARPER_UNITS; do
+        restore_if_exists "$backupdir/$_unit" "/etc/systemd/system/$_unit"
+    done
 
     restore_if_exists "$backupdir/config.json" "$SINGBOX_CONF"
     restore_if_exists "$backupdir/domains.txt" "$MASTER_FILE"
@@ -126,15 +128,12 @@ update_warper() {
         "$tmpdir/version" "version" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
 
     # Systemd unit-файлы
-    download_file_safe "$REPO_URL/templates/sing-box.service" \
-        "$tmpdir/sing-box.service" "sing-box.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-    download_file_safe "$REPO_URL/templates/warper-autopatch.service" \
-        "$tmpdir/warper-autopatch.service" "warper-autopatch.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-    download_file_safe "$REPO_URL/templates/warper-traffic-snapshot.service" \
-        "$tmpdir/warper-traffic-snapshot.service" "warper-traffic-snapshot.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-    download_file_safe "$REPO_URL/templates/warper-traffic-snapshot.timer" \
-        "$tmpdir/warper-traffic-snapshot.timer" "warper-traffic-snapshot.timer" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-        
+    local _unit
+    for _unit in $WARPER_UNITS; do
+        download_file_safe "$REPO_URL/templates/$_unit" \
+            "$tmpdir/$_unit" "$_unit" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    done
+
     # Шаблоны конфигурации
     download_file_safe "$REPO_URL/templates/config.json.template" \
         "$tmpdir/config.json.template" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -152,7 +151,7 @@ update_warper() {
 
     # Модули lib/ (cli добавлен в 1.3.3)
     mkdir -p "$tmpdir/lib"
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+    for _libfile in utils config domains domains-resolve singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         download_file_safe "$REPO_URL/lib/${_libfile}.sh" \
             "$tmpdir/lib/${_libfile}.sh" "lib/${_libfile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -219,14 +218,9 @@ update_warper() {
     backup_if_exists "$WG_TEMPLATE"                  "$backupdir/config-wg.json.template"
     backup_if_exists "$DOWNLOAD_DIR/gemini.txt"      "$backupdir/gemini.txt"
     backup_if_exists "$DOWNLOAD_DIR/chatgpt.txt"     "$backupdir/chatgpt.txt"
-    backup_if_exists "/etc/systemd/system/sing-box.service" \
-        "$backupdir/sing-box.service"
-    backup_if_exists "/etc/systemd/system/warper-autopatch.service" \
-        "$backupdir/warper-autopatch.service"
-    backup_if_exists "/etc/systemd/system/warper-traffic-snapshot.service" \
-        "$backupdir/warper-traffic-snapshot.service"
-    backup_if_exists "/etc/systemd/system/warper-traffic-snapshot.timer" \
-        "$backupdir/warper-traffic-snapshot.timer"        
+    for _unit in $WARPER_UNITS; do
+        backup_if_exists "/etc/systemd/system/$_unit" "$backupdir/$_unit"
+    done
     backup_if_exists "$SINGBOX_CONF"  "$backupdir/config.json"
     backup_if_exists "$MASTER_FILE"   "$backupdir/domains.txt"
     # Backup модулей
@@ -278,26 +272,12 @@ update_warper() {
         echo -e "${RED}Ошибка установки chatgpt.txt, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
     }
-    install -m 644 "$tmpdir/sing-box.service" \
-        "/etc/systemd/system/sing-box.service" || {
-        echo -e "${RED}Ошибка установки sing-box.service, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }
-    install -m 644 "$tmpdir/warper-autopatch.service" \
-        "/etc/systemd/system/warper-autopatch.service" || {
-        echo -e "${RED}Ошибка установки warper-autopatch.service, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }
-    install -m 644 "$tmpdir/warper-traffic-snapshot.service" \
-        "/etc/systemd/system/warper-traffic-snapshot.service" || {
-        echo -e "${RED}Ошибка установки warper-traffic-snapshot.service, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }
-    install -m 644 "$tmpdir/warper-traffic-snapshot.timer" \
-        "/etc/systemd/system/warper-traffic-snapshot.timer" || {
-        echo -e "${RED}Ошибка установки warper-traffic-snapshot.timer, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }    
+    for _unit in $WARPER_UNITS; do
+        install -m 644 "$tmpdir/$_unit" "/etc/systemd/system/$_unit" || {
+            echo -e "${RED}Ошибка установки $_unit, откат.${NC}"
+            rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+        }
+    done
 
     # Устанавливаем модули lib/ и menus/
     mkdir -p "$WARPER_DIR/lib" "$WARPER_DIR/menus"

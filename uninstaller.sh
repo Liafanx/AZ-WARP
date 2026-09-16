@@ -179,6 +179,8 @@ systemctl stop warper-traffic-snapshot.timer 2>/dev/null
 systemctl disable warper-traffic-snapshot.timer 2>/dev/null
 systemctl stop warper-resync.timer 2>/dev/null
 systemctl disable warper-resync.timer 2>/dev/null
+systemctl stop warper-resolve.timer 2>/dev/null
+systemctl disable warper-resolve.timer 2>/dev/null
 echo -e " - ${CYAN}Удаление из автозагрузки...${NC}"
 systemctl disable sing-box 2>/dev/null
 systemctl disable warper-autopatch 2>/dev/null
@@ -191,6 +193,8 @@ rm -f /etc/systemd/system/warper-traffic-snapshot.service
 rm -f /etc/systemd/system/warper-traffic-snapshot.timer
 rm -f /etc/systemd/system/warper-resync.service
 rm -f /etc/systemd/system/warper-resync.timer
+rm -f /etc/systemd/system/warper-resolve.service
+rm -f /etc/systemd/system/warper-resolve.timer
 systemctl daemon-reload
 
 # Убираем хук из точки расширения AntiZapret

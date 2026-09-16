@@ -93,7 +93,7 @@ trap 'release_lock' EXIT
 
 # Lock берём ТОЛЬКО для тяжёлых команд по первому аргументу
 case "${1:-}" in
-    toggle|sync|ipsync|patch|mode|subnet|update|resync)
+    toggle|sync|ipsync|patch|mode|subnet|update|resync|resolvesync|resolveclean)
         # Вызов из custom-doall.sh идёт внутри уже запущенного warper —
         # повторный lock привёл бы к ожиданию самого себя
         [ "${WARPER_FROM_DOALL:-}" = "1" ] || acquire_lock
@@ -123,7 +123,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         return 1
     }
 
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+    for _libfile in utils config domains domains-resolve singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
@@ -141,6 +141,7 @@ for _lib in \
     "$WARPER_LIB/utils.sh" \
     "$WARPER_LIB/config.sh" \
     "$WARPER_LIB/domains.sh" \
+    "$WARPER_LIB/domains-resolve.sh" \
     "$WARPER_LIB/singbox.sh" \
     "$WARPER_LIB/kresd.sh" \
     "$WARPER_LIB/warp-keys.sh" \
@@ -229,6 +230,9 @@ case "${1:-}" in
     patch)    patch_kresd >/dev/null 2>&1; exit $? ;;
     resync)   cli_resync "${2:-}"; exit $? ;;
     singbox)  cli_singbox "${2:-}" "${3:-}"; exit $? ;;
+    resolvesync)  cli_resolve_sync "${2:-}"; exit $? ;;
+    resolveclean) cli_resolve_clean "${2:-}"; exit $? ;;
+    resolve)      cli_resolve "${2:-}"; exit $? ;;
     doctor)   doctor; exit $? ;;
     status)
         if [ "${2:-}" = "json" ]; then

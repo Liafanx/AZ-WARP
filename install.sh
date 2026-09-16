@@ -1013,6 +1013,9 @@ download_file "$REPO_URL/templates/warper-traffic-snapshot.service" "/etc/system
 download_file "$REPO_URL/templates/warper-traffic-snapshot.timer" "/etc/systemd/system/warper-traffic-snapshot.timer" "таймер warper-traffic-snapshot.timer" || exit 1
 download_file "$REPO_URL/templates/warper-resync.service" "/etc/systemd/system/warper-resync.service" "служба warper-resync.service" || exit 1
 download_file "$REPO_URL/templates/warper-resync.timer" "/etc/systemd/system/warper-resync.timer" "таймер warper-resync.timer" || exit 1
+# Авто-резолв опционален: таймер ставим, но не включаем
+download_file "$REPO_URL/templates/warper-resolve.service" "/etc/systemd/system/warper-resolve.service" "служба warper-resolve.service" || exit 1
+download_file "$REPO_URL/templates/warper-resolve.timer" "/etc/systemd/system/warper-resolve.timer" "таймер warper-resolve.timer" || exit 1
 systemctl daemon-reload
 
 if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
@@ -1108,7 +1111,7 @@ download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-
 # Скачиваем модули lib/
 echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
 mkdir -p "$WARPER_DIR/lib"
-for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+for _libfile in utils config domains domains-resolve singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
     download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
 done
 

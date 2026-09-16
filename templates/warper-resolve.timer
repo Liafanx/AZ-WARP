@@ -1,0 +1,10 @@
+[Unit]
+Description=WARPER Domain Resolve Timer (hourly)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

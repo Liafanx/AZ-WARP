@@ -9,13 +9,15 @@
 # ===== Чтение и запись =====
 
 # Читает валидные CIDR из ip-ranges.txt (без комментариев и пустых строк).
+# Хвостовой комментарий отбрасывается: авторезолв пишет источник адреса
+# в виде "1.2.3.4/32 #gemini.google.com".
 # Сортирует лексикографически для совместимости с comm.
 extract_ip_ranges() {
     local file="${1:-$IP_RANGES_FILE}"
     [ -f "$file" ] || return 0
     grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$file" | while IFS= read -r line; do
         local trimmed
-        trimmed=$(echo "$line" | tr -d '[:space:]')
+        trimmed=$(echo "${line%%#*}" | tr -d '[:space:]')
         if validate_cidr "$trimmed" >/dev/null 2>&1; then
             echo "$trimmed"
         fi
@@ -143,14 +145,27 @@ add_ip_range() {
         return 1
     fi
 
-    # Проверка дубликата — ищем точную строку с CIDR (без пробелов вокруг)
-    if grep -qE "^[[:space:]]*${cidr}[[:space:]]*$" "$IP_RANGES_FILE" 2>/dev/null; then
+    # Проверка дубликата — строка может нести аннотацию авторезолва
+    local cidr_re
+    cidr_re=$(escape_regex "$cidr")
+    if grep -qE "^[[:space:]]*${cidr_re}[[:space:]]*(#.*)?$" "$IP_RANGES_FILE" 2>/dev/null; then
         echo -e "${YELLOW}Подсеть $cidr уже есть в списке.${NC}"
         return 0
     fi
 
-    # Просто дописываем в конец файла - комментарии и форматирование не трогаем
-    echo "$cidr" >> "$IP_RANGES_FILE"
+    # Пишем перед блоком авторезолва, чтобы он оставался в конце файла
+    if grep -qxF "$RESOLVED_MARKER" "$IP_RANGES_FILE" 2>/dev/null; then
+        local tmp
+        tmp=$(mktemp)
+        awk -v cidr="$cidr" -v marker="$RESOLVED_MARKER" '
+        $0 == marker && !done { print cidr; print ""; done=1 }
+        { print }
+        END { if (!done) print cidr }
+        ' "$IP_RANGES_FILE" > "$tmp"
+        mv "$tmp" "$IP_RANGES_FILE"
+    else
+        echo "$cidr" >> "$IP_RANGES_FILE"
+    fi
     echo -e "${GREEN}Подсеть $cidr добавлена.${NC}"
     return 0
 }
@@ -164,15 +179,17 @@ remove_ip_range() {
         return 1
     }
 
-    if ! grep -qE "^[[:space:]]*${cidr}[[:space:]]*$" "$IP_RANGES_FILE" 2>/dev/null; then
+    local cidr_re
+    cidr_re=$(escape_regex "$cidr")
+    if ! grep -qE "^[[:space:]]*${cidr_re}[[:space:]]*(#.*)?$" "$IP_RANGES_FILE" 2>/dev/null; then
         echo -e "${YELLOW}Подсеть $cidr не найдена в списке.${NC}"
         return 0
     fi
 
-    # Удаляем только строку с этим CIDR, комментарии не трогаем
+    # Удаляем только строку с этим CIDR (вместе с аннотацией), остальное не трогаем
     local escaped
     escaped=$(echo "$cidr" | sed 's/[][\\/.^$*+?(){}|]/\\&/g')
-    sed -i "/^[[:space:]]*${escaped}[[:space:]]*$/d" "$IP_RANGES_FILE"
+    sed -i "/^[[:space:]]*${escaped}[[:space:]]*\(#.*\)\?$/d" "$IP_RANGES_FILE"
     echo -e "${GREEN}Подсеть $cidr удалена из списка.${NC}"
     return 0
 }

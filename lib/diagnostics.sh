@@ -477,6 +477,15 @@ doctor() {
         echo -e " ${CYAN}!${NC} Экспорт WARPER CIDR в AntiZapret выключен"
     fi
 
+    # Авто-резолв доменов в IP-маршруты
+    if systemctl is-enabled --quiet warper-resolve.timer 2>/dev/null; then
+        local resolved_count
+        resolved_count=$(extract_resolved_block 2>/dev/null | grep -cE '^[0-9]' || echo 0)
+        echo -e " ${GREEN}✔${NC} Авто-резолв включён (адресов в блоке: ${resolved_count})"
+    else
+        echo -e " ${CYAN}!${NC} Авто-резолв выключен (включить: warper resolve on)"
+    fi
+
     # Ёмкость пула fake-IP. kresd выдаёт адрес каждому ПОДдомену,
     # поэтому /24 (254 адреса) исчерпывается за сутки-двое.
     local pool_mask pool_size
