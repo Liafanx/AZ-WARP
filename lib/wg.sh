@@ -25,33 +25,48 @@ is_valid_wg_conf() {
 
 # ===== Парсинг =====
 
+# Читает значение параметра из WG-конфига.
+# Устойчив к отсутствию пробелов вокруг "=" и к inline-комментариям.
+wg_conf_value() {
+    local file="$1" key="$2"
+    grep -m 1 -E "^[[:space:]]*${key}[[:space:]]*=" "$file" 2>/dev/null \
+        | sed -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//; s/[[:space:]]+#.*$//; s/[[:space:]]+$//" \
+        | tr -d '\r'
+}
+
 # Разбирает WG-конфиг и заполняет глобальные переменные WG_*.
-# Проверяет наличие всех обязательных параметров:
-# Address, PrivateKey, PublicKey, PresharedKey, Endpoint.
+# Обязательны: Address, PrivateKey, PublicKey, Endpoint.
+# PresharedKey опционален (ProtonVPN и многие другие его не выдают).
+# MTU и DNS подхватываются из файла, если заданы.
 parse_wg_conf() {
     local file="$1"
+    [ -f "$file" ] || return 1
+
     WG_CONF_FILE="$file"
-    WG_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    WG_ADDRESS=$(grep -m 1 '^Address' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    WG_ADDRESS="${WG_ADDRESS%%,*}"
-    WG_ADDRESS=$(echo "$WG_ADDRESS" | tr -d ' ')
-    WG_PUBLIC_KEY=$(grep -m 1 '^PublicKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    WG_PRESHARED_KEY=$(grep -m 1 '^PresharedKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+    WG_PRIVATE_KEY=$(wg_conf_value "$file" "PrivateKey")
+    WG_ADDRESS=$(wg_conf_value "$file" "Address")
+    WG_ADDRESS=$(echo "${WG_ADDRESS%%,*}" | tr -d '[:space:]')
+    WG_PUBLIC_KEY=$(wg_conf_value "$file" "PublicKey")
+    WG_PRESHARED_KEY=$(wg_conf_value "$file" "PresharedKey")
+    WG_MTU=$(wg_conf_value "$file" "MTU")
+    WG_DNS=$(wg_conf_value "$file" "DNS")
+    WG_DNS=$(echo "${WG_DNS%%,*}" | tr -d '[:space:]')
 
     local endpoint
-    endpoint=$(grep -m 1 '^Endpoint' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    WG_ENDPOINT_HOST="${endpoint%:*}"
-    WG_ENDPOINT_PORT="${endpoint##*:}"
-
-    local keepalive
-    keepalive=$(grep -m 1 '^PersistentKeepalive' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-    WG_KEEPALIVE="${keepalive:-15}"
+    endpoint=$(wg_conf_value "$file" "Endpoint" | tr -d '[:space:]')
+    if [[ "$endpoint" =~ ^\[(.+)\]:([0-9]+)$ ]]; then
+        # IPv6 в квадратных скобках
+        WG_ENDPOINT_HOST="${BASH_REMATCH[1]}"
+        WG_ENDPOINT_PORT="${BASH_REMATCH[2]}"
+    else
+        WG_ENDPOINT_HOST="${endpoint%:*}"
+        WG_ENDPOINT_PORT="${endpoint##*:}"
+    fi
 
     local missing=()
     [ -z "$WG_ADDRESS" ]        && missing+=("Address")
     [ -z "$WG_PRIVATE_KEY" ]    && missing+=("PrivateKey")
     [ -z "$WG_PUBLIC_KEY" ]     && missing+=("PublicKey")
-    [ -z "$WG_PRESHARED_KEY" ]  && missing+=("PresharedKey")
     [ -z "$WG_ENDPOINT_HOST" ]  && missing+=("Endpoint")
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -60,8 +75,6 @@ parse_wg_conf() {
     fi
     return 0
 }
-
-# ===== Сканирование =====
 
 # Ищет валидные WG-конфиги в /root/ и /root/warper/.
 # Возвращает список путей (по одному на строку).
@@ -169,8 +182,8 @@ select_wg_config() {
 }
 
 # Интерактивный ручной ввод всех параметров WG-соединения.
-# Обязательные: Endpoint, Address, PrivateKey, PublicKey, PresharedKey.
-# Опциональный: PersistentKeepalive (по умолчанию 15).
+# Обязательные: Endpoint, Address, PrivateKey, PublicKey.
+# Опциональные: PresharedKey, MTU, DNS, PersistentKeepalive (по умолчанию 15).
 input_wg_manually() {
     echo -e "\n${CYAN}Ввод данных WireGuard вручную${NC}"
 
@@ -202,11 +215,10 @@ input_wg_manually() {
         echo -e "${RED}PublicKey обязателен!${NC}"
     done
 
-    while true; do
-        read -r -p "PresharedKey: " WG_PRESHARED_KEY
-        [ -n "$WG_PRESHARED_KEY" ] && break
-        echo -e "${RED}PresharedKey обязателен!${NC}"
-    done
+    read -r -p "PresharedKey (Enter — нет): " WG_PRESHARED_KEY
+
+    read -r -p "MTU [1420]: " WG_MTU
+    read -r -p "DNS [1.1.1.1]: " WG_DNS
 
     read -r -p "PersistentKeepalive [15]: " WG_KEEPALIVE
     WG_KEEPALIVE="${WG_KEEPALIVE:-15}"
@@ -221,17 +233,12 @@ input_wg_manually() {
 
 # Пересобирает config.json для режима WG из шаблона config-wg.json.template.
 # Загружает параметры из wg_mode.conf через load_wg_config().
-# PresharedKey обязателен.
+# PresharedKey, MTU и DNS опциональны.
 rebuild_config_wg() {
     load_wg_config
 
     if [ -z "$WG_PRIVATE_KEY" ] || [ -z "$WG_PUBLIC_KEY" ] || [ -z "$WG_ENDPOINT_HOST" ]; then
         echo -e "${RED}Не настроены параметры WG-соединения!${NC}"
-        return 1
-    fi
-
-    if [ -z "$WG_PRESHARED_KEY" ]; then
-        echo -e "${RED}Ошибка: PresharedKey не задан!${NC}"
         return 1
     fi
 
@@ -243,8 +250,13 @@ rebuild_config_wg() {
     local tmp
     tmp=$(mktemp)
 
+    # Значения из импортированного конфига, иначе разумные умолчания
+    local wg_mtu="${WG_MTU:-1420}" wg_dns="${WG_DNS:-1.1.1.1}"
+
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__WG_MTU__|$wg_mtu|g" \
+        -e "s|__WG_DNS__|$wg_dns|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         -e "s|__WG_ADDRESS__|$WG_ADDRESS|g" \
         -e "s|__WG_PRIVATE_KEY__|$WG_PRIVATE_KEY|g" \
@@ -254,6 +266,12 @@ rebuild_config_wg() {
         -e "s|__WG_ENDPOINT_PORT__|$WG_ENDPOINT_PORT|g" \
         -e "s|__WG_KEEPALIVE__|$WG_KEEPALIVE|g" \
         "$WG_TEMPLATE" > "$tmp"
+
+    # pre_shared_key опционален: пустое значение sing-box не принимает,
+    # поэтому строку убираем целиком
+    if [ -z "$WG_PRESHARED_KEY" ]; then
+        sed -i '/"pre_shared_key"/d' "$tmp"
+    fi
 
     mv "$tmp" "$SINGBOX_CONF"
     chmod 600 "$SINGBOX_CONF"

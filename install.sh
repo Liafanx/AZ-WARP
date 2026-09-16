@@ -452,6 +452,8 @@ WG_INSTALL_PRESHARED_KEY=""
 WG_INSTALL_ENDPOINT_HOST=""
 WG_INSTALL_ENDPOINT_PORT=""
 WG_INSTALL_KEEPALIVE="15"
+WG_INSTALL_MTU=""
+WG_INSTALL_DNS=""
 WG_INSTALL_CONF_FILE=""
 
 echo -e "\n${YELLOW}⚙️  Выбор режима маршрутизации${NC}"
@@ -530,28 +532,42 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         return 0
     }
 
+    # Устойчиво к отсутствию пробелов вокруг "=" и к inline-комментариям
+    _wg_conf_value_install() {
+        local file="$1" key="$2"
+        grep -m 1 -E "^[[:space:]]*${key}[[:space:]]*=" "$file" 2>/dev/null \
+            | sed -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//; s/[[:space:]]+#.*$//; s/[[:space:]]+$//" \
+            | tr -d '\r'
+    }
+
     _parse_wg_conf_install() {
         local file="$1"
         WG_INSTALL_CONF_FILE="$file"
-        WG_INSTALL_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_ADDRESS=$(grep -m 1 '^Address' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_ADDRESS="${WG_INSTALL_ADDRESS%%,*}"
-        WG_INSTALL_ADDRESS=$(echo "$WG_INSTALL_ADDRESS" | tr -d ' ')
-        WG_INSTALL_PUBLIC_KEY=$(grep -m 1 '^PublicKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_PRESHARED_KEY=$(grep -m 1 '^PresharedKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        WG_INSTALL_PRIVATE_KEY=$(_wg_conf_value_install "$file" "PrivateKey")
+        WG_INSTALL_ADDRESS=$(_wg_conf_value_install "$file" "Address")
+        WG_INSTALL_ADDRESS=$(echo "${WG_INSTALL_ADDRESS%%,*}" | tr -d '[:space:]')
+        WG_INSTALL_PUBLIC_KEY=$(_wg_conf_value_install "$file" "PublicKey")
+        WG_INSTALL_PRESHARED_KEY=$(_wg_conf_value_install "$file" "PresharedKey")
+        WG_INSTALL_MTU=$(_wg_conf_value_install "$file" "MTU")
+        WG_INSTALL_DNS=$(_wg_conf_value_install "$file" "DNS")
+        WG_INSTALL_DNS=$(echo "${WG_INSTALL_DNS%%,*}" | tr -d '[:space:]')
         local ep
-        ep=$(grep -m 1 '^Endpoint' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_ENDPOINT_HOST="${ep%:*}"
-        WG_INSTALL_ENDPOINT_PORT="${ep##*:}"
+        ep=$(_wg_conf_value_install "$file" "Endpoint" | tr -d '[:space:]')
+        if [[ "$ep" =~ ^\[(.+)\]:([0-9]+)$ ]]; then
+            WG_INSTALL_ENDPOINT_HOST="${BASH_REMATCH[1]}"
+            WG_INSTALL_ENDPOINT_PORT="${BASH_REMATCH[2]}"
+        else
+            WG_INSTALL_ENDPOINT_HOST="${ep%:*}"
+            WG_INSTALL_ENDPOINT_PORT="${ep##*:}"
+        fi
         local ka
-        ka=$(grep -m 1 '^PersistentKeepalive' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        ka=$(_wg_conf_value_install "$file" "PersistentKeepalive")
         WG_INSTALL_KEEPALIVE="${ka:-15}"
 
         local missing=()
         [ -z "$WG_INSTALL_ADDRESS" ]       && missing+=("Address")
         [ -z "$WG_INSTALL_PRIVATE_KEY" ]   && missing+=("PrivateKey")
         [ -z "$WG_INSTALL_PUBLIC_KEY" ]    && missing+=("PublicKey")
-        [ -z "$WG_INSTALL_PRESHARED_KEY" ] && missing+=("PresharedKey")
         [ -z "$WG_INSTALL_ENDPOINT_HOST" ] && missing+=("Endpoint")
 
         if [ ${#missing[@]} -gt 0 ]; then
@@ -630,11 +646,7 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                         [ -n "$WG_INSTALL_PUBLIC_KEY" ] && break
                         echo -e "${RED}PublicKey обязателен!${NC}"
                     done
-                    while true; do
-                        read -r -p "PresharedKey: " WG_INSTALL_PRESHARED_KEY < /dev/tty
-                        [ -n "$WG_INSTALL_PRESHARED_KEY" ] && break
-                        echo -e "${RED}PresharedKey обязателен!${NC}"
-                    done
+                    read -r -p "PresharedKey (Enter — нет): " WG_INSTALL_PRESHARED_KEY < /dev/tty
                     read -r -p "PersistentKeepalive [15]: " WG_INSTALL_KEEPALIVE < /dev/tty
                     WG_INSTALL_KEEPALIVE="${WG_INSTALL_KEEPALIVE:-15}"
                     WG_INSTALL_CONF_FILE="manual"
@@ -687,11 +699,7 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                         [ -n "$WG_INSTALL_PUBLIC_KEY" ] && break
                         echo -e "${RED}PublicKey обязателен!${NC}"
                     done
-                    while true; do
-                        read -r -p "PresharedKey: " WG_INSTALL_PRESHARED_KEY < /dev/tty
-                        [ -n "$WG_INSTALL_PRESHARED_KEY" ] && break
-                        echo -e "${RED}PresharedKey обязателен!${NC}"
-                    done
+                    read -r -p "PresharedKey (Enter — нет): " WG_INSTALL_PRESHARED_KEY < /dev/tty
                     read -r -p "PersistentKeepalive [15]: " WG_INSTALL_KEEPALIVE < /dev/tty
                     WG_INSTALL_KEEPALIVE="${WG_INSTALL_KEEPALIVE:-15}"
                     WG_INSTALL_CONF_FILE="manual"
@@ -922,8 +930,12 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
     
     tmp_wg=$(mktemp)
+    wg_mtu_value="${WG_INSTALL_MTU:-${CHOSEN_MTU:-1420}}"
+    wg_dns_value="${WG_INSTALL_DNS:-1.1.1.1}"
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__WG_MTU__|$wg_mtu_value|g" \
+        -e "s|__WG_DNS__|$wg_dns_value|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         -e "s|__WG_ADDRESS__|$WG_INSTALL_ADDRESS|g" \
         -e "s|__WG_PRIVATE_KEY__|$WG_INSTALL_PRIVATE_KEY|g" \
@@ -940,10 +952,7 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     fi
 
     mv "$tmp_wg" "$SINGBOX_CONF"
-    if [ -n "${CHOSEN_MTU:-}" ]; then
-      sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
-    fi
-    
+
     # Сохраняем WG-настройки
     {
         echo "OUTBOUND_MODE=wg"
@@ -962,6 +971,8 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         echo "WG_ENDPOINT_HOST=$WG_INSTALL_ENDPOINT_HOST"
         echo "WG_ENDPOINT_PORT=$WG_INSTALL_ENDPOINT_PORT"
         echo "WG_KEEPALIVE=$WG_INSTALL_KEEPALIVE"
+        echo "WG_MTU=$wg_mtu_value"
+        echo "WG_DNS=$wg_dns_value"
     } > "$WARPER_DIR/wg_mode.conf"
     chmod 600 "$WARPER_DIR/wg_mode.conf"
 else
