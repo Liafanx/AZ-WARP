@@ -423,7 +423,7 @@ web_action_change_port() {
     fi
 
     # Проверка занятости порта
-    if ss -tlnp 2>/dev/null | grep -qE ":${new_port}\s"; then
+    if output_has ":${new_port}[[:space:]]" ss -tlnp; then
         echo -e "${RED}Порт $new_port уже занят другим процессом!${NC}"
         ss -tlnp 2>/dev/null | grep -E ":${new_port}\s"
         sleep 3

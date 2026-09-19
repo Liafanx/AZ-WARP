@@ -194,7 +194,7 @@ insert_user_domain() {
     # Проверка дубликата (без учёта регистра, среди валидных доменов)
     local existing
     existing=$(extract_user_domains "$MASTER_FILE")
-    if echo "$existing" | grep -qxF "$domain"; then
+    if grep -qxF "$domain" <<< "$existing"; then
         return 0
     fi
 
@@ -393,7 +393,7 @@ cli_add_domain() {
         echo -e "${RED}Некорректный домен: $raw${NC}" >&2; return 1
     }
     # Проверяем не существует ли уже (среди валидных)
-    if extract_user_domains "$MASTER_FILE" | grep -qxF "$domain"; then
+    if grep -qxF "$domain" <<< "$(extract_user_domains "$MASTER_FILE")"; then
         echo -e "${YELLOW}Домен уже есть: $domain${NC}"; return 0
     fi
     insert_user_domain "$domain"
@@ -415,7 +415,7 @@ cli_remove_domain() {
         echo -e "${RED}Некорректный домен: $raw${NC}" >&2; return 1
     }
 
-    if ! extract_user_domains "$MASTER_FILE" | grep -qxF "$domain"; then
+    if ! grep -qxF "$domain" <<< "$(extract_user_domains "$MASTER_FILE")"; then
         echo -e "${YELLOW}Домен не найден: $domain${NC}"
         return 0
     fi

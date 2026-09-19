@@ -143,20 +143,67 @@
                 </div>
             </div>
 
+            <!-- Авто-резолв доменов -->
+            <div class="flex items-center justify-between">
+                <div>
+                    <div class="text-sm text-emerald-100 font-medium">Авто-резолв доменов в IP</div>
+                    <div class="text-xs text-emerald-500/60">
+                        Раз в час резолвит домены и копит адреса в блоке RESOLVED
+                        внутри ip-ranges.txt. Адреса не удаляются: CDN отдаёт
+                        разные IP в разные моменты.
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button hx-post="{{ url_for('htmx_settings_auto_resolve') }}"
+                            hx-swap="none"
+                            hx-vals='{"enable":"1"}'
+                            class="px-3 py-1.5 text-xs rounded transition
+                            {% if auto_resolve %}
+                                bg-brand-700 text-white
+                            {% else %}
+                                bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-brand-700/30
+                            {% endif %}">
+                        Вкл
+                    </button>
+                    <button hx-post="{{ url_for('htmx_settings_auto_resolve') }}"
+                            hx-swap="none"
+                            hx-vals='{"enable":"0"}'
+                            class="px-3 py-1.5 text-xs rounded transition
+                            {% if not auto_resolve %}
+                                bg-red-700 text-white
+                            {% else %}
+                                bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-red-700/30
+                            {% endif %}">
+                        Выкл
+                    </button>
+                    <button hx-post="{{ url_for('htmx_settings_resolve_sync') }}"
+                            hx-swap="none"
+                            class="px-3 py-1.5 text-xs rounded transition bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-brand-700/30">
+                        Сейчас
+                    </button>
+                    <button hx-post="{{ url_for('htmx_settings_resolve_clean') }}"
+                            hx-swap="none"
+                            hx-confirm="Очистить весь блок RESOLVED?"
+                            class="px-3 py-1.5 text-xs rounded transition bg-surface-950 border border-emerald-900/40 text-emerald-300 hover:bg-red-700/30">
+                        Очистить
+                    </button>
+                </div>
+            </div>
+
             <!-- FullVPN -->
             <div class="flex items-center justify-between">
                 <div>
                     <div class="text-sm text-emerald-100 font-medium">FullVPN WARP-резолвинг</div>
                     <div class="text-xs text-emerald-500/60">
                         Применять патч и для FullVPN-клиентов (kresd@2)
-                        {% if status.vpn_warp %}<br><span class="text-red-400">⚠ конфликт: VPN_WARP=y в AntiZapret</span>{% endif %}
+                        {% if status.vpn_warp_mode and status.vpn_warp_mode != 'off' %}<br><span class="text-emerald-500/60">встроенный WARP AntiZapret: {{ status.vpn_warp_mode }}</span>{% endif %}
                     </div>
                 </div>
                 <div class="flex gap-2">
                     <button hx-post="{{ url_for('htmx_settings_fullvpn') }}"
                             hx-swap="none"
                             hx-vals='{"enable":"1"}'
-                            {% if status.vpn_warp %}disabled{% endif %}
                             class="px-3 py-1.5 text-xs rounded transition disabled:opacity-30 disabled:cursor-not-allowed
                             {% if status.fullvpn_warp_resolve == 'y' %}
                                 bg-brand-700 text-white

@@ -295,22 +295,37 @@ get_local_public_ipv4() {
     return 1
 }
 
-find_warp_keys() {
-    local address="" private_key=""
+# Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
+# warp-vpn/warp-antizapret, старые — единый warp. Порядок = приоритет.
+WARP_SYSTEM_CANDIDATES="/etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf"
+CF_WARP_PUBKEY='bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo='
 
-    # Приоритет 1: /etc/wireguard/warp.conf
-    if [ -f "/etc/wireguard/warp.conf" ]; then
-        if grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-            private_key=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            address=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            if [ -n "$private_key" ]; then
-                [ -z "$address" ] && address="172.16.0.2/32"
-                [[ ! "$address" =~ / ]] && address="${address}/32"
-                echo "$address"
-                echo "$private_key"
-                echo "/etc/wireguard/warp.conf"
-                return 0
-            fi
+# Печатает первый существующий системный WARP-конфиг Cloudflare.
+resolve_warp_system_conf() {
+    local candidate
+    for candidate in $WARP_SYSTEM_CANDIDATES; do
+        if [ -f "$candidate" ] && grep -q "$CF_WARP_PUBKEY" "$candidate" 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_warp_keys() {
+    local address="" private_key="" sys_conf=""
+
+    # Приоритет 1: системный конфиг AntiZapret
+    if sys_conf=$(resolve_warp_system_conf); then
+        private_key=$(grep -m 1 '^PrivateKey' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        address=$(grep -m 1 '^Address' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        if [ -n "$private_key" ]; then
+            [ -z "$address" ] && address="172.16.0.2/32"
+            [[ ! "$address" =~ / ]] && address="${address}/32"
+            echo "$address"
+            echo "$private_key"
+            echo "$sys_conf"
+            return 0
         fi
     fi
 
@@ -346,11 +361,12 @@ find_warp_keys() {
 }
 
 get_warp_source() {
-    if [ -f "/etc/wireguard/warp.conf" ]; then
+    local sys_conf=""
+    if sys_conf=$(resolve_warp_system_conf); then
         local pk
-        pk=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        pk=$(grep -m 1 '^PrivateKey' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$pk" ]; then
-            echo "/etc/wireguard/warp.conf"
+            echo "$sys_conf"
             return 0
         fi
     fi

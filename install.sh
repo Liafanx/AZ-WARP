@@ -206,19 +206,37 @@ ensure_iptables_rule() {
         iptables -I "$chain" "$iface_flag" "$iface_name" -j ACCEPT
 }
 
+# Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
+# warp-vpn/warp-antizapret, старые — единый warp. Порядок = приоритет.
+WARP_SYSTEM_CANDIDATES="/etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf"
+CF_WARP_PUBKEY='bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo='
+
+# Печатает первый существующий системный WARP-конфиг Cloudflare.
+resolve_warp_system_conf() {
+    local candidate
+    for candidate in $WARP_SYSTEM_CANDIDATES; do
+        if [ -f "$candidate" ] && grep -q "$CF_WARP_PUBKEY" "$candidate" 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Функция поиска существующих WARP-ключей
 find_existing_warp_keys() {
     local address="" private_key=""
 
-    if [ -f "/etc/wireguard/warp.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-        private_key=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        address=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+    local sys_conf=""
+    if sys_conf=$(resolve_warp_system_conf); then
+        private_key=$(grep -m 1 '^PrivateKey' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        address=$(grep -m 1 '^Address' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$private_key" ]; then
             [ -z "$address" ] && address="172.16.0.2/32"
             [[ ! "$address" =~ / ]] && address="${address}/32"
             echo "$address"
             echo "$private_key"
-            echo "/etc/wireguard/warp.conf"
+            echo "$sys_conf"
             return 0
         fi
     fi
@@ -771,12 +789,13 @@ else
     warp_labels=()
     widx=1
 
-    if [ -f "/etc/wireguard/warp.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-        sys_pk=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        sys_addr=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+    WARP_SYS_CONF=""
+    if WARP_SYS_CONF=$(resolve_warp_system_conf); then
+        sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        sys_addr=$(grep -m 1 '^Address' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$sys_pk" ]; then
             warp_sources+=("system")
-            warp_labels+=("/etc/wireguard/warp.conf (${sys_addr:-без адреса}) — рекомендуется")
+            warp_labels+=("$WARP_SYS_CONF (${sys_addr:-без адреса}) — ключи AntiZapret, рекомендуется")
             echo -e " ${GREEN}${widx}.${NC} ${warp_labels[$((widx-1))]}"
             ((widx++))
         fi
@@ -821,12 +840,13 @@ else
 
     case "$warp_selected" in
         system)
-            WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            WARP_ADDRESS=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            WARP_ADDRESS=$(grep -m 1 '^Address' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
             [ -z "$WARP_ADDRESS" ] && WARP_ADDRESS="172.16.0.2/32"
             [[ ! "$WARP_ADDRESS" =~ / ]] && WARP_ADDRESS="${WARP_ADDRESS}/32"
-            WARP_SOURCE="/etc/wireguard/warp.conf"
-            echo -e " - ${GREEN}Используем ключи из /etc/wireguard/warp.conf${NC}"
+            WARP_SOURCE="$WARP_SYS_CONF"
+            WARP_KEY_SOURCE_SEL="system"
+            echo -e " - ${GREEN}Используем ключи из $WARP_SYS_CONF${NC}"
             ;;
         wgcf)
             WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
@@ -896,6 +916,10 @@ else
         exit 1
     fi
     echo -e " - ${GREEN}Ключи получены! Источник: $WARP_SOURCE${NC}"
+
+    # Только при явном выборе system warper следует за ключами AntiZapret
+    # и пересобирает конфиг, когда up.sh их перегенерирует
+    echo "WARP_KEY_SOURCE=${WARP_KEY_SOURCE_SEL:-local}" >> "$CONF_FILE"
 fi
 
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"

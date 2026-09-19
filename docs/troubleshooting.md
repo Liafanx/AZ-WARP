@@ -53,6 +53,47 @@ fake-адреса в wireguard-endpoint.
 (`warper toggle` дважды либо `warper mode warp`). В `route.rules` должно
 появиться правило `{ "inbound": "tun-in", "action": "resolve", "server": "real-dns" }`.
 
+### WARN "listen egress member on docker0 ... address already in use"
+
+**Симптом:** в логе sing-box после старта 2-3 раза подряд:
+
+```
+WARN endpoint/wireguard[warp]: listen egress member on docker0 (172.17.0.1):
+listen udp4 172.17.0.1:43480: bind: address already in use
+```
+
+**Это безвредно.** Начиная с 1.14 sing-box поднимает UDP-сокет на каждом
+интерфейсе, который UP и не point-to-point, — включая `docker0`. Для
+wireguard-endpoint исключается только его собственный интерфейс, отдельной
+настройки для остальных нет. Неудавшийся сокет просто не создаётся, а
+трафик идёт через основной интерфейс.
+
+Предупреждение появляется несколько раз при старте и затихает. Проверить,
+что WARP действительно работает:
+
+```bash
+warper doctor
+curl --interface singbox-tun https://www.cloudflare.com/cdn-cgi/trace | grep warp=
+```
+
+Если `docker0` на сервере не нужен — сообщение исчезнет вместе с ним.
+
+### Системный DNS уходит в туннель, ничего не качается
+
+**Симптом:** после запуска WARPER на самом сервере перестают работать `apt`,
+`curl`, `git`.
+
+**Причина:** sing-box прописал свой DNS на интерфейс `singbox-tun`.
+
+**Решение:** в конфиге у tun-inbound должно стоять `"dns_mode": "disabled"`
+(в 1.14 значение по умолчанию — `hijack`, оно трогает systemd-resolved).
+Проверяется автоматически:
+
+```bash
+warper doctor                      # строка "Системный DNS не перехвачен"
+resolvectl status singbox-tun      # DNS Servers быть не должно
+```
+
 ### Встроенный WARP AntiZapret (ANTIZAPRET_WARP / VPN_WARP)
 
 Начиная с 1.5.0 WARPER совместим со всеми режимами (`0`-`4`). В режиме `2`

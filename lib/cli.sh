@@ -1361,10 +1361,10 @@ cli_web_https() {
             if grep -q "ssl_certificate" "$nginx_conf" 2>/dev/null; then
                 cert_file=$(grep -oP 'ssl_certificate\s+\K[^;]+' "$nginx_conf" | head -1)
 
-                if echo "$cert_file" | grep -q "letsencrypt"; then
+                if grep -q "letsencrypt" <<< "$cert_file"; then
                     mode="letsencrypt"
                     domain=$(echo "$cert_file" | grep -oP 'live/\K[^/]+')
-                elif echo "$cert_file" | grep -q "warper-web"; then
+                elif grep -q "warper-web" <<< "$cert_file"; then
                     mode="selfsigned"
                 fi
 

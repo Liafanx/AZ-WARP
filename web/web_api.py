@@ -280,6 +280,24 @@ def set_fullvpn(enable: bool) -> tuple[bool, str]:
     return _to_tuple(_api.set_fullvpn(enable))
 
 
+def set_auto_resolve(enable: bool) -> tuple[bool, str]:
+    return _to_tuple(_api.set_auto_resolve(enable))
+
+
+def get_auto_resolve() -> bool:
+    """Включён ли почасовой авто-резолв доменов в IP-маршруты."""
+    result = _api.get_auto_resolve()
+    return result.ok and result.message.strip() == "enabled"
+
+
+def resolve_sync(force: bool = False) -> tuple[bool, str]:
+    return _to_tuple(_api.resolve_sync(force))
+
+
+def resolve_clean(domain: str = "") -> tuple[bool, str]:
+    return _to_tuple(_api.resolve_clean(domain or None))
+
+
 def switch_to_warp(key_source: str = "") -> tuple[bool, str]:
     return _to_tuple(_api.set_mode_warp(key_source))
 

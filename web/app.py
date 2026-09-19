@@ -357,6 +357,7 @@ def settings_page():
         status=status,
         warp_keys=warp_keys,
         wg_configs=wg_configs,
+        auto_resolve=api.get_auto_resolve(),
     )
 
 @app.route("/web-settings")
@@ -666,6 +667,28 @@ def htmx_settings_fullvpn():
     enable = request.form.get("enable", "0") == "1"
     ok, msg = api.set_fullvpn(enable)
     return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/auto-resolve", methods=["POST"])
+@login_required
+def htmx_settings_auto_resolve():
+    enable = request.form.get("enable", "0") == "1"
+    ok, msg = api.set_auto_resolve(enable)
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/resolve-sync", methods=["POST"])
+@login_required
+def htmx_settings_resolve_sync():
+    ok, msg = api.resolve_sync(request.form.get("force", "0") == "1")
+    return _result_partial(ok, msg, "refreshIpRanges")
+
+
+@app.route("/htmx/settings/resolve-clean", methods=["POST"])
+@login_required
+def htmx_settings_resolve_clean():
+    ok, msg = api.resolve_clean(request.form.get("domain", "").strip())
+    return _result_partial(ok, msg, "refreshIpRanges")
 
 
 @app.route("/htmx/settings/log-level", methods=["POST"])

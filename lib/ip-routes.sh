@@ -215,7 +215,9 @@ get_rule_source_net() {
 ensure_ip_rule() {
     local source_net="$1"
     [ -z "$source_net" ] && return 0
-    if ! ip rule show 2>/dev/null | grep -q "from ${source_net} lookup ${IP_ROUTE_TABLE}"; then
+    local rules
+    rules=$(ip rule show 2>/dev/null || true)
+    if ! grep -q "from ${source_net} lookup ${IP_ROUTE_TABLE}" <<< "$rules"; then
         ip rule add from "$source_net" lookup "$IP_ROUTE_TABLE" \
             priority "$IP_ROUTE_PRIO" 2>/dev/null || true
     fi
@@ -225,22 +227,32 @@ ensure_ip_rule() {
 remove_ip_rule() {
     local source_net="$1"
     [ -z "$source_net" ] && return 0
-    while ip rule show 2>/dev/null | grep -q "from ${source_net} lookup ${IP_ROUTE_TABLE}"; do
+    local rules
+    while rules=$(ip rule show 2>/dev/null || true); \
+          grep -q "from ${source_net} lookup ${IP_ROUTE_TABLE}" <<< "$rules"; do
         ip rule del from "$source_net" lookup "$IP_ROUTE_TABLE" \
             priority "$IP_ROUTE_PRIO" 2>/dev/null || break
+    done
+}
+
+# Удаляет ip rule WARPER для всех source-подсетей, кроме указанной.
+# Снимать и тут же возвращать своё правило нельзя: ресинк идёт каждые
+# 10 минут, и каждый раз возникало бы окно без маршрутизации.
+remove_stale_ip_rules() {
+    local keep="${1:-}" net
+    detect_client_subnets
+    for net in "$AZ_CLIENT_NET" "$ALL_CLIENT_NET" \
+               10.29.0.0/16 10.28.0.0/15 172.29.0.0/16 172.28.0.0/15; do
+        [ -z "$net" ] && continue
+        [ "$net" = "$keep" ] && continue
+        remove_ip_rule "$net"
     done
 }
 
 # Удаляет все ip rule созданные WARPER для всех возможных source-подсетей.
 # Вызывается при смене режима, выключении WARPER и деинсталляции.
 remove_all_ip_rules() {
-    detect_client_subnets
-    remove_ip_rule "$AZ_CLIENT_NET"
-    remove_ip_rule "$ALL_CLIENT_NET"
-    for prefix in 10 172; do
-        remove_ip_rule "${prefix}.29.0.0/16"
-        remove_ip_rule "${prefix}.28.0.0/15"
-    done
+    remove_stale_ip_rules ""
 }
 
 # ===== Таблицы WARP AntiZapret =====
@@ -255,7 +267,9 @@ AZ_WARP_TABLES="13335 13336"
 
 # Таблица существует и непуста?
 az_table_active() {
-    ip route show table "$1" 2>/dev/null | grep -q "dev"
+    local routes
+    routes=$(ip route show table "$1" 2>/dev/null || true)
+    grep -q "dev" <<< "$routes"
 }
 
 # Прописывает fake-подсеть и, если передан файл, все желаемые CIDR
@@ -400,8 +414,8 @@ sync_ip_ranges() {
     total=$(wc -l < "$desired_tmp" | tr -d ' ')
 
     if [ "$total" -gt 0 ] && [ -n "$source_net" ]; then
-        remove_all_ip_rules
         ensure_ip_rule "$source_net"
+        remove_stale_ip_rules "$source_net"
     elif [ "$total" -eq 0 ]; then
         remove_all_ip_rules
     fi

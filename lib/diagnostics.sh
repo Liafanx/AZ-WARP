@@ -364,13 +364,14 @@ doctor() {
 
     # При режиме "all" AntiZapret ловит весь трафик подсети правилом
     # без fwmark, поэтому fake-подсеть обязана быть в его таблице.
-    if [ "$az_mode" = "all" ] && \
-       ! ip route show table 13335 2>/dev/null | grep -qF "$SUBNET"; then
+    local az_routes vpn_routes
+    az_routes=$(ip route show table 13335 2>/dev/null || true)
+    vpn_routes=$(ip route show table 13336 2>/dev/null || true)
+    if [ "$az_mode" = "all" ] && ! grep -qF "$SUBNET" <<< "$az_routes"; then
         echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table 13335 — домены уйдут в warp-antizapret"
         failed=1
     fi
-    if [ "$vpn_mode" = "all" ] && \
-       ! ip route show table 13336 2>/dev/null | grep -qF "$SUBNET"; then
+    if [ "$vpn_mode" = "all" ] && ! grep -qF "$SUBNET" <<< "$vpn_routes"; then
         echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table 13336 — домены FullVPN уйдут в warp-vpn"
         failed=1
     fi
@@ -452,8 +453,7 @@ doctor() {
         local rule_net
         rule_net=$(get_rule_source_net)
         if [ -n "$rule_net" ]; then
-            if ip rule show 2>/dev/null | \
-               grep -q "from ${rule_net} lookup ${IP_ROUTE_TABLE}"; then
+            if output_has "from ${rule_net} lookup ${IP_ROUTE_TABLE}" ip rule show; then
                 echo -e " ${GREEN}✔${NC} ip rule для ${rule_net} → table ${IP_ROUTE_TABLE} активно"
             else
                 echo -e " ${RED}✘${NC} ip rule для ${rule_net} → table ${IP_ROUTE_TABLE} отсутствует"
@@ -475,6 +475,18 @@ doctor() {
         fi
     else
         echo -e " ${CYAN}!${NC} Экспорт WARPER CIDR в AntiZapret выключен"
+    fi
+
+    # sing-box не должен прописывать свой DNS в систему: иначе резолв
+    # на сервере уходит в туннель и ломается всё, что качается локально.
+    # За это отвечает dns_mode=disabled в tun-inbound.
+    if command -v resolvectl >/dev/null 2>&1 && ip link show singbox-tun >/dev/null 2>&1; then
+        if output_has '^[[:space:]]*DNS Servers:' resolvectl status singbox-tun; then
+            echo -e " ${RED}✘${NC} sing-box прописал DNS на singbox-tun — проверьте dns_mode в конфиге"
+            failed=1
+        else
+            echo -e " ${GREEN}✔${NC} Системный DNS не перехвачен sing-box"
+        fi
     fi
 
     # Авто-резолв доменов в IP-маршруты
