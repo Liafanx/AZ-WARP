@@ -2,6 +2,43 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.5.1] - 2026-09-20
+
+### Added
+- Почти каждое действие меню доступно из CLI. Новое в `warper`:
+  - `help` / `--help` / `-h`, `version` / `--version` / `-v`
+  - `web install|uninstall|start|stop|restart|enable|disable|status`,
+    `web port [ПОРТ]`, `web logs [N]`, `web authlog [N]`
+  - `singbox start|stop|restart|enable|disable|status`
+  - `domains list|save|edit` — симметрия с `ipranges list|save`
+  - `iproutes clear`, `subnets`, `listupdate`, `uninstall --yes`
+  - `config set КЛЮЧ ЗНАЧЕНИЕ`
+- Новое в `warperslave`: `restart`, `loglevel [УРОВЕНЬ]`, `mtu [ЗНАЧЕНИЕ]`,
+  `showkey`, `logs [N]`, `version`.
+- Каталог доменов был доступен только из CLI и веб-панели — добавлен
+  пункт `C` в главное меню.
+- Python API: модуль `web` (12 методов), `singbox_status`,
+  `clear_ip_routes`, `get_subnets`, `config_get`, `config_set`,
+  `update_lists` и делегаты в `WarperAPI`.
+
+### Fixed
+- `warper ipranges save` отвечал `invalid CIDR` на строки с аннотацией
+  авторезолва (`1.2.3.4/32 #домен`), из-за чего редактор IP-подсетей в
+  веб-панели переставал сохраняться при включённом авторезолве.
+- `singbox._action` в Python API дёргал `systemctl` напрямую, минуя
+  переприменение правил `FORWARD` и маршрутов: после запуска через API
+  состояние оставалось несинхронизированным. Теперь идёт через CLI.
+- `get/save_user_domains_text` правили `domains.txt` напрямую в обход
+  CLI — та же логика жила в двух местах и расходилась.
+
+### Changed
+- Неизвестная команда `warper` и `warperslave` больше не открывает меню
+  молча, а печатает ошибку и возвращает код 1.
+- `uninstaller.sh` принимает `--yes` для неинтерактивного запуска.
+- README: раздел команд переписан и разбит по темам, добавлены все
+  недостающие команды. Исправлены удаление панели (`W` → `10`, было `9`)
+  и версии в примерах.
+
 ## [1.5.0] - 2026-09-16
 
 ### Fixed

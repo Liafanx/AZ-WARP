@@ -278,10 +278,10 @@ case "${1:-}" in
               if is_warper_active; then sync_ip_ranges; fi
               exit $? ;;
     ipsync)   sync_ip_ranges; exit $? ;;
-    iplist)   extract_ip_ranges; exit $? ;;
+    iplist)   extract_ip_ranges; exit 0 ;;
     iproutes)
         case "${2:-}" in
-            "")    get_current_tun_routes; exit $? ;;
+            "")    get_current_tun_routes; exit 0 ;;
             clear) remove_all_ip_routes; exit $? ;;
             *)     echo "Использование: warper iproutes [clear]" >&2; exit 1 ;;
         esac
@@ -351,10 +351,10 @@ case "${1:-}" in
             *)    echo "Использование: warper wgconfig list"; exit 1 ;;
         esac
         ;;
-    domainslist) cli_domains_list; exit $? ;;
+    domainslist) cli_domains_list; exit 0 ;;
     domains)
         case "${2:-}" in
-            list) cli_domains_text; exit $? ;;
+            list) cli_domains_text; exit 0 ;;
             save) cli_domains_save; exit $? ;;
             edit)
                 is_interactive || { echo "ERROR: edit requires a terminal" >&2; exit 1; }
@@ -380,7 +380,7 @@ case "${1:-}" in
     version|--version|-v) echo "$LOCAL_VER"; exit 0 ;;
     ipranges)
         case "${2:-}" in
-            list) cli_ip_ranges_content; exit $? ;;
+            list) cli_ip_ranges_content; exit 0 ;;
             save) cli_ip_ranges_save; exit $? ;;
             *)    echo "Использование: warper ipranges list|save"; exit 1 ;;
         esac

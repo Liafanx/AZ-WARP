@@ -43,7 +43,7 @@ from warper_api import WarperAPI
 w = WarperAPI()
 
 # Версия и статус
-print(w.version)          # "1.3.8"
+print(w.version)          # "1.5.1"
 print(w.is_active())      # True
 
 # Полный статус (JSON)
@@ -132,6 +132,13 @@ print(w.doctor().message)      # первые 3 строки + "... (N стро�
 | `get_version()` | Версия WARPER |
 | `doctor()` | Полная диагностика |
 | `resync()` | Восстановить правила FORWARD, ipset, маршруты и патч kresd |
+| `get_subnets()` | Подсети VPN-клиентов и режим маршрутизации (`data=dict`) |
+| `config_get(key)` | Прочитать параметр конфигурации |
+| `config_set(key, value)` | Изменить параметр (см. список ключей ниже) |
+
+Записываемые через `config_set` ключи: `SUBNET`, `IP_ROUTE_MODE`,
+`IP_EXPORT_TO_ANTIZAPRET`, `FULLVPN_WARP_RESOLVE`, `LOG_LEVEL`, `MTU`,
+`WARP_KEY_SOURCE`. Остальные доступны только на чтение.
 | `toggle()` | Включить/выключить WARPER |
 | `enable()` | Включить WARPER (если выключен) |
 | `disable()` | Выключить WARPER (если включён) |
@@ -149,10 +156,7 @@ print(w.doctor().message)      # первые 3 строки + "... (N стро�
 | `patch_kresd()` | Переприменить патч DNS |
 | `get_user_domains_text()` | Получить пользовательский блок domains.txt как текст для редактирования |
 | `save_user_domains_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
-
-> `get_user_domains_text()` / `save_user_domains_text()` — единственные методы,
-> которые работают с `/root/warper/domains.txt` напрямую, минуя CLI. Им нужен
-> доступ к файлу на запись, и они не переживут смену его формата.
+| `update_lists()` | Обновить встроенные списки (gemini/chatgpt) из репозитория |
 
 ### IP-подсети
 
@@ -167,6 +171,7 @@ print(w.doctor().message)      # первые 3 строки + "... (N стро�
 | `set_ip_export(enable)` | Экспорт CIDR в AntiZapret |
 | `get_ip_ranges_text()` | Получить содержимое ip-ranges.txt как текст для редактирования |
 | `save_ip_ranges_text(text)` | Сохранить текст и запустить синхронизацию (сохраняет комментарии и пустые строки) |
+| `clear_ip_routes()` | Удалить применённые маршруты из ядра (файл не трогается) |
 | `resolve_sync(force=False)` | Резолвить домены в IP, обновить накопительный блок `RESOLVED` |
 | `resolve_clean(domain=None)` | Очистить блок `RESOLVED` целиком или записи одного домена |
 | `set_auto_resolve(enable)` | Включить/выключить почасовой авто-резолв |
@@ -198,6 +203,7 @@ AntiZapret отдают чистые CIDR.
 | `singbox_restart()` | Перезапустить |
 | `singbox_enable()` | Включить автозагрузку |
 | `singbox_disable()` | Выключить автозагрузку |
+| `singbox_status()` | Состояние службы: active, enabled, version, log_level, mtu (`data=dict`) |
 | `singbox_version()` | Установленная версия sing-box |
 | `singbox_upgrade(target=None)` | Обновить бинарь (общий с `sing-box-slave` — перезапускаются обе службы) |
 | `get_logs(lines)` | Получить логи (1-2000 строк) |
@@ -219,6 +225,21 @@ AntiZapret отдают чистые CIDR.
 | `set_fullvpn(enable)` | FullVPN WARP-резолвинг |
 | `list_warp_keys()` | Доступные WARP-ключи |
 | `list_wg_configs()` | Доступные WG-конфиги |
+
+### Веб-панель
+
+| Метод | Описание |
+|---|---|
+| `web_status()` | installed, active, enabled, mode, external_port (`data=dict`) |
+| `web_install()` | Установить панель (установщик интерактивный) |
+| `web_uninstall()` | Удалить панель |
+| `web_start()` / `web_stop()` / `web_restart()` | Управление службой |
+| `web_set_autostart(enabled)` | Автозагрузка панели |
+| `web_get_port()` | Внешний порт |
+| `web_set_port(port)` | Сменить внешний порт (недоступно в режиме без nginx) |
+| `web_get_logs(lines=50)` | Логи службы (`data=list[str]`) |
+| `web_get_auth_log(lines=30)` | Журнал авторизаций (`data=list[str]`) |
+| `web_update()` | Обновить файлы панели |
 
 ### Трафик
 
@@ -267,7 +288,8 @@ from warper_api.status import is_active, doctor
     ├── settings.py      # настройки
     ├── singbox.py       # sing-box
     ├── status.py        # статус и диагностика
-    ├── updates.py       # Обновление warper
+    ├── updates.py       # обновление warper
+    ├── web.py           # веб-панель
     └── traffic.py       # трафик
 ```
 
@@ -282,7 +304,7 @@ Python API использует CLI `warper` как backend. Это означа
 
 ```python
 import warper_api
-print(warper_api.__version__)  # "1.4.0"
+print(warper_api.__version__)  # "1.5.1"
 ```
 
 

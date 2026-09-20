@@ -278,14 +278,28 @@ warper webhttps enable-selfsigned # включить самоподписанн�
 warper webhttps enable-letsencrypt DOMAIN  # Let's Encrypt
 warper webhttps disable           # переключить на HTTP
 warper webhttps renew             # обновить сертификат
+
+warper web status                 # установлена, активна, режим, внешний порт
+warper web start|stop|restart     # управление службой
+warper web enable|disable         # автозагрузка
+warper web port                   # показать внешний порт
+warper web port 8443              # изменить внешний порт
+warper web logs 100               # логи службы
+warper web authlog 50             # журнал авторизаций
+warper web install|uninstall      # установка и удаление
+warper webupdate                  # обновить файлы панели
 ```
+
+Полный список — `warper help`.
 
 ### Безопасность
 
 - Пароли в виде **bcrypt-хеша** в `/root/warper/web/data/users.json` (chmod 600)
 - `SECRET_KEY` Flask в `/root/warper/web/data/secret.key`, ротируется при смене пароля
 - Защита от brute-force: **10 попыток / 10 минут → блокировка IP на 15 минут**
-- CSRF-защита, X-Real-IP только от nginx (невозможно подделать)
+- CSRF-защита. `X-Real-IP` принимается только когда панель стоит за nginx;
+  в режиме без nginx `ProxyFix` отключается, иначе заголовок можно подделать
+  и обойти блокировку по IP
 - Аудит-лог в `/root/warper/web/data/auth.log`
 - Cookie: HttpOnly, SameSite=Lax, Secure при HTTPS
 - Настраиваемые параметры brute-force (попытки, окно, длительность блокировки)
@@ -298,12 +312,17 @@ warper webhttps renew             # обновить сертификат
 ### Удаление веб-панели
 
 ```bash
+warper web uninstall
+```
+
+Или через меню: `warper` → `W` → `10`, или напрямую:
+
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/web/uninstall-web.sh)
 ```
 
-Или через меню: `warper` → `W` → `9`.
-
-> При полном удалении WARPER (`warper` → `U`) веб-панель удаляется автоматически.
+> При полном удалении WARPER (`warper uninstall --yes`) веб-панель
+> удаляется автоматически.
 
 ---
 
@@ -375,31 +394,121 @@ warperslave status
 <a id="commands"></a>
 ## 🧰 Команды управления
 
-### WARPER
+Полный список: `warper help`. Неизвестная команда возвращает код 1,
+а не открывает меню.
+
+### Домены
 
 ```bash
-warper                      # главное меню
-warper add openai.com       # добавить домен
-warper remove openai.com    # удалить домен
-warper enable gemini        # включить список Gemini
-warper enable chatgpt       # включить список ChatGPT
-warper disable gemini       # выключить список
-warper sync                 # синхронизировать и применить
-warper patch                # переприменить патч DNS
-warper doctor               # диагностика
-warper status               # краткий статус
-warper traffic              # статистика трафика (сегодня)
-warper traffic week         # за неделю
-warper traffic month        # за месяц
-warper traffic all          # за всё время
-warper resync               # восстановить правила, ipset, маршруты и патч DNS
-warper singbox version      # версия sing-box
-warper singbox upgrade      # обновить sing-box до версии из установщика
+warper                          # главное меню
+warper add openai.com           # добавить домен
+warper remove openai.com        # удалить домен
+warper domains list             # пользовательский блок как текст
+warper domains save < file.txt  # заменить блок текстом из stdin
+warper domains edit             # открыть domains.txt в редакторе
+warper domainslist              # машинный вид: домен|источник|включён
+warper enable gemini            # включить встроенный список
+warper disable gemini           # выключить встроенный список
+warper listupdate               # обновить встроенные списки из репозитория
+warper sync                     # применить список к DNS
+warper patch                    # переприменить патч kresd
+```
+
+### Состояние и обслуживание
+
+```bash
+warper status                   # краткий статус
+warper status json              # то же в JSON (для скриптов и API)
+warper doctor                   # диагностика
+warper toggle                   # включить или выключить WARPER
+warper resync                   # восстановить правила, ipset, маршруты, патч DNS
+warper resync -v                # то же с отчётом, что было починено
+warper subnets                  # подсети VPN-клиентов и режим маршрутизации
+warper traffic                  # трафик за сегодня
+warper traffic week|month|all   # за период
+warper traffic all json         # в JSON
+warper update                   # обновить WARPER
+warper uninstall --yes          # полное удаление
 ```
 
 `warper resync` вызывается автоматически: таймером `warper-resync.timer`
 раз в 10 минут и из `/root/antizapret/custom-doall.sh` сразу после ночной
 пересборки правил AntiZapret. Вручную нужен редко.
+
+### Настройки
+
+```bash
+warper config get SUBNET        # прочитать параметр
+warper config set MTU 1380      # изменить параметр
+warper subnet 10.224.0.0/16     # сменить fake-подсеть
+warper loglevel debug           # уровень логов sing-box
+warper mtu 1420                 # MTU
+warper autopatch on|off         # автопатч DNS при загрузке
+warper fullvpn on|off           # WARP-резолвинг для FullVPN-клиентов
+warper iproutemode antizapret   # antizapret | all_vpn | all
+warper ipexport on|off          # экспорт CIDR в AntiZapret
+```
+
+Записываемые через `config set` ключи: `SUBNET`, `IP_ROUTE_MODE`,
+`IP_EXPORT_TO_ANTIZAPRET`, `FULLVPN_WARP_RESOLVE`, `LOG_LEVEL`, `MTU`,
+`WARP_KEY_SOURCE`. Остальные доступны только на чтение.
+
+### Режим работы и ключи
+
+```bash
+warper mode warp                # WARP с текущими ключами
+warper mode warp system         # взять ключи AntiZapret
+warper mode warp generate       # зарегистрировать новый WARP-ключ
+warper mode slave СЕРВЕР ПОРТ ПАРОЛЬ
+warper mode wg /root/proton.conf
+warper warpkey list             # доступные источники ключей
+warper warpkey generate         # сгенерировать новый ключ
+warper wgconfig list            # найденные WG-конфиги
+```
+
+`WARP_KEY_SOURCE=system` означает, что WARPER следует за ключами
+AntiZapret и пересобирает конфиг, когда `up.sh` их перегенерирует.
+При `local` (по умолчанию) ключи не трогаются.
+
+### Служба sing-box
+
+```bash
+warper singbox status           # состояние, версия, log level, MTU
+warper singbox start|stop|restart
+warper singbox enable|disable   # автозагрузка
+warper singbox version          # установленная версия
+warper singbox upgrade          # обновить до версии из установщика
+warper singbox upgrade 1.14.1   # до конкретной версии
+warper logs                     # последние 100 строк лога
+warper logs 500                 # последние 500
+```
+
+Бинарь sing-box общий со службой `sing-box-slave`, поэтому `upgrade`
+перезапускает обе. Конфиг проверяется до рестарта: при ошибке службы
+не трогаются.
+
+### Веб-панель
+
+```bash
+warper web status               # установлена, активна, порт, режим
+warper web install              # установить
+warper web uninstall            # удалить
+warper web start|stop|restart   # управление службой
+warper web enable|disable       # автозагрузка
+warper web port                 # показать внешний порт
+warper web port 8443            # изменить внешний порт
+warper web logs 100             # логи службы
+warper web authlog 50           # журнал авторизаций
+warper webpass                  # сменить логин/пароль интерактивно
+warper webpass admin ПАРОЛЬ     # задать пароль напрямую
+warper webpass --reset          # сгенерировать новый пароль
+warper webpass --unblock        # снять блокировки по IP
+warper webhttps status          # состояние HTTPS
+warper webupdate                # обновить файлы панели
+```
+
+В режиме без nginx порт задаётся при установке, и `web port ПОРТ`
+возвращает ошибку — менять его нужно переустановкой панели.
 
 ### Авто-резолв доменов в IP-маршруты
 
@@ -432,9 +541,14 @@ warper resolveclean gemini.google  # убрать записи одного до
 ```bash
 warper ipadd 91.108.4.0/22     # добавить подсеть
 warper ipremove 91.108.4.0/22  # удалить подсеть
-warper ipsync                   # синхронизировать маршруты
-warper iplist                   # показать подсети из файла
-warper iproutes                 # показать применённые маршруты
+warper ipsync                  # синхронизировать маршруты
+warper iplist                  # показать подсети из файла
+warper ipranges list           # файл ip-ranges.txt как текст
+warper ipranges save < f.txt   # заменить файл текстом из stdin
+warper iproutes                # показать применённые маршруты
+warper iproutes clear          # удалить применённые маршруты (файл не трогает)
+warper iproutemode all_vpn     # antizapret | all_vpn | all
+warper ipexport on|off         # экспорт CIDR в AntiZapret
 ```
 Или в главном меню: I → Управление IP-подсетями.
 
@@ -449,18 +563,29 @@ warper catalog update tiktok   # обновить конкретный ката�
 warper catalog list            # показать установленные каталоги
 warper catalog refresh         # обновить локальный кэш каталога
 ```
+Или в главном меню: C → Каталог доменов.
 
 ### WARPERSLAVE
 
 ```bash
-warperslave                 # главное меню
-warperslave status          # статус
-warperslave switch          # переключить режим
-warperslave port            # изменить порт
-warperslave key             # изменить ключ
-warperslave doctor          # диагностика
-warperslave update          # обновление
-warperslave uninstall       # удаление
+warperslave                    # главное меню
+warperslave status             # статус
+warperslave switch             # переключить режим Direct ↔ WARP
+warperslave port               # изменить порт
+warperslave key                # изменить ключ Shadowsocks
+warperslave showkey            # показать полный SS-ключ
+warperslave restart            # перезапустить службу
+warperslave logs 100           # логи службы
+warperslave loglevel           # показать log level
+warperslave loglevel debug     # изменить log level
+warperslave mtu                # показать MTU
+warperslave mtu 1380           # изменить MTU (только режим WARP)
+warperslave singbox version    # версия sing-box
+warperslave singbox upgrade    # обновить sing-box
+warperslave doctor             # диагностика
+warperslave update             # обновление
+warperslave uninstall          # удаление
+warperslave help               # справка
 ```
 
 ---
@@ -471,11 +596,10 @@ warperslave uninstall       # удаление
 ### WARPER
 
 ```bash
-warper
-# Затем: U
+warper uninstall --yes
 ```
 
-Или:
+Или через меню (`warper` → `U`), или напрямую:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/uninstaller.sh | bash
