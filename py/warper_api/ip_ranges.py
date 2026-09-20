@@ -372,3 +372,19 @@ def get_auto_resolve() -> WarperResult:
         WarperResult, где message — "enabled" или "disabled".
     """
     return run_warper("resolve", "status")
+
+
+def clear_ip_routes(timeout: int = 120) -> WarperResult:
+    """
+    Удалить все применённые WARPER IP-маршруты из ядра.
+
+    Файл ip-ranges.txt не трогается: маршруты возвращаются
+    следующим sync_ip_ranges().
+
+    Args:
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+    """
+    return run_warper("iproutes", "clear", timeout=timeout)

@@ -224,6 +224,7 @@ show_main_menu() {
         echo -e " ${CYAN}I.${NC} 🌐 Управление IP-подсетями"
     fi
 
+    echo -e " ${CYAN}C.${NC} 📚 Каталог доменов"
     echo -e " ${CYAN}9.${NC} 🛠️  Настройки (Автопатч, Подсеть, Списки, Loglevel, MTU, Режим и т.д...)"
 
     if [ "$UPDATE_AVAILABLE" = true ]; then
@@ -414,6 +415,7 @@ run_main_menu() {
 
             # ── IP-подсети ────────────────────────────────────────────────
             i|I) ip_ranges_menu ;;
+            c|C) catalog_menu ;;
 
             # ── Doctor ────────────────────────────────────────────────────
             d|D)

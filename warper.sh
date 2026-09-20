@@ -30,6 +30,8 @@ WG_TEMPLATE="$WARPER_DIR/config-wg.json.template"
 WG_MODE_FILE="$WARPER_DIR/wg_mode.conf"
 IP_RANGES_FILE="$WARPER_DIR/ip-ranges.txt"
 AZ_WARPER_INCLUDE_IPS="/root/antizapret/config/warper-include-ips.txt"
+WEB_DIR="$WARPER_DIR/web"
+WEB_SERVICE="warper-web"
 IP_ROUTE_TABLE=100
 IP_ROUTE_PRIO=500
 
@@ -134,7 +136,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
-    for _menufile in main settings singbox-menu ip-menu web-menu; do
+    for _menufile in main settings singbox-menu ip-menu catalog-menu web-menu; do
         _fetch_module "$REPO_URL/menus/${_menufile}.sh" "$WARPER_MENUS/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
     done
 
@@ -162,6 +164,7 @@ for _lib in \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
+    "$WARPER_MENUS/catalog-menu.sh" \
     "$WARPER_MENUS/main.sh"
 do
     if [ ! -f "$_lib" ]; then
@@ -276,7 +279,13 @@ case "${1:-}" in
               exit $? ;;
     ipsync)   sync_ip_ranges; exit $? ;;
     iplist)   extract_ip_ranges; exit $? ;;
-    iproutes) get_current_tun_routes; exit $? ;;
+    iproutes)
+        case "${2:-}" in
+            "")    get_current_tun_routes; exit $? ;;
+            clear) remove_all_ip_routes; exit $? ;;
+            *)     echo "Использование: warper iproutes [clear]" >&2; exit 1 ;;
+        esac
+        ;;
     warpkeysync)
         auto_sync_warp_keys_on_boot
         exit $?
@@ -314,7 +323,8 @@ case "${1:-}" in
     config)
         case "${2:-}" in
             get) cli_config_get "${3:-}"; exit $? ;;
-            *)   echo "Использование: warper config get KEY"; exit 1 ;;
+            set) cli_config_set "${3:-}" "${4:-}"; exit $? ;;
+            *)   echo "Использование: warper config get КЛЮЧ | set КЛЮЧ ЗНАЧЕНИЕ" >&2; exit 1 ;;
         esac
         ;;
     subnet)      cli_subnet "${2:-}"; exit $? ;;
@@ -342,6 +352,32 @@ case "${1:-}" in
         esac
         ;;
     domainslist) cli_domains_list; exit $? ;;
+    domains)
+        case "${2:-}" in
+            list) cli_domains_text; exit $? ;;
+            save) cli_domains_save; exit $? ;;
+            edit)
+                is_interactive || { echo "ERROR: edit requires a terminal" >&2; exit 1; }
+                "${EDITOR:-nano}" "$MASTER_FILE"
+                rebuild_master_file
+                if is_warper_active; then patch_kresd >/dev/null 2>&1 || true
+                else sync_domains; fi
+                echo "Domains updated"
+                exit $?
+                ;;
+            *) echo "Использование: warper domains list|save|edit" >&2; exit 1 ;;
+        esac
+        ;;
+    subnets)     cli_subnets; exit $? ;;
+    listupdate)  cli_list_update; exit $? ;;
+    uninstall)   cli_uninstall "${2:-}"; exit $? ;;
+    web)
+        shift
+        cli_web "$@"
+        exit $?
+        ;;
+    help|--help|-h)     cli_help; exit 0 ;;
+    version|--version|-v) echo "$LOCAL_VER"; exit 0 ;;
     ipranges)
         case "${2:-}" in
             list) cli_ip_ranges_content; exit $? ;;
@@ -362,7 +398,15 @@ case "${1:-}" in
         shift
         cli_web_https "$@"
         exit $?
-        ;;        
+        ;;
+    "")
+        : # без аргументов — ниже откроется интерактивное меню
+        ;;
+    *)
+        echo "Неизвестная команда: $1" >&2
+        echo "Список команд: warper help" >&2
+        exit 1
+        ;;
 esac
 
 # ===== Главное меню =====

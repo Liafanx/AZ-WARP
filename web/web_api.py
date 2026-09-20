@@ -148,6 +148,28 @@ def save_user_domains_block(text: str) -> tuple[bool, str]:
     result = _api.save_user_domains_text(text)
     return result.ok, result.message
 
+
+def update_lists() -> tuple[bool, str]:
+    """Обновляет встроенные списки доменов из репозитория."""
+    return _to_tuple(_api.update_lists())
+
+
+def clear_ip_routes() -> tuple[bool, str]:
+    """Удаляет применённые IP-маршруты, файл не трогает."""
+    return _to_tuple(_api.clear_ip_routes())
+
+
+def get_subnets() -> dict:
+    """Подсети VPN-клиентов и режим маршрутизации."""
+    result = _api.get_subnets()
+    return result.data if result.ok and result.data else {}
+
+
+def get_singbox_status() -> dict:
+    """Состояние службы sing-box."""
+    result = _api.singbox_status()
+    return result.data if result.ok and result.data else {}
+
 # =====================================================================
 #  IP-подсети
 # =====================================================================

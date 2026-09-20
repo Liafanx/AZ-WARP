@@ -873,14 +873,19 @@ IPEOF
             continue
         fi
 
-        # CIDR - валидируем
-        local cidr="$stripped"
+        # CIDR с необязательной аннотацией авторезолва: "1.2.3.4/32 #домен"
+        local cidr note=""
+        cidr="${stripped%%#*}"
+        if [ "$cidr" != "$stripped" ]; then
+            note=" #${stripped#*#}"
+        fi
+        cidr=$(echo "$cidr" | tr -d '[:space:]')
         if [[ "$cidr" != */* ]]; then
             cidr="${cidr}/32"
         fi
 
         if validate_cidr "$cidr" >/dev/null 2>&1; then
-            echo "$cidr" >> "$tmp"
+            echo "${cidr}${note}" >> "$tmp"
             valid_count=$((valid_count + 1))
         else
             invalid_count=$((invalid_count + 1))
@@ -1740,4 +1745,368 @@ remove_az_doall_hook() {
     grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null || return 0
     sed -i '/^# --- WARPER ---$/,/^# --- END WARPER ---$/d' "$AZ_CUSTOM_DOALL"
     return 0
+}
+
+# ===== CLI: ВЕБ-ПАНЕЛЬ =====
+
+# Установлена ли веб-панель.
+web_is_installed() {
+    [ -f "$WEB_DIR/app.py" ]
+}
+
+# CLI: управление веб-панелью без интерактивного меню.
+cli_web() {
+    local action="${1:-status}"
+    case "$action" in
+        install)
+            local installer="/tmp/warper-install-web.sh"
+            rm -f "$installer"
+            if ! curl -sfSL "$REPO_URL/web/install-web.sh?t=$(date +%s)" -o "$installer"; then
+                echo "ERROR: failed to download install-web.sh" >&2
+                return 1
+            fi
+            bash "$installer"
+            local rc=$?
+            rm -f "$installer"
+            return $rc
+            ;;
+        uninstall)
+            web_is_installed || { echo "web panel is not installed"; return 0; }
+            local uninstaller="/tmp/warper-uninstall-web.sh"
+            rm -f "$uninstaller"
+            if ! curl -sfSL "$REPO_URL/web/uninstall-web.sh?t=$(date +%s)" -o "$uninstaller"; then
+                echo "ERROR: failed to download uninstall-web.sh" >&2
+                return 1
+            fi
+            bash "$uninstaller"
+            local rc=$?
+            rm -f "$uninstaller"
+            return $rc
+            ;;
+        start|stop|restart)
+            systemctl "$action" "$WEB_SERVICE" || {
+                echo "ERROR: systemctl $action $WEB_SERVICE failed" >&2
+                journalctl -u "$WEB_SERVICE" -n 10 --no-pager >&2
+                return 1
+            }
+            [ "$action" != "stop" ] && sleep 2
+            echo "web panel: $(systemctl is-active "$WEB_SERVICE" 2>/dev/null)"
+            ;;
+        enable|disable)
+            systemctl "$action" "$WEB_SERVICE" >/dev/null 2>&1 || {
+                echo "ERROR: systemctl $action $WEB_SERVICE failed" >&2; return 1; }
+            echo "web panel autostart: $action"
+            ;;
+        status)
+            if ! web_is_installed; then
+                echo "installed=false"
+                return 0
+            fi
+            echo "installed=true"
+            echo "active=$(systemctl is-active "$WEB_SERVICE" 2>/dev/null)"
+            echo "enabled=$(systemctl is-enabled "$WEB_SERVICE" 2>/dev/null || echo disabled)"
+            echo "mode=$(grep -m1 '^WEB_MODE=' "$WEB_DIR/.env" 2>/dev/null | cut -d= -f2 || echo nginx)"
+            echo "external_port=$(cli_web_port_get)"
+            ;;
+        port)
+            local new_port="${2:-}"
+            if [ -z "$new_port" ]; then
+                cli_web_port_get
+                return 0
+            fi
+            cli_web_port_set "$new_port"
+            ;;
+        logs)
+            local lines="${2:-50}"
+            [[ "$lines" =~ ^[0-9]+$ ]] || lines=50
+            journalctl -u "$WEB_SERVICE" -n "$lines" --no-pager
+            ;;
+        authlog)
+            local lines="${2:-30}"
+            [[ "$lines" =~ ^[0-9]+$ ]] || lines=30
+            local auth_log="$WEB_DIR/data/auth.log"
+            if [ ! -f "$auth_log" ]; then
+                echo "auth log is empty ($auth_log not found)"
+                return 0
+            fi
+            tail -n "$lines" "$auth_log"
+            ;;
+        *)
+            echo "Usage: warper web install|uninstall|start|stop|restart|enable|disable|status|port [PORT]|logs [N]|authlog [N]" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Внешний порт панели: из nginx-vhost или из .env в режиме без nginx.
+cli_web_port_get() {
+    if grep -qx "WEB_MODE=standalone" "$WEB_DIR/.env" 2>/dev/null; then
+        grep -m1 '^EXTERNAL_PORT=' "$WEB_DIR/.env" 2>/dev/null | cut -d= -f2
+        return 0
+    fi
+    local conf="/etc/nginx/sites-available/warper-web" ports
+    [ -f "$conf" ] || return 1
+    ports=$(grep -oE '^[[:space:]]*listen[[:space:]]+[0-9]+' "$conf" 2>/dev/null \
+        | grep -oE '[0-9]+$' | grep -v '^80$' | head -1)
+    [ -n "$ports" ] && echo "$ports"
+}
+
+# Смена внешнего порта панели. В режиме без nginx порт задан в юните,
+# менять его на лету нельзя — переустановка панели.
+cli_web_port_set() {
+    local new_port="$1" conf="/etc/nginx/sites-available/warper-web"
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || (( new_port < 1 || new_port > 65535 )); then
+        echo "ERROR: port must be 1-65535" >&2
+        return 1
+    fi
+    if grep -qx "WEB_MODE=standalone" "$WEB_DIR/.env" 2>/dev/null; then
+        echo "ERROR: panel runs without nginx, port is set at install time" >&2
+        return 1
+    fi
+    [ -f "$conf" ] || { echo "ERROR: $conf not found" >&2; return 1; }
+
+    local current
+    current=$(cli_web_port_get) || true
+    [ -z "$current" ] && { echo "ERROR: cannot detect current port" >&2; return 1; }
+    [ "$current" = "$new_port" ] && { echo "port unchanged ($current)"; return 0; }
+
+    if output_has ":${new_port}[[:space:]]" ss -tln; then
+        echo "ERROR: port $new_port is already in use" >&2
+        return 1
+    fi
+
+    cp -a "$conf" "${conf}.bak"
+    sed -i -E "s|^([[:space:]]*listen[[:space:]]+)${current}\b|\1${new_port}|" "$conf"
+    if ! nginx -t >/dev/null 2>&1; then
+        mv -f "${conf}.bak" "$conf"
+        echo "ERROR: nginx config invalid, rolled back" >&2
+        return 1
+    fi
+    rm -f "${conf}.bak"
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+    echo "web panel port: $current -> $new_port"
+}
+
+# ===== CLI: ДОМЕНЫ (текстовый вид) =====
+
+# Пользовательский блок domains.txt как есть — симметрия с `ipranges list`.
+cli_domains_text() {
+    [ -f "$MASTER_FILE" ] || return 0
+    extract_user_block_raw "$MASTER_FILE"
+}
+
+# Сохраняет пользовательский блок из stdin, сохраняя комментарии.
+# Встроенные списки (GEMINI/CHATGPT) не трогаются.
+cli_domains_save() {
+    local input_tmp rebuilt_tmp
+    input_tmp=$(mktemp)
+    rebuilt_tmp=$(mktemp)
+    cat > "$input_tmp"
+
+    {
+        cat << 'EOF'
+# ==========================================
+# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
+# Строки, начинающиеся с '#', игнорируются.
+# ⚠️ НЕ удаляйте служебные маркеры блоков GEMINI/CHATGPT
+# ==========================================
+
+# Пользовательские домены:
+EOF
+        cat "$input_tmp"
+        local name
+        for name in gemini chatgpt; do
+            if has_list_block "$name"; then
+                echo ""
+                extract_block "$MASTER_FILE" "$name"
+            fi
+        done
+    } > "$rebuilt_tmp"
+
+    mv "$rebuilt_tmp" "$MASTER_FILE"
+    rm -f "$input_tmp"
+    rebuild_master_file
+
+    if is_warper_active; then
+        patch_kresd >/dev/null 2>&1 || true
+    else
+        sync_domains
+    fi
+    echo "Saved $(extract_user_domains "$MASTER_FILE" | grep -c '') domains"
+}
+
+# ===== CLI: ПРОЧЕЕ =====
+
+# Подсети VPN-клиентов, определённые из конфигурации AntiZapret.
+cli_subnets() {
+    detect_client_subnets
+    echo "antizapret=$AZ_CLIENT_NET"
+    echo "fullvpn=$FULLVPN_CLIENT_NET"
+    echo "all=$ALL_CLIENT_NET"
+    echo "route_mode=$IP_ROUTE_MODE"
+    echo "route_source=$(get_rule_source_net)"
+}
+
+# Обновляет встроенные списки доменов (gemini/chatgpt) из репозитория.
+cli_list_update() {
+    local name updated=0
+    for name in gemini chatgpt; do
+        if ! download_file_safe "$REPO_URL/download/${name}.txt" \
+             "$DOWNLOAD_DIR/${name}.txt" "список ${name}" >/dev/null 2>&1; then
+            echo "WARNING: failed to download ${name}.txt" >&2
+            continue
+        fi
+        updated=$((updated + 1))
+    done
+
+    [ "$updated" -eq 0 ] && { echo "ERROR: no lists updated" >&2; return 1; }
+
+    update_list_blocks
+    if is_warper_active; then
+        patch_kresd >/dev/null 2>&1 || true
+    else
+        sync_domains
+    fi
+    echo "Lists updated: $updated"
+}
+
+# CLI: изменить параметр конфигурации.
+cli_config_set() {
+    local key="${1:-}" value="${2:-}"
+    if [ -z "$key" ] || [ -z "$value" ]; then
+        echo "Usage: warper config set KEY VALUE" >&2
+        return 1
+    fi
+    case "$key" in
+        SUBNET)                  cli_subnet "$value" ;;
+        IP_ROUTE_MODE)           cli_iproutemode "$value" ;;
+        IP_EXPORT_TO_ANTIZAPRET) cli_ipexport "$value" ;;
+        FULLVPN_WARP_RESOLVE)    cli_fullvpn "$value" ;;
+        LOG_LEVEL)               cli_loglevel "$value" ;;
+        MTU)                     cli_mtu "$value" ;;
+        WARP_KEY_SOURCE)
+            case "$value" in
+                system|local) WARP_KEY_SOURCE="$value"; save_main_config
+                              echo "WARP_KEY_SOURCE=$value" ;;
+                *) echo "ERROR: WARP_KEY_SOURCE must be system|local" >&2; return 1 ;;
+            esac
+            ;;
+        *)
+            echo "ERROR: unknown or read-only key: $key" >&2
+            echo "Writable: SUBNET IP_ROUTE_MODE IP_EXPORT_TO_ANTIZAPRET FULLVPN_WARP_RESOLVE LOG_LEVEL MTU WARP_KEY_SOURCE" >&2
+            return 1
+            ;;
+    esac
+}
+
+# CLI: полное удаление WARPER.
+cli_uninstall() {
+    if [ "${1:-}" != "--yes" ]; then
+        echo "ERROR: destructive action, pass --yes to confirm" >&2
+        echo "Usage: warper uninstall --yes" >&2
+        return 1
+    fi
+    if [ -x "$WARPER_DIR/uninstaller.sh" ]; then
+        exec bash "$WARPER_DIR/uninstaller.sh" --yes
+    fi
+    local tmp="/tmp/warper-uninstaller.sh"
+    if ! curl -sfSL "$REPO_URL/uninstaller.sh?t=$(date +%s)" -o "$tmp"; then
+        echo "ERROR: failed to download uninstaller" >&2
+        return 1
+    fi
+    exec bash "$tmp" --yes
+}
+
+# ===== CLI: СПРАВКА =====
+
+cli_help() {
+    cat <<'EOF'
+WARPER — маршрутизация доменов и IP-подсетей через WARP / Slave / WG
+
+Использование: warper [КОМАНДА] [АРГУМЕНТЫ]
+Без аргументов открывается интерактивное меню.
+
+Домены:
+  add ДОМЕН                    добавить домен
+  remove ДОМЕН                 удалить домен
+  domains list                 показать пользовательский блок как текст
+  domains save                 заменить блок текстом из stdin
+  domainslist                  машинный список: домен|источник|включён
+  enable gemini|chatgpt        включить встроенный список
+  disable gemini|chatgpt       выключить встроенный список
+  listupdate                   обновить встроенные списки из репозитория
+  sync                         применить список доменов к DNS
+  patch                        переприменить патч kresd
+
+IP-подсети:
+  ipadd CIDR                   добавить подсеть
+  ipremove CIDR                удалить подсеть
+  iplist                       подсети из файла
+  ipranges list|save           файл ip-ranges.txt как текст (save — из stdin)
+  ipsync                       синхронизировать маршруты
+  iproutes [clear]             показать или удалить применённые маршруты
+  iproutemode РЕЖИМ            antizapret | all_vpn | all
+  ipexport on|off              экспорт CIDR в AntiZapret
+  subnets                      подсети VPN-клиентов и режим маршрутизации
+
+Авто-резолв доменов в IP:
+  resolve on|off|status        почасовой таймер
+  resolvesync [--force]        резолвить сейчас
+  resolveclean [ДОМЕН]         очистить блок RESOLVED целиком или по домену
+
+Каталог доменов:
+  catalog search [ЗАПРОС]      поиск категорий
+  catalog show ИМЯ             предпросмотр
+  catalog add|remove ИМЯ       установить или удалить
+  catalog update [ИМЯ]         обновить
+  catalog list                 установленные
+  catalog refresh              обновить кэш категорий
+
+Режим работы:
+  mode warp [ИСТОЧНИК]         WARP: system | wgcf | root | generate
+  mode slave СЕРВЕР ПОРТ ПАРОЛЬ   подключение к донору
+  mode wg /путь/к.conf         WireGuard-конфиг
+  warpkey list|generate        WARP-ключи
+  wgconfig list                доступные WG-конфиги
+
+Служба sing-box:
+  singbox start|stop|restart   управление службой
+  singbox enable|disable       автозагрузка
+  singbox status               состояние
+  singbox version              установленная версия
+  singbox upgrade [ВЕРСИЯ]     обновить бинарь
+  logs [N]                     логи sing-box
+  loglevel УРОВЕНЬ             debug | info | warn | error
+  mtu ЗНАЧЕНИЕ                 1280-1500
+
+Веб-панель:
+  web status                   состояние панели
+  web install|uninstall        установка и удаление
+  web start|stop|restart       управление службой
+  web enable|disable           автозагрузка
+  web port [ПОРТ]              показать или изменить внешний порт
+  web logs [N]                 логи службы
+  web authlog [N]              журнал авторизаций
+  webpass [ЛОГИН ПАРОЛЬ]       смена пароля (--reset, --unblock)
+  webhttps ...                 status | enable-selfsigned | enable-letsencrypt ДОМЕН
+                               | disable | renew
+  webupdate                    обновить панель
+
+Состояние и обслуживание:
+  status [json]                краткий статус
+  doctor                       диагностика
+  resync [-v]                  восстановить правила, ipset, маршруты, патч DNS
+  toggle                       включить или выключить WARPER
+  traffic [ПЕРИОД] [json]      today | week | month | all
+  config get КЛЮЧ              прочитать параметр
+  config set КЛЮЧ ЗНАЧЕНИЕ     изменить параметр
+  subnet CIDR                  сменить fake-подсеть
+  autopatch on|off             автопатч DNS при загрузке
+  fullvpn on|off               WARP-резолвинг для FullVPN-клиентов
+  update                       обновить WARPER
+  uninstall --yes              полное удаление
+
+  help, --help, -h             эта справка
+  version, --version, -v       версия WARPER
+EOF
 }

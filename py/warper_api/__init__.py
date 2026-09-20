@@ -34,6 +34,7 @@ from . import settings
 from . import traffic
 from . import status
 from . import updates
+from . import web
 
 __version__: str = "0.0.0"
 
@@ -157,6 +158,10 @@ class WarperAPI:
         """
         return domains.list_domains()
 
+    def update_lists(self) -> WarperResult:
+        """Обновить встроенные списки доменов (gemini/chatgpt)."""
+        return domains.update_lists()
+
     def sync_domains(self) -> WarperResult:
         """Синхронизировать домены и применить патч DNS."""
         return domains.sync_domains()
@@ -214,6 +219,10 @@ class WarperAPI:
     def sync_ip_ranges(self) -> WarperResult:
         """Синхронизировать IP-маршруты (файл → ядро)."""
         return ip_ranges.sync_ip_ranges()
+
+    def clear_ip_routes(self) -> WarperResult:
+        """Удалить все применённые IP-маршруты (файл не трогается)."""
+        return ip_ranges.clear_ip_routes()
 
     def resolve_sync(self, force: bool = False) -> WarperResult:
         """
@@ -419,6 +428,10 @@ class WarperAPI:
         """Выключить автозагрузку sing-box."""
         return singbox.disable()
 
+    def singbox_status(self) -> WarperResult:
+        """Состояние службы sing-box: active, enabled, version, log_level, mtu."""
+        return singbox.status()
+
     def singbox_version(self) -> WarperResult:
         """Установленная версия sing-box."""
         return singbox.version()
@@ -433,6 +446,61 @@ class WarperAPI:
             target: Версия. По умолчанию — версия из установщика.
         """
         return singbox.upgrade(target)
+
+    # ==================== Веб-панель ====================
+
+    def web_status(self) -> WarperResult:
+        """Состояние панели: installed, active, enabled, mode, external_port."""
+        return web.status()
+
+    def web_install(self) -> WarperResult:
+        """Установить панель (установщик интерактивный)."""
+        return web.install()
+
+    def web_uninstall(self) -> WarperResult:
+        """Удалить панель."""
+        return web.uninstall()
+
+    def web_start(self) -> WarperResult:
+        """Запустить службу панели."""
+        return web.start()
+
+    def web_stop(self) -> WarperResult:
+        """Остановить службу панели."""
+        return web.stop()
+
+    def web_restart(self) -> WarperResult:
+        """Перезапустить службу панели."""
+        return web.restart()
+
+    def web_set_autostart(self, enabled: bool) -> WarperResult:
+        """Включить или выключить автозагрузку панели."""
+        return web.set_autostart(enabled)
+
+    def web_get_port(self) -> WarperResult:
+        """Внешний порт панели."""
+        return web.get_port()
+
+    def web_set_port(self, port: int) -> WarperResult:
+        """
+        Сменить внешний порт панели.
+
+        Args:
+            port: Новый порт 1-65535.
+        """
+        return web.set_port(port)
+
+    def web_get_logs(self, lines: int = 50) -> WarperResult:
+        """Логи службы панели."""
+        return web.get_logs(lines)
+
+    def web_get_auth_log(self, lines: int = 30) -> WarperResult:
+        """Журнал авторизаций панели."""
+        return web.get_auth_log(lines)
+
+    def web_update(self) -> WarperResult:
+        """Обновить файлы панели из репозитория."""
+        return web.update()
 
     def get_logs(self, lines: int = 100) -> WarperResult:
         """
@@ -500,6 +568,30 @@ class WarperAPI:
             mtu: Значение MTU.
         """
         return settings.set_mtu(mtu)
+
+    def get_subnets(self) -> WarperResult:
+        """Подсети VPN-клиентов и режим маршрутизации."""
+        return settings.get_subnets()
+
+    def config_get(self, key: str) -> WarperResult:
+        """
+        Прочитать параметр конфигурации.
+
+        Args:
+            key: Имя параметра.
+        """
+        return settings.config_get(key)
+
+    def config_set(self, key: str, value: str) -> WarperResult:
+        """
+        Изменить параметр конфигурации.
+
+        Args:
+            key: SUBNET | IP_ROUTE_MODE | IP_EXPORT_TO_ANTIZAPRET |
+                 FULLVPN_WARP_RESOLVE | LOG_LEVEL | MTU | WARP_KEY_SOURCE.
+            value: Новое значение.
+        """
+        return settings.config_set(key, value)
 
     def get_mtu(self) -> WarperResult:
         """Текущий MTU sing-box."""

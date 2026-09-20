@@ -1176,6 +1176,46 @@ case "${1:-}" in
     update) update_warperslave; exit $? ;;
     uninstall) uninstall_cmd; exit $? ;;
     singbox) singbox_cmd "${2:-}" "${3:-}"; exit $? ;;
+    restart)
+        systemctl restart "$SERVICE_NAME" || { echo "ERROR: restart failed" >&2; exit 1; }
+        sleep 2
+        echo "$SERVICE_NAME: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null)"
+        exit 0
+        ;;
+    loglevel)
+        load_config
+        if [ -z "${2:-}" ]; then get_log_level; exit 0; fi
+        set_log_level "$2"; exit $?
+        ;;
+    mtu)
+        load_config
+        if [ -z "${2:-}" ]; then
+            _mtu=$(get_mtu)
+            if [ -n "$_mtu" ]; then
+                echo "$_mtu"
+            else
+                # MTU есть только у wireguard-endpoint, в режиме direct его нет
+                echo "n/a (режим $SLAVE_MODE)"
+            fi
+            exit 0
+        fi
+        set_mtu "$2"; exit $?
+        ;;
+    showkey)
+        load_config
+        if [ -z "$SS_PASSWORD" ]; then
+            echo "ERROR: SS key is not set" >&2; exit 1
+        fi
+        echo "$SS_PASSWORD"
+        exit 0
+        ;;
+    logs)
+        _lines="${2:-50}"
+        [[ "$_lines" =~ ^[0-9]+$ ]] || _lines=50
+        journalctl -u "$SERVICE_NAME" -n "$_lines" --no-pager
+        exit 0
+        ;;
+    version|--version|-v) echo "$LOCAL_VER"; exit 0 ;;
     help|--help|-h)
         echo "Использование: warperslave [команда]"
         echo ""
@@ -1188,10 +1228,23 @@ case "${1:-}" in
         echo "  update     Обновить warperslave"
         echo "  uninstall  Удалить warperslave"
         echo "  singbox    version | upgrade [ВЕРСИЯ] — версия sing-box"
+        echo "  restart    Перезапустить службу"
+        echo "  loglevel [УРОВЕНЬ]  Показать или изменить log level"
+        echo "  mtu [ЗНАЧЕНИЕ]      Показать или изменить MTU"
+        echo "  showkey    Показать полный SS-ключ"
+        echo "  logs [N]   Логи службы"
         echo "  help       Показать эту справку"
         echo ""
         echo "Без аргументов — интерактивное меню."
         exit 0
+        ;;
+    "")
+        : # без аргументов — ниже откроется интерактивное меню
+        ;;
+    *)
+        echo "Неизвестная команда: $1" >&2
+        echo "Список команд: warperslave help" >&2
+        exit 1
         ;;
 esac
 

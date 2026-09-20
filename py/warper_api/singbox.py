@@ -102,37 +102,37 @@ def get_logs(lines: int = 100) -> WarperResult:
 
 
 def _action(action: str) -> WarperResult:
-    """Выполняет systemctl action для sing-box через warper."""
-    import subprocess
+    """
+    Выполняет действие над службой через CLI.
 
+    Через `warper singbox`, а не systemctl напрямую: CLI дополнительно
+    переприменяет правила FORWARD и маршруты, иначе после старта они
+    остались бы несинхронизированными.
+    """
     valid = ("start", "stop", "restart", "enable", "disable")
     if action not in valid:
         return WarperResult(ok=False, message=f"Недопустимое действие: {action}")
 
-    timeout = 30 if action in ("enable", "disable") else 90
+    timeout = 30 if action in ("enable", "disable") else 120
+    return run_warper("singbox", action, timeout=timeout)
 
-    try:
-        proc = subprocess.run(
-            ["systemctl", action, "sing-box"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        ok = proc.returncode == 0
-        msg = f"sing-box {action}: {'ok' if ok else 'ошибка'}"
-        if not ok and proc.stderr:
-            msg += f" ({proc.stderr.strip()[:200]})"
-        return WarperResult(
-            ok=ok,
-            message=msg,
-            raw_stdout=proc.stdout,
-            raw_stderr=proc.stderr,
-            return_code=proc.returncode,
-        )
-    except subprocess.TimeoutExpired:
-        return WarperResult(ok=False, message=f"Таймаут: sing-box {action}")
-    except Exception as e:
-        return WarperResult(ok=False, message=f"Ошибка: {e}")
+
+def status() -> WarperResult:
+    """
+    Состояние службы sing-box: active, enabled, version, log_level, mtu.
+
+    Returns:
+        WarperResult с data=dict разобранных полей.
+    """
+    result = run_warper("singbox", "status")
+    if result.ok:
+        data = {}
+        for line in result.raw_stdout.splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                data[key.strip()] = value.strip()
+        result.data = data
+    return result
 
 
 def version() -> WarperResult:

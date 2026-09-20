@@ -337,3 +337,47 @@ def list_wg_configs() -> WarperResult:
         raw_stdout=result.raw_stdout,
         return_code=0,
     )
+
+
+def get_subnets() -> WarperResult:
+    """
+    Подсети VPN-клиентов и режим маршрутизации.
+
+    Returns:
+        WarperResult с data=dict: antizapret, fullvpn, all, route_mode,
+        route_source.
+    """
+    result = run_warper("subnets")
+    if result.ok:
+        data = {}
+        for line in result.raw_stdout.splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                data[key.strip()] = value.strip()
+        result.data = data
+    return result
+
+
+def config_get(key: str) -> WarperResult:
+    """
+    Прочитать параметр конфигурации.
+
+    Args:
+        key: Имя параметра (SUBNET, MTU, LOG_LEVEL, OUTBOUND_MODE, ...).
+    """
+    return run_warper("config", "get", key)
+
+
+def config_set(key: str, value: str, timeout: int = 300) -> WarperResult:
+    """
+    Изменить параметр конфигурации.
+
+    Записываемые ключи: SUBNET, IP_ROUTE_MODE, IP_EXPORT_TO_ANTIZAPRET,
+    FULLVPN_WARP_RESOLVE, LOG_LEVEL, MTU, WARP_KEY_SOURCE.
+
+    Args:
+        key: Имя параметра.
+        value: Новое значение.
+        timeout: Таймаут (смена подсети занимает до нескольких минут).
+    """
+    return run_warper("config", "set", key, value, timeout=timeout)

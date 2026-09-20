@@ -366,8 +366,40 @@ cli_singbox() {
             cli_resync >/dev/null 2>&1 || true
             echo "sing-box upgraded to $target"
             ;;
+        start)
+            systemctl start sing-box || { echo "ERROR: start failed" >&2; return 1; }
+            ensure_singbox_running >/dev/null 2>&1 || {
+                echo "ERROR: sing-box did not come up" >&2; return 1; }
+            ensure_iptables_rule FORWARD -o singbox-tun
+            ensure_iptables_rule FORWARD -i singbox-tun
+            resync_ip_routes_if_needed
+            echo "sing-box: started"
+            ;;
+        stop)
+            traffic_finalize_session 2>/dev/null || true
+            remove_all_ip_routes >/dev/null 2>&1 || true
+            systemctl stop sing-box || { echo "ERROR: stop failed" >&2; return 1; }
+            echo "sing-box: stopped"
+            ;;
+        restart)
+            restart_singbox_full >/dev/null 2>&1 || {
+                echo "ERROR: restart failed" >&2; return 1; }
+            echo "sing-box: restarted"
+            ;;
+        enable|disable)
+            systemctl "$action" sing-box >/dev/null 2>&1 || {
+                echo "ERROR: systemctl $action sing-box failed" >&2; return 1; }
+            echo "sing-box autostart: $action"
+            ;;
+        status)
+            echo "active=$(systemctl is-active sing-box 2>/dev/null)"
+            echo "enabled=$(systemctl is-enabled sing-box 2>/dev/null || echo disabled)"
+            echo "version=$(get_singbox_version || echo unknown)"
+            echo "log_level=$(get_log_level)"
+            echo "mtu=$(get_mtu)"
+            ;;
         *)
-            echo "Usage: warper singbox version|upgrade [VERSION]" >&2
+            echo "Usage: warper singbox start|stop|restart|enable|disable|status|version|upgrade [VERSION]" >&2
             return 1
             ;;
     esac

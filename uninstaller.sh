@@ -97,7 +97,14 @@ restore_or_clean_kresd() {
     return 0
 }
 
-while true; do
+# --yes для неинтерактивного вызова (warper uninstall --yes, CI, скрипты).
+# Настройки в этом режиме сохраняются — так же, как при ответе по умолчанию.
+ASSUME_YES=false
+for _arg in "$@"; do
+    [ "$_arg" = "--yes" ] && ASSUME_YES=true
+done
+
+while [ "$ASSUME_YES" = false ]; do
     read -r -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
     if [[ -z "$conf" || "$conf" =~ ^[Nn]$ ]]; then
         echo -e "${GREEN}Отмена. Ничего не изменено.${NC}"
@@ -110,6 +117,10 @@ while true; do
 done
 
 while true; do
+    if [ "$ASSUME_YES" = true ]; then
+        KEEP_DOMAINS=true
+        break
+    fi
     read -r -p "Оставить список доменов и настройки в папке /root/warper? (Y/n): " keep_dom < /dev/tty
     if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
         KEEP_DOMAINS=true

@@ -3,8 +3,8 @@
 # Меню управления веб-панелью: установка, удаление, смена пароля, логи.
 # Подключается через source из warper.sh
 
-WEB_DIR="/root/warper/web"
-WEB_SERVICE="warper-web"
+WEB_DIR="${WEB_DIR:-/root/warper/web}"
+WEB_SERVICE="${WEB_SERVICE:-warper-web}"
 
 # Проверка установлена ли веб-панель
 web_is_installed() {
