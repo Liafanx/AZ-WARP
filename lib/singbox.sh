@@ -54,23 +54,45 @@ resync_ip_routes_if_needed() {
 
 # Точка входа для пересборки config.json.
 # Определяет текущий режим (warp/slave/wg) и вызывает нужную функцию.
+# Проверяет собранный конфиг и атомарно ставит его на место.
+# При ошибке текущий конфиг не трогается — раньше сборка писала сразу в
+# config.json, и неудачная смена режима оставляла sing-box с битым конфигом.
+install_singbox_config() {
+    local tmp="$1"
+    if ! sing-box check -c "$tmp" >/dev/null 2>&1; then
+        echo -e "${RED}Собранный конфиг не прошёл проверку sing-box:${NC}" >&2
+        sing-box check -c "$tmp" 2>&1 | tail -n 3 >&2 || true
+        rm -f "$tmp"
+        return 1
+    fi
+    mkdir -p "$(dirname "$SINGBOX_CONF")"
+    [ -f "$SINGBOX_CONF" ] && cp -a "$SINGBOX_CONF" "${SINGBOX_CONF}.bak"
+    mv -f "$tmp" "$SINGBOX_CONF"
+    chmod 600 "$SINGBOX_CONF"
+}
+
+# Собирает config.json под текущий режим.
+# Неизвестный режим — ошибка: раньше он молча получал WARP-конфиг.
 rebuild_config() {
-    local template="$1"
+    local template="${1:-$SINGBOX_TEMPLATE}"
 
     load_slave_config
     load_wg_config
 
-    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
-        rebuild_config_slave
-        return $?
-    fi
+    case "$CURRENT_OUTBOUND_MODE" in
+        warp)  rebuild_config_warp "$template" ;;
+        slave) rebuild_config_slave ;;
+        wg)    rebuild_config_wg ;;
+        vless|hy2|openvpn) rebuild_config_proxy ;;
+        *)
+            echo -e "${RED}Неизвестный режим: $CURRENT_OUTBOUND_MODE${NC}" >&2
+            return 1
+            ;;
+    esac
+}
 
-    if [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-        rebuild_config_wg
-        return $?
-    fi
-
-    # WARP mode
+rebuild_config_warp() {
+    local template="$1"
     local creds=""
     creds=$(get_warp_credentials) || {
         echo -e "${RED}Ошибка: Не удалось извлечь WARP-ключи!${NC}"
@@ -80,15 +102,15 @@ rebuild_config() {
     warp_address=$(echo "$creds" | sed -n '1p')
     warp_private_key=$(echo "$creds" | sed -n '2p')
 
+    local tmp
+    tmp=$(mktemp)
     sed \
         -e "s|__WARP_ADDRESS__|$warp_address|g" \
         -e "s|__WARP_PRIVATE_KEY__|$warp_private_key|g" \
         -e "s|__SUBNET__|$SUBNET|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
-        "$template" > "$SINGBOX_CONF"
-    chmod 600 "$SINGBOX_CONF"
-
-    if ! validate_singbox_config; then return 1; fi
+        "$template" > "$tmp"
+    install_singbox_config "$tmp" || return 1
 
     echo -e "${GREEN}Конфигурация sing-box (WARP) успешно обновлена.${NC}"
     return 0
@@ -106,17 +128,16 @@ rebuild_config_slave() {
             "$SLAVE_TEMPLATE" "шаблон slave-master" || return 1
     fi
 
+    local tmp
+    tmp=$(mktemp)
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         -e "s|__SLAVE_SERVER__|$SLAVE_SERVER|g" \
         -e "s|__SLAVE_PORT__|$SLAVE_PORT|g" \
         -e "s|__SLAVE_PASSWORD__|$SLAVE_PASSWORD|g" \
-        "$SLAVE_TEMPLATE" > "$SINGBOX_CONF"
-
-    chmod 600 "$SINGBOX_CONF"
-
-    if ! validate_singbox_config; then
+        "$SLAVE_TEMPLATE" > "$tmp"
+    if ! install_singbox_config "$tmp"; then
         echo -e "${RED}Ошибка валидации конфига slave!${NC}"
         return 1
     fi
@@ -403,4 +424,75 @@ cli_singbox() {
             return 1
             ;;
     esac
+}
+
+# ===== Смена режима с откатом =====
+
+# Файлы, из которых складывается состояние режима.
+_outbound_state_files() {
+    echo "$SINGBOX_CONF $CONF_FILE $SLAVE_MODE_FILE $WG_MODE_FILE $OUTBOUND_JSON"
+}
+
+_outbound_snapshot() {
+    local snap="$1" f
+    for f in $(_outbound_state_files); do
+        if [ -f "$f" ]; then
+            cp -a "$f" "$snap/$(basename "$f")"
+        else
+            : > "$snap/$(basename "$f").absent"
+        fi
+    done
+}
+
+_outbound_restore() {
+    local snap="$1" f base
+    for f in $(_outbound_state_files); do
+        base=$(basename "$f")
+        if [ -f "$snap/$base" ]; then
+            cp -a "$snap/$base" "$f"
+        elif [ -f "$snap/$base.absent" ]; then
+            rm -f "$f"
+        fi
+    done
+    load_config
+    load_slave_config
+    load_wg_config
+}
+
+# Переключает режим: SETTER записывает параметры режима, затем конфиг
+# собирается и sing-box перезапускается. При любой ошибке возвращается всё
+# прежнее состояние — раньше меню откатывало всегда на WARP, а CLI не
+# откатывал вовсе и оставлял сохранённым неработающий режим.
+#   apply_outbound_mode MODE [SETTER [ARGS...]]
+apply_outbound_mode() {
+    local new_mode="$1"; shift
+    local snap prev_mode
+    snap=$(mktemp -d)
+    _outbound_snapshot "$snap"
+    prev_mode="$CURRENT_OUTBOUND_MODE"
+
+    if [ $# -gt 0 ] && ! "$@"; then
+        _outbound_restore "$snap"; rm -rf "$snap"
+        return 1
+    fi
+
+    CURRENT_OUTBOUND_MODE="$new_mode"
+    save_slave_config
+
+    if ! rebuild_config "$SINGBOX_TEMPLATE"; then
+        _outbound_restore "$snap"; rm -rf "$snap"
+        echo -e "${RED}Режим не изменён, остаётся: $prev_mode${NC}" >&2
+        return 1
+    fi
+
+    if systemctl is-active --quiet sing-box && ! restart_singbox_full >/dev/null 2>&1; then
+        _outbound_restore "$snap"
+        restart_singbox_full >/dev/null 2>&1 || true
+        rm -rf "$snap"
+        echo -e "${RED}sing-box не запустился в новом режиме, возвращён: $prev_mode${NC}" >&2
+        return 1
+    fi
+
+    rm -rf "$snap"
+    return 0
 }

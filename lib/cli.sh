@@ -69,107 +69,89 @@ cli_toggle_warper() {
 
 # Переключает на режим WARP.
 # Опционально принимает source: system | wgcf | root | generate
-cli_mode_warp() {
+# Выбирает ключ WARP из явного источника и запоминает его для сборки.
+# Без источника ничего не делает: сборка возьмёт текущий ключ.
+_select_warp_key() {
     local key_source="${1:-}"
+    [ -z "$key_source" ] && return 0
 
-    load_slave_config
-    CURRENT_OUTBOUND_MODE="warp"
-    save_slave_config
-
-    # Если указан источник ключа, применяем его
-    if [ -n "$key_source" ]; then
-        local new_address="" new_private_key=""
-        case "$key_source" in
-            system)
-                if [ ! -f "$WARP_SYSTEM_CONF" ]; then
-                    echo "ERROR: $WARP_SYSTEM_CONF not found" >&2
-                    return 1
-                fi
-                new_private_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" \
-                    | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-                new_address=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" \
-                    | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-                [ -z "$new_address" ] && new_address="172.16.0.2/32"
-                [[ ! "$new_address" =~ / ]] && new_address="${new_address}/32"
-                ;;
-            wgcf)
-                local wgcf_file="$WGCF_DIR/wgcf-profile.conf"
-                if [ ! -f "$wgcf_file" ]; then
-                    echo "ERROR: $wgcf_file not found" >&2
-                    return 1
-                fi
-                new_private_key=$(grep -m 1 '^PrivateKey = ' "$wgcf_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                new_address=$(grep -m 1 '^Address = ' "$wgcf_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                ;;
-            root)
-                local root_file="/root/wgcf-profile.conf"
-                if [ ! -f "$root_file" ]; then
-                    echo "ERROR: $root_file not found" >&2
-                    return 1
-                fi
-                new_private_key=$(grep -m 1 '^PrivateKey = ' "$root_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                new_address=$(grep -m 1 '^Address = ' "$root_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                ;;
-            generate)
-                cli_generate_warp_key || return 1
-                new_private_key=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                new_address=$(grep -m 1 '^Address = ' "$WGCF_DIR/wgcf-profile.conf" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                ;;
-            *)
-                echo "ERROR: unknown key_source '$key_source' (use: system|wgcf|root|generate)" >&2
+    local new_address="" new_private_key=""
+    case "$key_source" in
+        system)
+            if [ ! -f "$WARP_SYSTEM_CONF" ]; then
+                echo "ERROR: $WARP_SYSTEM_CONF not found" >&2
                 return 1
-                ;;
-        esac
-
-        # Следовать за ключами AntiZapret только при явном выборе system
-        if [ "$key_source" = "system" ]; then
-            WARP_KEY_SOURCE="system"
-        else
-            WARP_KEY_SOURCE="local"
-        fi
-        save_main_config
-
-        if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
-            echo "ERROR: failed to extract WARP keys" >&2
+            fi
+            new_private_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" \
+                | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            new_address=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" \
+                | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            [ -z "$new_address" ] && new_address="172.16.0.2/32"
+            [[ ! "$new_address" =~ / ]] && new_address="${new_address}/32"
+            ;;
+        wgcf)
+            local wgcf_file="$WGCF_DIR/wgcf-profile.conf"
+            if [ ! -f "$wgcf_file" ]; then
+                echo "ERROR: $wgcf_file not found" >&2
+                return 1
+            fi
+            new_private_key=$(grep -m 1 '^PrivateKey = ' "$wgcf_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            new_address=$(grep -m 1 '^Address = ' "$wgcf_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            ;;
+        root)
+            local root_file="/root/wgcf-profile.conf"
+            if [ ! -f "$root_file" ]; then
+                echo "ERROR: $root_file not found" >&2
+                return 1
+            fi
+            new_private_key=$(grep -m 1 '^PrivateKey = ' "$root_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            new_address=$(grep -m 1 '^Address = ' "$root_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            ;;
+        generate)
+            cli_generate_warp_key || return 1
+            new_private_key=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" \
+                | awk '{print $3}' | tr -d '\r\n')
+            new_address=$(grep -m 1 '^Address = ' "$WGCF_DIR/wgcf-profile.conf" \
+                | awk '{print $3}' | tr -d '\r\n')
+            ;;
+        *)
+            echo "ERROR: unknown key_source '$key_source' (use: system|wgcf|root|generate)" >&2
             return 1
-        fi
+            ;;
+    esac
 
-        if [ ! -f "$SINGBOX_TEMPLATE" ]; then
-            download_file_safe "$REPO_URL/templates/config.json.template" \
-                "$SINGBOX_TEMPLATE" "config.json.template" || return 1
-        fi
-
-        sed \
-            -e "s|__WARP_ADDRESS__|$new_address|g" \
-            -e "s|__WARP_PRIVATE_KEY__|$new_private_key|g" \
-            -e "s|__SUBNET__|$SUBNET|g" \
-            -e "s|__TUN_IP__|$TUN_IP|g" \
-            "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
-        chmod 600 "$SINGBOX_CONF"
-    else
-        # Без указания source — стандартная пересборка через get_warp_credentials
-        if ! rebuild_config "$SINGBOX_TEMPLATE"; then
-            echo "ERROR: failed to rebuild config" >&2
-            return 1
-        fi
-    fi
-
-    if ! validate_singbox_config; then
-        echo "ERROR: invalid sing-box config" >&2
+    if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
+        echo "ERROR: failed to extract WARP keys" >&2
         return 1
     fi
 
-    if systemctl is-active --quiet sing-box; then
-        if ! restart_singbox_full; then
-            echo "ERROR: failed to restart sing-box" >&2
-            return 1
-        fi
+    WARP_OVERRIDE_ADDRESS="$new_address"
+    WARP_OVERRIDE_KEY="$new_private_key"
+
+    # Следовать за ключами AntiZapret только при явном выборе system
+    if [ "$key_source" = "system" ]; then
+        WARP_KEY_SOURCE="system"
+    else
+        WARP_KEY_SOURCE="local"
+    fi
+    save_main_config
+}
+
+cli_mode_warp() {
+    local key_source="${1:-}"
+
+    if [ ! -f "$SINGBOX_TEMPLATE" ]; then
+        download_file_safe "$REPO_URL/templates/config.json.template" \
+            "$SINGBOX_TEMPLATE" "config.json.template" || return 1
+    fi
+
+    if ! apply_outbound_mode warp _select_warp_key "$key_source"; then
+        echo "ERROR: failed to switch to WARP mode" >&2
+        return 1
     fi
 
     echo "Mode switched to WARP"
@@ -178,13 +160,28 @@ cli_mode_warp() {
 
 # Переключает на режим Slave.
 # Аргументы: SERVER PORT PASSWORD
+_set_slave_params() {
+    SLAVE_SERVER="$1"
+    SLAVE_PORT="$2"
+    SLAVE_PASSWORD="$3"
+}
+
 cli_mode_slave() {
     local server="$1"
     local port="$2"
     local password="$3"
 
+    if [[ "$server" == ss://* ]]; then
+        if ! apply_outbound_mode slave _set_slave_from_link "$server"; then
+            echo "ERROR: failed to switch to slave mode" >&2
+            return 1
+        fi
+        echo "Mode switched to Slave ($SLAVE_SERVER:$SLAVE_PORT)"
+        return 0
+    fi
+
     if [ -z "$server" ] || [ -z "$port" ] || [ -z "$password" ]; then
-        echo "Usage: warper mode slave SERVER PORT PASSWORD" >&2
+        echo "Usage: warper mode slave SERVER PORT PASSWORD | 'ss://...'" >&2
         return 1
     fi
 
@@ -198,22 +195,9 @@ cli_mode_slave() {
         return 1
     fi
 
-    SLAVE_SERVER="$server"
-    SLAVE_PORT="$port"
-    SLAVE_PASSWORD="$password"
-    CURRENT_OUTBOUND_MODE="slave"
-    save_slave_config
-
-    if ! rebuild_config_slave; then
-        echo "ERROR: failed to rebuild slave config" >&2
+    if ! apply_outbound_mode slave _set_slave_params "$server" "$port" "$password"; then
+        echo "ERROR: failed to switch to slave mode" >&2
         return 1
-    fi
-
-    if systemctl is-active --quiet sing-box; then
-        if ! restart_singbox_full; then
-            echo "ERROR: failed to restart sing-box" >&2
-            return 1
-        fi
     fi
 
     echo "Mode switched to Slave ($server:$port)"
@@ -221,6 +205,10 @@ cli_mode_slave() {
 }
 
 # Переключает на режим WG из указанного .conf файла.
+_set_wg_params() {
+    parse_wg_conf "$1" && save_wg_config
+}
+
 cli_mode_wg() {
     local conf_path="$1"
 
@@ -239,26 +227,9 @@ cli_mode_wg() {
         return 1
     fi
 
-    if ! parse_wg_conf "$conf_path"; then
-        echo "ERROR: failed to parse WG config" >&2
+    if ! apply_outbound_mode wg _set_wg_params "$conf_path"; then
+        echo "ERROR: failed to switch to WG mode" >&2
         return 1
-    fi
-
-    save_wg_config
-
-    CURRENT_OUTBOUND_MODE="wg"
-    save_slave_config
-
-    if ! rebuild_config_wg; then
-        echo "ERROR: failed to rebuild WG config" >&2
-        return 1
-    fi
-
-    if systemctl is-active --quiet sing-box; then
-        if ! restart_singbox_full; then
-            echo "ERROR: failed to restart sing-box" >&2
-            return 1
-        fi
     fi
 
     echo "Mode switched to WG ($WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT)"

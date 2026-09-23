@@ -10,6 +10,19 @@
 # Интерактивное переключение между режимами WARP / Slave / WG.
 # При переключении пересобирает config.json и перезапускает sing-box.
 # Поддерживает сохранённые подключения для Slave и WG.
+# Применяет режим через apply_outbound_mode и сообщает результат.
+#   _menu_apply_mode MODE НАЗВАНИЕ [SETTER [ARGS...]]
+_menu_apply_mode() {
+    local mode="$1" label="$2"; shift 2
+    echo -e "${YELLOW}Создание конфигурации...${NC}"
+    if apply_outbound_mode "$mode" "$@"; then
+        echo -e "${GREEN}Режим ${label} активирован!${NC}"
+    else
+        echo -e "${RED}Не удалось переключиться, прежний режим сохранён.${NC}"
+    fi
+    sleep 2
+}
+
 switch_outbound_mode() {
     load_slave_config
 
@@ -17,25 +30,15 @@ switch_outbound_mode() {
     echo -e "       ${YELLOW}Режим маршрутизации трафика${NC}"
     echo -e "${CYAN}================================================${NC}"
     echo -e ""
-
-    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
-        echo -e " Текущий режим: ${GREEN}WARP (локальный)${NC}"
-    elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-        load_wg_config
-        echo -e " Текущий режим: ${CYAN}WG (${WG_ENDPOINT_HOST}:${WG_ENDPOINT_PORT})${NC}"
-    else
-        echo -e " Текущий режим: ${CYAN}Slave (донор: ${SLAVE_SERVER}:${SLAVE_PORT})${NC}"
-    fi
-
+    echo -e " Текущий режим: ${GREEN}$(outbound_mode_label)${NC}"
     echo -e ""
     echo -e " ${GREEN}1.${NC} WARP  — трафик через Cloudflare WARP"
-    echo -e " ${CYAN}2.${NC} Slave — трафик через донор-сервер (Shadowsocks)"
+    echo -e " ${CYAN}2.${NC} Slave — донор-сервер по Shadowsocks"
     echo -e " ${CYAN}3.${NC} WG    — трафик через WireGuard-соединение"
     echo -e " ${CYAN}0.${NC} Назад"
     echo -e "${CYAN}================================================${NC}"
 
-    read -r -p "Выбор [0-3]: " mode_choice
-
+    read -r -p "Выбор: " mode_choice
     case "${mode_choice:-}" in
 
         # ── WARP ──────────────────────────────────────────────────────────
@@ -44,9 +47,6 @@ switch_outbound_mode() {
                 echo -e "${YELLOW}Уже в режиме WARP.${NC}"
                 sleep 1; return
             fi
-
-            echo -e "${YELLOW}Переключение на WARP...${NC}"
-
             if [ ! -f "$SINGBOX_TEMPLATE" ]; then
                 download_file_safe "$REPO_URL/templates/config.json.template" \
                     "$SINGBOX_TEMPLATE" "config.json.template" || {
@@ -54,152 +54,63 @@ switch_outbound_mode() {
                     sleep 2; return
                 }
             fi
-
-            CURRENT_OUTBOUND_MODE="warp"
-            save_slave_config
-
-            # Показываем источник ключей
-            local warp_creds_info=""
-            if [ -f "$WARP_SYSTEM_CONF" ]; then
-                local sys_pk
-                sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" 2>/dev/null \
-                    | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-                [ -n "$sys_pk" ] && warp_creds_info="$WARP_SYSTEM_CONF"
-            fi
-            if [ -z "$warp_creds_info" ] && [ -f "$SINGBOX_CONF" ] && \
-               command -v jq >/dev/null 2>&1; then
-                local existing_pk
-                existing_pk=$(jq -r \
-                    '.endpoints[] | select(.tag=="warp") | .private_key // empty' \
-                    "$SINGBOX_CONF" 2>/dev/null || true)
-                if [ -n "$existing_pk" ] && [ "$existing_pk" != "__WARP_PRIVATE_KEY__" ]; then
-                    warp_creds_info="существующий конфиг sing-box"
-                fi
-            fi
-            if [ -z "$warp_creds_info" ] && [ -f "$WGCF_DIR/wgcf-profile.conf" ] && \
-               grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' \
-               "$WGCF_DIR/wgcf-profile.conf" 2>/dev/null; then
-                warp_creds_info="$WGCF_DIR/wgcf-profile.conf"
-            fi
-
-            if [ -n "$warp_creds_info" ]; then
-                echo -e " - ${GREEN}Источник WARP-ключей: ${warp_creds_info}${NC}"
-            else
-                echo -e " - ${YELLOW}WARP-ключи будут получены при пересборке конфига...${NC}"
-            fi
-
-            if rebuild_config "$SINGBOX_TEMPLATE"; then
-                if restart_singbox_full; then
-                    echo -e "${GREEN}Режим WARP активирован!${NC}"
-                else
-                    echo -e "${RED}Не удалось перезапустить sing-box.${NC}"
-                fi
-            else
-                echo -e "${RED}Ошибка пересборки конфига!${NC}"
-            fi
-            sleep 2
+            _menu_apply_mode warp WARP
             ;;
 
         # ── Slave ─────────────────────────────────────────────────────────
         2)
-            echo -e "\n${CYAN}Настройка подключения к донор-серверу${NC}"
-            echo -e "${YELLOW}На донор-сервере должен быть установлен warperslave.${NC}"
+            echo -e "\n${CYAN}Подключение к донор-серверу по Shadowsocks${NC}"
+            echo -e "${YELLOW}Для VLESS или Hysteria2 возьмите ссылку командой${NC}"
+            echo -e "${YELLOW}warperslave link на доноре и выберите режим ниже.${NC}"
             echo -e ""
-
-            local new_server="" new_port="" new_password=""
-            local use_saved=false
 
             # Предлагаем сохранённое подключение
             if [ -n "$SLAVE_SERVER" ] && [ -n "$SLAVE_PASSWORD" ]; then
                 echo -e "${GREEN}Найдено сохранённое подключение:${NC}"
-                echo -e "  ${CYAN}Сервер:${NC} ${YELLOW}${SLAVE_SERVER}${NC}"
-                echo -e "  ${CYAN}Порт:${NC}   ${YELLOW}${SLAVE_PORT}${NC}"
+                echo -e "  ${CYAN}Сервер:${NC} ${YELLOW}${SLAVE_SERVER}:${SLAVE_PORT}${NC}"
                 echo -e "  ${CYAN}Ключ:${NC}   ${YELLOW}${SLAVE_PASSWORD:0:8}...${NC}"
                 echo -e ""
                 echo -e " ${GREEN}1.${NC} Использовать сохранённое подключение"
-                echo -e " ${CYAN}2.${NC} Ввести новый сервер"
+                echo -e " ${CYAN}2.${NC} Ввести новое"
                 echo -e " ${CYAN}0.${NC} Отмена"
-
-                while true; do
-                    read -r -p "Выбор [0-2]: " saved_choice
-                    case "${saved_choice:-}" in
-                        1)
-                            use_saved=true
-                            new_server="$SLAVE_SERVER"
-                            new_port="$SLAVE_PORT"
-                            new_password="$SLAVE_PASSWORD"
-                            break ;;
-                        2) use_saved=false; break ;;
-                        0) return ;;
-                        *) echo -e "${RED}Введите 0, 1 или 2.${NC}" ;;
-                    esac
-                done
+                local saved_choice
+                read -r -p "Выбор [0-2]: " saved_choice
+                case "${saved_choice:-}" in
+                    1) _menu_apply_mode slave Slave; return ;;
+                    2) ;;
+                    *) return ;;
+                esac
             fi
 
-            if [ "$use_saved" = false ]; then
-                # Адрес сервера
-                while true; do
-                    read -r -p "IP или домен slave-сервера (Enter для отмены): " new_server
-                    if [ -z "$new_server" ]; then
-                        echo -e "${YELLOW}Отмена.${NC}"; return
-                    fi
-                    if [[ "$new_server" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
-                        break
-                    fi
-                    echo -e "${RED}Некорректный адрес!${NC}"
-                done
+            local input=""
+            read -r -p "Ссылка ss:// или IP/домен донора (Enter — отмена): " input
+            [ -z "$input" ] && return
 
-                # Порт
-                local default_sp="${SLAVE_PORT:-8444}"
-                read -r -p "Порт [по умолчанию $default_sp]: " new_port
-                [ -z "$new_port" ] && new_port="$default_sp"
-                if ! validate_port_simple "$new_port"; then
-                    echo -e "${RED}Некорректный порт!${NC}"
-                    sleep 1; return
-                fi
-
-                # Ключ
-                while true; do
-                    read -r -p "Ключ Shadowsocks: " new_password
-                    [ -n "$new_password" ] && break
-                    echo -e "${RED}Ключ не может быть пустым!${NC}"
-                done
+            if [[ "$input" == ss://* ]]; then
+                _menu_apply_mode slave Slave _set_slave_from_link "$input"
+                return
             fi
 
-            SLAVE_SERVER="$new_server"
-            SLAVE_PORT="$new_port"
-            SLAVE_PASSWORD="$new_password"
-            CURRENT_OUTBOUND_MODE="slave"
-            save_slave_config
-
-            echo -e "${YELLOW}Создание конфигурации...${NC}"
-            if rebuild_config_slave; then
-                if restart_singbox_full; then
-                    echo -e "${GREEN}Режим Slave активирован!${NC}"
-                    echo -e "${CYAN}Трафик идёт через: $SLAVE_SERVER:$SLAVE_PORT${NC}"
-                else
-                    echo -e "${RED}Не удалось перезапустить sing-box.${NC}"
-                fi
-            else
-                echo -e "${RED}Ошибка! Возврат к режиму WARP.${NC}"
-                CURRENT_OUTBOUND_MODE="warp"
-                save_slave_config
-                if [ -f "$SINGBOX_TEMPLATE" ]; then
-                    rebuild_config "$SINGBOX_TEMPLATE" >/dev/null 2>&1 || true
-                    restart_singbox_full >/dev/null 2>&1 || true
-                fi
+            if [[ ! "$input" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
+                echo -e "${RED}Некорректный адрес!${NC}"; sleep 1; return
             fi
-            sleep 2
+            local new_port new_password=""
+            read -r -p "Порт [${SLAVE_PORT:-8444}]: " new_port
+            new_port="${new_port:-${SLAVE_PORT:-8444}}"
+            if ! validate_port_simple "$new_port"; then
+                echo -e "${RED}Некорректный порт!${NC}"; sleep 1; return
+            fi
+            while [ -z "$new_password" ]; do
+                read -r -p "Ключ Shadowsocks: " new_password
+            done
+            _menu_apply_mode slave Slave _set_slave_params "$input" "$new_port" "$new_password"
             ;;
 
         # ── WG ────────────────────────────────────────────────────────────
         3)
             echo -e "\n${CYAN}Настройка WireGuard-соединения${NC}"
-
             load_wg_config
-            local use_saved_wg=false
 
-            # Предлагаем сохранённое подключение
             if [ -n "$WG_PRIVATE_KEY" ] && [ -n "$WG_ENDPOINT_HOST" ]; then
                 echo -e "${GREEN}Найдено сохранённое WG-подключение:${NC}"
                 echo -e "  ${CYAN}Endpoint:${NC} ${YELLOW}${WG_ENDPOINT_HOST}:${WG_ENDPOINT_PORT}${NC}"
@@ -211,46 +122,18 @@ switch_outbound_mode() {
                 echo -e " ${GREEN}1.${NC} Использовать сохранённое подключение"
                 echo -e " ${CYAN}2.${NC} Выбрать новый конфиг / ввести вручную"
                 echo -e " ${CYAN}0.${NC} Отмена"
-
-                while true; do
-                    read -r -p "Выбор [0-2]: " saved_wg_choice
-                    case "${saved_wg_choice:-}" in
-                        1) use_saved_wg=true; break ;;
-                        2) use_saved_wg=false; break ;;
-                        0) return ;;
-                        *) echo -e "${RED}Введите 0, 1 или 2.${NC}" ;;
-                    esac
-                done
+                local saved_wg_choice
+                read -r -p "Выбор [0-2]: " saved_wg_choice
+                case "${saved_wg_choice:-}" in
+                    1) _menu_apply_mode wg WG; return ;;
+                    2) ;;
+                    *) return ;;
+                esac
             fi
 
-            if [ "$use_saved_wg" = false ]; then
-                if ! select_wg_config; then
-                    echo -e "${YELLOW}Отмена.${NC}"
-                    sleep 1; return
-                fi
-            fi
-
-            CURRENT_OUTBOUND_MODE="wg"
-            save_slave_config
-
-            echo -e "${YELLOW}Создание конфигурации...${NC}"
-            if rebuild_config_wg; then
-                if restart_singbox_full; then
-                    echo -e "${GREEN}Режим WG активирован!${NC}"
-                    echo -e "${CYAN}Трафик идёт через: $WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT${NC}"
-                else
-                    echo -e "${RED}Не удалось перезапустить sing-box.${NC}"
-                fi
-            else
-                echo -e "${RED}Ошибка! Возврат к предыдущему режиму.${NC}"
-                CURRENT_OUTBOUND_MODE="warp"
-                save_slave_config
-                if [ -f "$SINGBOX_TEMPLATE" ]; then
-                    rebuild_config "$SINGBOX_TEMPLATE" >/dev/null 2>&1 || true
-                    restart_singbox_full >/dev/null 2>&1 || true
-                fi
-            fi
-            sleep 2
+            # select_wg_config сам сохраняет параметры — вызываем его внутри
+            # apply_outbound_mode, чтобы отмена и ошибка откатывались целиком
+            _menu_apply_mode wg WG select_wg_config
             ;;
 
         0) return ;;

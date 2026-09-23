@@ -28,6 +28,11 @@ WARP_SYSTEM_CONF="/etc/wireguard/warp.conf"
 LOCK_FILE="/var/run/warper.lock"
 WG_TEMPLATE="$WARPER_DIR/config-wg.json.template"
 WG_MODE_FILE="$WARPER_DIR/wg_mode.conf"
+# Режимы vless / hy2 / openvpn: результат разбора ссылки или .ovpn —
+# готовый объект sing-box плюс сервер, имя и источник. Отдельно от
+# slave_mode.conf, который save_slave_config перезаписывает целиком.
+OUTBOUND_JSON="$WARPER_DIR/outbound.json"
+PROXY_TEMPLATE="$WARPER_DIR/config-proxy.json.template"
 IP_RANGES_FILE="$WARPER_DIR/ip-ranges.txt"
 AZ_WARPER_INCLUDE_IPS="/root/antizapret/config/warper-include-ips.txt"
 WEB_DIR="$WARPER_DIR/web"
@@ -132,7 +137,7 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         return 1
     }
 
-    for _libfile in utils config domains domains-resolve singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+    for _libfile in utils config domains domains-resolve singbox outbound kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
@@ -152,6 +157,7 @@ for _lib in \
     "$WARPER_LIB/domains.sh" \
     "$WARPER_LIB/domains-resolve.sh" \
     "$WARPER_LIB/singbox.sh" \
+    "$WARPER_LIB/outbound.sh" \
     "$WARPER_LIB/kresd.sh" \
     "$WARPER_LIB/warp-keys.sh" \
     "$WARPER_LIB/wg.sh" \
@@ -233,6 +239,7 @@ fi
 
 # ===== Загрузка настроек =====
 load_config
+load_slave_config
 load_wg_config
 
 # ===== CLI-обработка =====
@@ -307,10 +314,15 @@ case "${1:-}" in
             warp)  cli_mode_warp "${3:-}"; exit $? ;;
             slave) cli_mode_slave "${3:-}" "${4:-}" "${5:-}"; exit $? ;;
             wg)    cli_mode_wg "${3:-}"; exit $? ;;
+            vless|hy2|openvpn)
+                cli_mode_proxy "$2" "${3:-}" "${4:-}" "${5:-}"; exit $? ;;
             *)
-                echo "Использование: warper mode warp [system|wgcf|root|generate]"
-                echo "               warper mode slave SERVER PORT PASSWORD"
-                echo "               warper mode wg /path/to.conf"
+                echo "Использование: warper mode warp [system|wgcf|root|generate]" >&2
+                echo "               warper mode slave СЕРВЕР ПОРТ ПАРОЛЬ | 'ss://...'" >&2
+                echo "               warper mode wg /path/to.conf" >&2
+                echo "               warper mode vless 'vless://...'" >&2
+                echo "               warper mode hy2 'hy2://...'" >&2
+                echo "               warper mode openvpn /path/file.ovpn [ЛОГИН ПАРОЛЬ]" >&2
                 exit 1
                 ;;
         esac
@@ -369,6 +381,13 @@ case "${1:-}" in
         esac
         ;;
     subnets)     cli_subnets; exit $? ;;
+    outbound)    cli_outbound; exit $? ;;
+    ovpnconfig)
+        case "${2:-}" in
+            list) cli_ovpn_list; exit 0 ;;
+            *)    echo "Использование: warper ovpnconfig list" >&2; exit 1 ;;
+        esac
+        ;;
     listupdate)  cli_list_update; exit $? ;;
     uninstall)   cli_uninstall "${2:-}"; exit $? ;;
     web)

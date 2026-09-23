@@ -273,10 +273,7 @@ rebuild_config_wg() {
         sed -i '/"pre_shared_key"/d' "$tmp"
     fi
 
-    mv "$tmp" "$SINGBOX_CONF"
-    chmod 600 "$SINGBOX_CONF"
-
-    if ! validate_singbox_config; then
+    if ! install_singbox_config "$tmp"; then
         echo -e "${RED}Ошибка валидации конфига WG!${NC}"
         return 1
     fi

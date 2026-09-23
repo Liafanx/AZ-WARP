@@ -1,0 +1,38 @@
+{
+  "log": { "level": "info" },
+  "dns": {
+    "servers": [
+      { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "proxy" },
+      { "tag": "local", "type": "udp", "server": "8.8.8.8" },
+      { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "__SUBNET__" }
+    ],
+    "rules": [
+      { "query_type": ["A"], "server": "fakeip-dns" }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "mtu": 1420, "auto_route": false, "strict_route": false, "stack": "system", "dns_mode": "disabled" }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "inbound": "dns-in", "action": "hijack-dns" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "inbound": "tun-in", "outbound": "proxy" }
+    ],
+    "default_domain_resolver": "local",
+    "auto_detect_interface": true,
+    "final": "direct"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/var/lib/sing-box/cache.db",
+      "store_fakeip": true
+    }
+  }
+}
