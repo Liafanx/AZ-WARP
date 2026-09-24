@@ -67,8 +67,12 @@ def set_autostart(enabled: bool) -> WarperResult:
 
 
 def get_port() -> WarperResult:
-    """Внешний порт панели."""
-    return run_warper("web", "port")
+    """Внешний порт панели: message — строка, data — int (None, если не задан)."""
+    result = run_warper("web", "port")
+    if result.ok:
+        port = result.message.strip()
+        result.data = int(port) if port.isdigit() else None
+    return result
 
 
 def set_port(port: int) -> WarperResult:

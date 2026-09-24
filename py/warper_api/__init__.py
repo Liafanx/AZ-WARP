@@ -22,10 +22,10 @@ WARPER API — Python-интерфейс для управления WARPER (AZ-
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from ._result import WarperResult
+from ._runner import read_version
 from . import domains
 from . import ip_ranges
 from . import catalog
@@ -36,16 +36,7 @@ from . import status
 from . import updates
 from . import web
 
-__version__: str = "0.0.0"
-
-# Читаем версию из файла WARPER
-_VERSION_FILE = "/root/warper/version"
-if os.path.exists(_VERSION_FILE):
-    try:
-        with open(_VERSION_FILE, "r") as _f:
-            __version__ = _f.read().strip()
-    except OSError:
-        pass
+__version__: str = read_version()
 
 
 class WarperAPI:

@@ -140,13 +140,16 @@ def version() -> WarperResult:
     Установленная версия sing-box.
 
     Returns:
-        WarperResult, где message — строка версии (например "1.14.1").
+        WarperResult, где message и data — строка версии (например "1.14.1").
 
     Example:
         >>> version()
         WarperResult(OK, '1.14.1')
     """
-    return run_warper("singbox", "version")
+    result = run_warper("singbox", "version")
+    if result.ok:
+        result.data = result.message.strip()
+    return result
 
 
 def upgrade(target: str | None = None, timeout: int = 300) -> WarperResult:

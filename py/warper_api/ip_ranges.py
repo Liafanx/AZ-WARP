@@ -251,9 +251,9 @@ def save_ip_ranges_text(text: str) -> WarperResult:
     content = text if text.endswith("\n") else text + "\n"
 
     try:
-        from ._runner import WARPER_BIN
+        from ._runner import warper_command
         proc = subprocess.run(
-            [WARPER_BIN, "ipranges", "save"],
+            warper_command("ipranges", "save"),
             input=content,
             capture_output=True,
             text=True,
@@ -369,9 +369,13 @@ def get_auto_resolve() -> WarperResult:
     Состояние авто-резолва.
 
     Returns:
-        WarperResult, где message — "enabled" или "disabled".
+        WarperResult, где message — "enabled" или "disabled",
+        data — True / False.
     """
-    return run_warper("resolve", "status")
+    result = run_warper("resolve", "status")
+    if result.ok:
+        result.data = result.message.strip() == "enabled"
+    return result
 
 
 def clear_ip_routes(timeout: int = 120) -> WarperResult:
