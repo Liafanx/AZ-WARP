@@ -78,6 +78,8 @@ print(w.get_traffic_today())      # "↑ 500 MB ↓ 1.2 GB"
 w.set_mtu(1400)
 w.set_log_level("debug")
 w.set_mode_warp("system")
+w.set_mode_vless("vless://…")   # ссылка от `warperslave link` или стороннего сервера
+print(w.get_outbound().data)    # {'mode': 'vless', 'server': '…', 'port': '…', …}
 
 # Sing-box
 w.singbox_restart()
@@ -213,9 +215,13 @@ AntiZapret отдают чистые CIDR.
 | Метод | Описание |
 |---|---|
 | `set_mode_warp(key_source)` | Режим WARP (`system` / `wgcf` / `root` / `generate`) |
-| `set_mode_slave(server, port, password)` | Режим Slave |
+| `set_mode_slave(server, port, password)` | Режим Slave; вместо `server` можно передать ссылку `ss://…` без порта и пароля |
 | `set_mode_wg(conf_path)` | Режим WireGuard |
-| `get_mode()` | Текущий режим |
+| `set_mode_vless(link)` | Режим VLESS / VLESS+Reality по ссылке `vless://…` |
+| `set_mode_hy2(link)` | Режим Hysteria2 по ссылке `hy2://…` или `hysteria2://…` |
+| `set_mode_openvpn(conf_path, username=None, password=None)` | Режим OpenVPN по файлу `.ovpn` на сервере; логин и пароль — для `auth-user-pass` |
+| `get_mode()` | Текущий режим: `warp` / `slave` / `wg` / `vless` / `hy2` / `openvpn` |
+| `get_outbound()` | Текущий режим и сервер без секретов (`data=dict`: mode, label, protocol, server, port, ports, name, transport) |
 | `set_subnet(subnet)` | Изменить fake-подсеть |
 | `set_mtu(mtu)` | MTU (1280-1500) |
 | `get_mtu()` | Текущий MTU |
@@ -225,6 +231,7 @@ AntiZapret отдают чистые CIDR.
 | `set_fullvpn(enable)` | FullVPN WARP-резолвинг |
 | `list_warp_keys()` | Доступные WARP-ключи |
 | `list_wg_configs()` | Доступные WG-конфиги |
+| `list_ovpn_configs()` | Файлы `.ovpn` в `/root/` и `/root/warper/` (`data=list[dict]`: path, server) |
 
 ### Веб-панель
 

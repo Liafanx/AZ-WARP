@@ -167,10 +167,41 @@ sing-box check -c /etc/sing-box/config.json
 
 ```bash
 # На донор-сервере:
-ss -tlnp | grep 8444
+ss -tulnp | grep 8444
 iptables -L INPUT -n | grep 8444
 warperslave doctor
 ```
+
+- Hysteria2 работает по **UDP** — порт должен быть открыт для UDP и у
+  хостера (облачный firewall).
+- После `warperslave key`, `port`, `proto` или `host` ссылка меняется —
+  выполните на master новую команду из `warperslave link`.
+- VLESS+Reality: сайт из SNI должен отвечать по TLS 1.3 с донора
+  (`warperslave doctor` это проверяет). Если нет — `warperslave proto vless другой.сайт`.
+
+### VLESS / Hysteria2: режим не включается
+
+Ссылка проверяется до применения, текст ошибки указывает на поле. Частые причины:
+- неполная ссылка при копировании (обрезан `pbk=` или `sid=`); ссылку берите
+  в одинарные кавычки: `warper mode vless '…'`;
+- `sid` длиннее 16 hex-символов или нечётной длины;
+- `flow=xtls-rprx-vision` вместе с транспортом, отличным от tcp.
+
+Предупреждение `insecure=1 без пиннинга` означает, что сертификат Hysteria2 не
+проверяется. Для своего донора пиннинг добавляется автоматически.
+
+### OpenVPN: конфиг не принимается
+
+sing-box реализует OpenVPN сам, поэтому поддерживается не всё:
+- только `dev tun` — `dev tap` не поддерживается;
+- только TLS-режим — `secret` (статический ключ), `pkcs12`, `http-proxy`,
+  `socks-proxy` и `static-challenge` не поддерживаются;
+- `auth-user-pass` — логин и пароль передаются отдельно:
+  `warper mode openvpn /root/server.ovpn ЛОГИН ПАРОЛЬ`;
+- имена шифров и `tls-auth`/`tls-crypt`/`tls-crypt-v2`, сертификаты в
+  `<ca>…</ca>` или файлами рядом — разбираются автоматически.
+
+Если соединение не поднимается: `journalctl -u sing-box -n 50`.
 
 ### Cloudflare заблокировал регистрацию WARP
 

@@ -2,7 +2,7 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
-## [1.5.0] - 2026-09-16
+## [1.5.0] - 2026-09-24
 
 ### Fixed
 - Найдены и устранены две независимые причины отказов «раз в сутки»:
@@ -46,6 +46,12 @@
 - Python API: `singbox._action` дёргал `systemctl` напрямую, минуя
   переприменение правил `FORWARD` и маршрутов; `get/save_user_domains_text`
   правили `domains.txt` в обход CLI. Оба переведены на CLI.
+- `warper config get OUTBOUND_MODE` всегда возвращал `warp`: при старте не
+  загружался `slave_mode.conf`. Из-за этого врал `get_mode()` в Python API.
+- `rebuild_config` молча собирал WARP-конфиг для любого неизвестного режима.
+- Смена режима писала конфиг сразу в `/etc/sing-box/config.json` и
+  проверяла уже после записи — при ошибке sing-box оставался с битым
+  конфигом, а меню откатывало режим всегда на WARP, а не на предыдущий.
 
 ### Changed
 - sing-box обновлён до **1.14.1**.
@@ -71,6 +77,13 @@
   клиент подделает `X-Forwarded-For` и обойдёт бан по IP.
 - Неизвестная команда `warper` и `warperslave` больше не открывает меню
   молча, а печатает ошибку и возвращает код 1.
+- Смена любого режима атомарная: конфиг собирается во временный файл,
+  проходит `sing-box check` и только потом заменяет рабочий. При ошибке
+  возвращаются прежние режим и конфиг — в CLI, меню, панели и API.
+- `warperslave` собирает конфиг через `jq` из `slave.conf` вместо двух
+  heredoc'ов. Шаблоны `config-slave-direct/warp.json.template` удалены,
+  `install-slave.sh` вызывает `warperslave rebuild` — логика в одном месте.
+  Установки до 1.1.0 пересобираются один раз при первом запуске.
 - README: раздел команд переписан и разбит по темам. Исправлены удаление
   панели (`W` → `10`, было `9`) и противоречие про FullVPN.
 
@@ -93,6 +106,34 @@
   - `domains list|save|edit` — симметрия с `ipranges list|save`
   - `iproutes clear`, `subnets`, `listupdate`, `uninstall --yes`
   - `config set КЛЮЧ ЗНАЧЕНИЕ`
+- Режимы **VLESS**, **Hysteria2** и **OpenVPN** — выход через сторонний
+  сервер:
+  - `warper mode vless 'vless://…'` — Reality, транспорты ws/grpc/
+    httpupgrade/http, `flow=xtls-rprx-vision`;
+  - `warper mode hy2 'hy2://…'` — obfs salamander, диапазоны портов,
+    пиннинг сертификата (`pinSHA256`, `spki`);
+  - `warper mode openvpn файл.ovpn [ЛОГИН ПАРОЛЬ]` — `.ovpn` разбирается в
+    endpoint sing-box: инлайн-сертификаты, `tls-auth`/`tls-crypt`,
+    несколько `remote`. `dev tap` и статический ключ не поддерживаются
+    sing-box — об этом сообщается сразу.
+  - Разбор и проверка ссылок — `lib/outbound-parse.py`: sing-box `check` не
+    ловит пустой UUID или битый ключ Reality, а `short_id` длиннее 16
+    символов роняет его с panic.
+  - `warper mode slave 'ss://…'`, `warper outbound`, `warper ovpnconfig list`.
+  - Пункты в меню, карточки и загрузка `.ovpn` в веб-панели, режим в
+    `status`, `doctor` и `status json` (объект `outbound` без секретов).
+- warperslave **1.1.0**: вход по **VLESS+Reality** и **Hysteria2** помимо
+  Shadowsocks. Reality устойчивее к DPI — канал выглядит как TLS к
+  выбранному сайту.
+  - `warperslave proto ss|vless|hy2 [SNI]`, `link [--command]`,
+    `host [АДРЕС|auto]`, `rebuild`; `key` перевыпускает ключи текущего
+    протокола, `port` принимает порт аргументом.
+  - `warperslave link` печатает стандартную ссылку и готовую команду для
+    master — тот подключается к своему донору так же, как к стороннему
+    серверу. Для Hysteria2 в ссылке передаётся хэш ключа сертификата.
+  - Установщик спрашивает протокол и SNI (с проверкой TLS 1.3) и в конце
+    печатает команду для master. `doctor` проверяет порт по TCP/UDP в
+    зависимости от протокола, SNI и сертификат Hysteria2.
 - Новое в `warperslave`: `singbox version|upgrade`, `restart`,
   `loglevel [УРОВЕНЬ]`, `mtu [ЗНАЧЕНИЕ]`, `showkey`, `logs [N]`, `version`.
 - Каталог доменов был доступен только из CLI и веб-панели — добавлен
@@ -105,7 +146,9 @@
 - Python API: модуль `web`, `resync`, `resolve_sync`, `resolve_clean`,
   `set/get_auto_resolve`, `singbox_status`, `singbox_version`,
   `singbox_upgrade`, `clear_ip_routes`, `get_subnets`, `config_get`,
-  `config_set`, `update_lists`. Добавлены `get_mtu` и `get_log_level` —
+  `config_set`, `update_lists`, `set_mode_vless`, `set_mode_hy2`,
+  `set_mode_openvpn`, `list_ovpn_configs`, `get_outbound`;
+  `set_mode_slave` принимает ссылку `ss://`. Добавлены `get_mtu` и `get_log_level` —
   они были задокументированы, но в фасаде отсутствовали (`AttributeError`).
 
 ## [1.4.7-1.4.8] - 2026-08-28

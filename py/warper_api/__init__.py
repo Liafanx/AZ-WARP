@@ -549,7 +549,7 @@ class WarperAPI:
         return settings.set_mode_wg(conf_path)
 
     def get_mode(self) -> str:
-        """Текущий режим маршрутизации: 'warp' | 'slave' | 'wg'."""
+        """Текущий режим маршрутизации: 'warp' | 'slave' | 'wg' | 'vless' | 'hy2' | 'openvpn'."""
         return settings.get_mode()
 
     def set_subnet(self, subnet: str) -> WarperResult:

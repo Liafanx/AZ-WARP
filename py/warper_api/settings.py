@@ -107,7 +107,7 @@ def get_mode() -> str:
     Текущий режим маршрутизации.
 
     Returns:
-        'warp' | 'slave' | 'wg' | 'unknown'.
+        'warp' | 'slave' | 'wg' | 'vless' | 'hy2' | 'openvpn' | 'unknown'.
 
     Example:
         >>> get_mode()

@@ -152,9 +152,9 @@ master пиннит его вместо проверки CA.
 
 ## Управление WARP-ключами
 
-Источник выбирается при установке или командой `warper mode warp system|wgcf`
-и хранится в `WARP_KEY_SOURCE`:
-- `wgcf` (по умолчанию) — ключи из текущего config.json, `/root/warper/wgcf/wgcf-profile.conf`
+Источник выбирается при установке или командой
+`warper mode warp system|wgcf|root|generate` и хранится в `WARP_KEY_SOURCE`:
+- `local` (по умолчанию) — ключи из текущего config.json, `/root/warper/wgcf/wgcf-profile.conf`
   или `/root/wgcf-profile.conf`;
 - `system` — системный конфиг AntiZapret: `/etc/wireguard/warp-vpn.conf`,
   `warp-antizapret.conf` или `warp.conf` (только с ключом Cloudflare).

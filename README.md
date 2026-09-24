@@ -1,6 +1,6 @@
 # 🚀 WARPER для AntiZapret VPN
 
-Точечная маршрутизация сервисов вроде **Gemini**, **ChatGPT** и других доменов и IPv4-подсетей (CIDR) через **Cloudflare WARP**, **внешний донор-сервер** или **собственное WireGuard-соединение** на сервере с **AntiZapret VPN**.
+Точечная маршрутизация сервисов вроде **Gemini**, **ChatGPT** и других доменов и IPv4-подсетей (CIDR) через **Cloudflare WARP**, **внешний донор-сервер**, **собственное WireGuard-соединение** или сторонний сервер **VLESS+Reality / Hysteria2 / OpenVPN** на сервере с **AntiZapret VPN**.
 
 Основной проект AntiZapret VPN: https://github.com/GubernievS/AntiZapret-VPN
 
@@ -56,7 +56,7 @@ WARPER позволяет **точечно направлять только н�
 1. Домен попадает в список маршрутизации
 2. `kresd` (только для AntiZapret-клиентов) отдаёт для него **fake-ip** из подсети `10.224.0.0/16 (по умолчанию)`
 3. Трафик к fake-ip перехватывает `sing-box`
-4. `sing-box` отправляет его в **WARP-туннель**, на **донор-сервер** или через **WG-соединение**
+4. `sing-box` отправляет его в **WARP-туннель**, на **донор-сервер**, через **WG-соединение** или на сторонний сервер (**VLESS / Hysteria2 / OpenVPN**)
 5. Сайт видит IP Cloudflare/донора/WG-сервера, а не IP вашего VPS
 
 ### Маршрутизация по IP-подсетям
@@ -88,11 +88,18 @@ WARPER позволяет **точечно направлять только н�
 
 ```
 Сервер 1 (WARPER)                    Сервер 2 (WARPERSLAVE)
-Клиент → AntiZapret → kresd/ip route →        → sing-box (ss-in) →
-  fake-ip → sing-box (ss-out) ──────→   direct / WARP → Интернет
+Клиент → AntiZapret → kresd/ip route →        → sing-box (вход) →
+  fake-ip → sing-box ───────────────→   direct / WARP → Интернет
+          SS 2022 / VLESS+Reality / Hysteria2
 ```
 
-Трафик идёт через второй сервер (донор) по зашифрованному Shadowsocks-каналу. На доноре трафик может выходить напрямую (Direct) или через WARP.
+Трафик идёт через второй сервер (донор). Канал master → донор — Shadowsocks 2022,
+VLESS+Reality (рекомендуется: выглядит как обычный TLS к выбранному сайту) или
+Hysteria2 (QUIC). На доноре трафик может выходить напрямую (Direct) или через WARP.
+
+Донор выдаёт готовую команду для master: `warperslave link`. Для VLESS и
+Hysteria2 master переключается в режим `vless` / `hy2` — так же, как на
+сторонний сервер.
 
 **Когда нужен Slave:**
 - IP основного сервера заблокирован сервисом
@@ -111,6 +118,23 @@ WARPER позволяет **точечно направлять только н�
 - Есть свой WireGuard VPN-сервер
 - Нужен выход через конкретный IP без Cloudflare
 - WARP не подходит, донор-сервер не нужен
+
+### Режимы VLESS, Hysteria2, OpenVPN
+
+```
+Клиент → AntiZapret → kresd/ip route → fake-ip → sing-box → VLESS / Hysteria2 / OpenVPN → Интернет
+```
+
+Выход через любой сторонний сервер или свой донор:
+- **VLESS** (в том числе Reality, транспорты ws/grpc/httpupgrade/http) — по
+  ссылке `vless://…`;
+- **Hysteria2** — по ссылке `hy2://…` или `hysteria2://…` (obfs salamander,
+  диапазоны портов, пиннинг сертификата `pinSHA256`);
+- **OpenVPN** — по файлу `.ovpn` (`dev tun`, инлайн-сертификаты, `tls-auth`,
+  `tls-crypt`, логин/пароль для `auth-user-pass`).
+
+Ссылка или файл проверяются до применения: при ошибке режим и конфиг остаются
+прежними.
 
 ### Совместимость со встроенным WARP AntiZapret
 
@@ -163,7 +187,7 @@ WARPER умеет применять патч для `kresd@2` (FullVPN-клие
 | **ОС** | Ubuntu 20.04+, Debian 10+ |
 | **Архитектура** | x86_64, aarch64, armv7l |
 | **Права** | root |
-| **Обязательно** | Открытый порт (по умолчанию 8444) |
+| **Обязательно** | Открытый порт (по умолчанию 8444): TCP для SS и VLESS, UDP для Hysteria2 |
 
 ---
 
@@ -206,8 +230,8 @@ WARPER включает опциональную **веб-панель** — б�
 
 - Управление доменами и IP-подсетями (с поддержкой комментариев)
 - Включение/отключение WARPER, sing-box
-- Переключение режимов WARP / Slave / WG прямо из браузера
-- Загрузка WG-конфигов через drag & drop
+- Переключение режимов WARP / Slave / WG / VLESS / Hysteria2 / OpenVPN прямо из браузера
+- Загрузка WG- и OpenVPN-конфигов через drag & drop, вставка ссылок vless:// hy2:// ss://
 - Управление WARP-ключами (выбор источника, генерация)
 - Все настройки: log level, MTU, fake-подсеть, FullVPN-резолвинг, режим IP-маршрутов
 - Просмотр логов sing-box в реальном времени с фильтром
@@ -337,28 +361,31 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install-slave.
 
 Установщик спросит:
 - **Режим**: Direct (трафик через IP донора) или WARP (через Cloudflare)
+- **Протокол**: Shadowsocks 2022, VLESS+Reality (рекомендуется) или Hysteria2
+- **SNI** для Reality: сайт с TLS 1.3, под который маскируется канал (по умолчанию `www.microsoft.com`)
 - **Порт**: по умолчанию 8444
-- **Ключ Shadowsocks**: сгенерировать новый или ввести существующий
+- **Ключ Shadowsocks** (только для SS): сгенерировать новый или ввести существующий
 
-После установки будут показаны данные для настройки основного сервера:
-
-```
-IP:    <IPv4 донор-сервера>
-Порт:  8444
-Ключ:  <ключ Shadowsocks>
-```
+Ключи VLESS/Reality и Hysteria2 генерируются автоматически. В конце установщик
+печатает команду для основного сервера.
 
 ### Подключение WARPER к донору
 
-На основном сервере:
+На доноре:
 
 ```bash
-warper
+warperslave link
 ```
 
-→ `Настройки (9)` → `Режим маршрутизации (7)` → `Slave (2)`
+Выполните напечатанную команду на основном сервере, например:
 
-Введите IP, порт и ключ донор-сервера.
+```bash
+warper mode vless 'vless://…@203.0.113.10:8444?security=reality&…#warperslave'
+```
+
+То же можно сделать в меню `warper` → `Настройки (9)` → `Режим маршрутизации (7)`
+или в веб-панели — вставив ссылку. Для Shadowsocks по-прежнему можно ввести
+IP, порт и ключ вручную.
 
 ### Управление донором
 
@@ -366,6 +393,8 @@ warper
 warperslave          # интерактивное меню
 warperslave status   # статус
 warperslave switch   # переключить Direct ↔ WARP
+warperslave proto vless  # сменить протокол: ss | vless | hy2
+warperslave link     # ссылка и команда для master
 warperslave doctor   # диагностика
 warperslave update   # обновление
 ```
@@ -460,7 +489,13 @@ warper mode warp                # WARP с текущими ключами
 warper mode warp system         # взять ключи AntiZapret
 warper mode warp generate       # зарегистрировать новый WARP-ключ
 warper mode slave СЕРВЕР ПОРТ ПАРОЛЬ
+warper mode slave 'ss://…'      # Shadowsocks-ссылка донора
 warper mode wg /root/proton.conf
+warper mode vless 'vless://…'
+warper mode hy2 'hy2://…'
+warper mode openvpn /root/server.ovpn [ЛОГИН ПАРОЛЬ]
+warper outbound                 # текущий режим и сервер без секретов
+warper ovpnconfig list          # найденные .ovpn
 warper warpkey list             # доступные источники ключей
 warper warpkey generate         # сгенерировать новый ключ
 warper wgconfig list            # найденные WG-конфиги
@@ -571,8 +606,13 @@ warper catalog refresh         # обновить локальный кэш ка
 warperslave                    # главное меню
 warperslave status             # статус
 warperslave switch             # переключить режим Direct ↔ WARP
-warperslave port               # изменить порт
-warperslave key                # изменить ключ Shadowsocks
+warperslave proto ss|vless|hy2 [SNI]  # протокол подключения master
+warperslave link               # ссылка и команда для master
+warperslave link --command     # только команда для master
+warperslave host example.com   # адрес донора в ссылке (auto — IP)
+warperslave rebuild            # пересобрать конфиг из slave.conf
+warperslave port [ПОРТ]        # изменить порт
+warperslave key                # перевыпустить ключи текущего протокола
 warperslave showkey            # показать полный SS-ключ
 warperslave restart            # перезапустить службу
 warperslave logs 100           # логи службы
@@ -776,12 +816,12 @@ w.add_domain("example.com")
 
 - Работает только с **IPv4**
 - Ожидается стандартная структура AntiZapret в `/root/antizapret`
-- **Не работает** при `ANTIZAPRET_WARP=y`
-- **Совместим** с `VPN_WARP=y`
+- Совместим со всеми значениями `ANTIZAPRET_WARP` и `VPN_WARP` (см. [совместимость](#modes))
 - При переключении `VPN_WARP` нужен перезапуск: `down.sh && up.sh` (или reboot сервера)
 - Используются `iptables`; nft-only конфигурации могут требовать адаптации
 - `sing-box` работает в userspace — при высокой нагрузке CPU может быть заметным
 - Для режима WG: PresharedKey обязателен — конфиги без него не принимаются
+- OpenVPN: поддерживаются только `dev tun` и TLS-режим; `dev tap`, статический ключ (`secret`), `pkcs12` и прокси в `.ovpn` не поддерживаются sing-box
 - IP-маршруты не переживают перезагрузку `sing-box` автоматически — WARPER пересинхронизирует их при каждом restart через `resync_ip_routes_if_needed`
 - При `RESTRICT_FORWARD=y` WARPER автоматически добавляет CIDR в ipset `antizapret-forward`, но эти записи будут перезаписаны при следующем `doall.sh` — используйте экспорт в AntiZapret для постоянного эффекта
 - Режим "Весь трафик сервера" помечен как Beta — поведение зависит от конфигурации `VPN_WARP` и наличия table 13335, в теории туда могут упасть также запросы от других сервисов на сервере. (Например telemt при добавлении CIDR Telegram в warper)

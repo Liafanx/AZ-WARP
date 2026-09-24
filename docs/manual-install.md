@@ -97,9 +97,13 @@ chmod 600 /root/warper/slave_mode.conf
 Скопируйте их в соответствующие директории, либо используйте автоматический установщик.
 
 ```bash
-chmod +x /root/warper/warper.sh
+chmod +x /root/warper/warper.sh /root/warper/lib/outbound-parse.py
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
 ```
+
+Модуль `lib/outbound-parse.py` нужен режимам VLESS, Hysteria2 и OpenVPN и
+требует `python3`. Переключиться на них можно после установки:
+`warper mode vless|hy2 'ссылка'` или `warper mode openvpn файл.ovpn`.
 
 Создайте warper-autopatch.service:
 
