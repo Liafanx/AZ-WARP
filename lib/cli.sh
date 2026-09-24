@@ -644,6 +644,8 @@ cli_status_json() {
     if version_gt "$remote_ver" "$LOCAL_VER"; then
         update_avail="true"
     fi
+    # Обновление старым обновлятором не завершено — панель предложит повторить
+    [ "$(cat "$UPDATE_MARKER" 2>/dev/null)" = "$LOCAL_VER" ] || update_avail="true"
 
     jq -n \
         --arg version "$LOCAL_VER" \

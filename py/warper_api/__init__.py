@@ -34,7 +34,12 @@ from . import settings
 from . import traffic
 from . import status
 from . import updates
-from . import web
+try:
+    from . import web
+except ImportError:
+    # Обновлятор 1.4.x не знает про web.py — до завершения обновления
+    # (`warper update`) методы веб-панели недоступны, остальное работает
+    web = None  # type: ignore[assignment]
 
 __version__: str = read_version()
 

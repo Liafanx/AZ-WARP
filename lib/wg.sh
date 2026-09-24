@@ -255,8 +255,6 @@ rebuild_config_wg() {
 
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
-        -e "s|__WG_MTU__|$wg_mtu|g" \
-        -e "s|__WG_DNS__|$wg_dns|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         -e "s|__WG_ADDRESS__|$WG_ADDRESS|g" \
         -e "s|__WG_PRIVATE_KEY__|$WG_PRIVATE_KEY|g" \
@@ -272,6 +270,20 @@ rebuild_config_wg() {
     if [ -z "$WG_PRESHARED_KEY" ]; then
         sed -i '/"pre_shared_key"/d' "$tmp"
     fi
+
+    # MTU и DNS ставятся через jq: шаблон должен оставаться валидным JSON
+    # для обновлятора 1.4.x, который про эти поля не знает
+    local wg_tmp
+    wg_tmp=$(mktemp)
+    if ! jq --argjson mtu "$wg_mtu" --arg dns "$wg_dns" '
+            .endpoints[0].mtu = $mtu
+            | .dns.servers |= map(if .tag == "real-dns" then .server = $dns else . end)' \
+            "$tmp" > "$wg_tmp"; then
+        rm -f "$tmp" "$wg_tmp"
+        echo -e "${RED}Некорректные MTU или DNS WG: $wg_mtu / $wg_dns${NC}" >&2
+        return 1
+    fi
+    mv -f "$wg_tmp" "$tmp"
 
     if ! install_singbox_config "$tmp"; then
         echo -e "${RED}Ошибка валидации конфига WG!${NC}"

@@ -34,6 +34,13 @@ rollback_warper_update() {
     restore_if_exists "$backupdir/config.json" "$SINGBOX_CONF"
     restore_if_exists "$backupdir/domains.txt" "$MASTER_FILE"
 
+    # Бинарник sing-box, если обновление успело его заменить
+    if [ -f "$backupdir/sing-box.bin" ] && [ -f "$backupdir/sing-box.path" ]; then
+        install -m 755 "$backupdir/sing-box.bin" "$(cat "$backupdir/sing-box.path")" || true
+        systemctl is-active --quiet sing-box-slave 2>/dev/null \
+            && systemctl restart sing-box-slave >/dev/null 2>&1
+    fi
+
     # Откатываем модули
     if [ -d "$backupdir/lib" ]; then
         rm -rf "$WARPER_DIR/lib"
@@ -404,6 +411,41 @@ update_warper() {
         fi
     fi
 
+    # ===== sing-box до версии нового warper.sh =====
+    # Обновлятор 1.4.x бинарник не трогал: берём версию из скачанного
+    # warper.sh, а не из памяти — иначе новая версия не доедет.
+    local new_sb cur_sb sb_bin
+    new_sb=$(grep -m1 '^SB_VERSION=' "$WARPER_DIR/warper.sh" | cut -d'"' -f2)
+    cur_sb=$(get_singbox_version || echo "")
+    if [ -n "$new_sb" ] && [ "$cur_sb" != "$new_sb" ]; then
+        echo -e "${CYAN}Обновление sing-box ${cur_sb:-—} → ${new_sb}...${NC}"
+        sb_bin=$(command -v sing-box || true)
+        if [ -n "$sb_bin" ]; then
+            cp -a "$sb_bin" "$backupdir/sing-box.bin"
+            echo "$sb_bin" > "$backupdir/sing-box.path"
+        fi
+        if ! curl -fsSL https://sing-box.app/install.sh | bash -s -- --version "$new_sb" >/dev/null 2>&1 \
+            || [ "$(get_singbox_version)" != "$new_sb" ]; then
+            echo -e "${RED}Не удалось установить sing-box $new_sb, откат.${NC}"
+            rollback_warper_update "$backupdir"
+            [ "$had_singbox" = true ] && systemctl restart sing-box >/dev/null 2>&1
+            rm -rf "$tmpdir" "$backupdir"; return 1
+        fi
+        template_changed="yes"
+    fi
+
+    # Конфиг, собранный обновлятором 1.4.x на sing-box 1.13, — без dns_mode
+    if [ "$template_changed" = "no" ] && jq -e \
+        '[.inbounds[] | select(.type == "tun" and .dns_mode == null)] | length > 0' \
+        "$SINGBOX_CONF" >/dev/null 2>&1; then
+        local probe
+        probe=$(mktemp)
+        cp "$SINGBOX_CONF" "$probe"
+        singbox_tun_compat "$probe"
+        cmp -s "$probe" "$SINGBOX_CONF" || template_changed="yes"
+        rm -f "$probe"
+    fi
+
     if [ "$template_changed" = "yes" ]; then
         echo -e "${CYAN}Пересборка config.json для режима $CURRENT_OUTBOUND_MODE...${NC}"
         if ! rebuild_config "$SINGBOX_TEMPLATE"; then
@@ -425,6 +467,10 @@ update_warper() {
                 rm -rf "$tmpdir" "$backupdir"; return 1
             fi
             echo -e "${GREEN}✓ sing-box перезапущен с новым конфигом${NC}"
+        fi
+        # Бинарник общий с донором на том же сервере
+        if [ -f "$backupdir/sing-box.bin" ] && systemctl is-active --quiet sing-box-slave 2>/dev/null; then
+            systemctl restart sing-box-slave >/dev/null 2>&1 || true
         fi
     else
         echo -e "${GREEN}✓ Шаблоны конфига не изменились — пересборка не требуется${NC}"
@@ -452,8 +498,13 @@ update_warper() {
         /usr/local/bin/warper ipsync >/dev/null 2>&1 || true
     fi
 
+    # Таймер resync и хук в custom-doall.sh появились в 1.5.0
+    systemctl enable --now warper-resync.timer >/dev/null 2>&1 || true
+    ensure_az_doall_hook
+
     rm -rf "$tmpdir" "$backupdir"
 
+    cat "$WARPER_DIR/version" > "$UPDATE_MARKER" 2>/dev/null || true
     echo -e "${GREEN}Утилита и списки успешно обновлены!${NC}"
 
     # ===== Обновление веб-панели если она установлена =====

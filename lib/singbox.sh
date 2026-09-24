@@ -52,6 +52,20 @@ resync_ip_routes_if_needed() {
 
 # ===== Пересборка конфигурации =====
 
+# sing-box 1.14 по умолчанию перехватывает DNS в tun и прописывает себя в
+# systemd-resolved — выключаем. В шаблонах этого поля нет: 1.13 его не
+# знает, а шаблоны собирает и обновлятор 1.4.x на старом sing-box.
+#   singbox_tun_compat ФАЙЛ
+singbox_tun_compat() {
+    local ver tmp
+    ver=$(get_singbox_version) || return 0
+    [ "$(printf '1.14.0\n%s\n' "$ver" | sort -V | head -n1)" = "1.14.0" ] || return 0
+    tmp=$(mktemp)
+    jq '.inbounds |= map(if .type == "tun" then .dns_mode = "disabled" else . end)' \
+        "$1" > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$1"
+}
+
 # Точка входа для пересборки config.json.
 # Определяет текущий режим (warp/slave/wg) и вызывает нужную функцию.
 # Проверяет собранный конфиг и атомарно ставит его на место.
@@ -59,6 +73,7 @@ resync_ip_routes_if_needed() {
 # config.json, и неудачная смена режима оставляла sing-box с битым конфигом.
 install_singbox_config() {
     local tmp="$1"
+    singbox_tun_compat "$tmp" || { rm -f "$tmp"; return 1; }
     if ! sing-box check -c "$tmp" >/dev/null 2>&1; then
         echo -e "${RED}Собранный конфиг не прошёл проверку sing-box:${NC}" >&2
         sing-box check -c "$tmp" 2>&1 | tail -n 3 >&2 || true

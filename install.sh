@@ -1010,8 +1010,6 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     wg_dns_value="${WG_INSTALL_DNS:-1.1.1.1}"
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
-        -e "s|__WG_MTU__|$wg_mtu_value|g" \
-        -e "s|__WG_DNS__|$wg_dns_value|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         -e "s|__WG_ADDRESS__|$WG_INSTALL_ADDRESS|g" \
         -e "s|__WG_PRIVATE_KEY__|$WG_INSTALL_PRIVATE_KEY|g" \
@@ -1027,7 +1025,11 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         sed -i "s|__WG_PRESHARED_KEY__|$WG_INSTALL_PRESHARED_KEY|g" "$tmp_wg"
     fi
 
-    mv "$tmp_wg" "$SINGBOX_CONF"
+    jq --argjson mtu "$wg_mtu_value" --arg dns "$wg_dns_value" '
+        .endpoints[0].mtu = $mtu
+        | .dns.servers |= map(if .tag == "real-dns" then .server = $dns else . end)' \
+        "$tmp_wg" > "$SINGBOX_CONF" || exit 1
+    rm -f "$tmp_wg"
 
     # Сохраняем WG-настройки
     {
@@ -1096,6 +1098,11 @@ else
     chmod 600 "$WARPER_DIR/slave_mode.conf"
 fi
 
+# sing-box 1.14 иначе перехватывает DNS в tun (в шаблонах поля нет —
+# их собирает и обновлятор 1.4.x на sing-box 1.13)
+tmp_conf=$(mktemp)
+jq '.inbounds |= map(if .type == "tun" then .dns_mode = "disabled" else . end)' \
+    "$SINGBOX_CONF" > "$tmp_conf" && mv -f "$tmp_conf" "$SINGBOX_CONF"
 chmod 600 "$SINGBOX_CONF"
 
 if ! validate_singbox_config; then
@@ -1202,6 +1209,7 @@ echo -e " - ${CYAN}Скачивание исполняемых файлов ут
 download_file "$REPO_URL/warper.sh" "$WARPER_DIR/warper.sh" "утилита warper.sh" || exit 1
 download_file "$REPO_URL/uninstaller.sh" "$WARPER_DIR/uninstaller.sh" "деинсталлятор uninstaller.sh" || exit 1
 download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" || exit 1
+cat "$WARPER_DIR/version" > "$WARPER_DIR/.update-complete"
 download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
 download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1

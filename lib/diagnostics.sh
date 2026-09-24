@@ -357,6 +357,11 @@ doctor() {
         fi
     }
 
+    if [ "$(cat "$UPDATE_MARKER" 2>/dev/null)" != "$LOCAL_VER" ]; then
+        echo -e " ${RED}✘${NC} Обновление до $LOCAL_VER не завершено — выполните: warper update"
+        failed=1
+    fi
+
     # WARP AntiZapret: режимы 2/3/4 совместимы, нужен лишь маршрут fake-подсети
     local az_mode vpn_mode
     az_mode=$(az_warp_mode ANTIZAPRET_WARP)

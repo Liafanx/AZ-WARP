@@ -149,6 +149,10 @@ master пиннит его вместо проверки CA.
 | templates/config-slave-master.json.template | WARPER в режиме Slave |
 | templates/config-wg.json.template | WARPER в режиме WG |
 | templates/config-proxy.json.template | WARPER в режимах VLESS / Hysteria2 / OpenVPN |
+| templates/config-slave-direct/warp.json.template | Не используются; нужны обновлятору warperslave 1.0.x |
+
+Шаблоны WARPER должны оставаться валидными для sing-box 1.13: их собирает
+и обновлятор 1.4.x. Поля новых версий (`dns_mode`) добавляются при сборке.
 
 ## Управление WARP-ключами
 
