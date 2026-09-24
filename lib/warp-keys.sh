@@ -424,16 +424,18 @@ manage_warp_keys() {
             "$SINGBOX_TEMPLATE" "config.json.template" || return 1
     fi
 
+    local tmp
+    tmp=$(mktemp)
     sed \
         -e "s|__WARP_ADDRESS__|$new_address|g" \
         -e "s|__WARP_PRIVATE_KEY__|$new_private_key|g" \
         -e "s|__SUBNET__|$SUBNET|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
-        "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
-    chmod 600 "$SINGBOX_CONF"
+        "$SINGBOX_TEMPLATE" > "$tmp"
 
-    if ! validate_singbox_config; then
-        echo -e "${RED}Ошибка валидации! Откат...${NC}"
+    if ! install_singbox_config "$tmp"; then
+        echo -e "${RED}Ошибка валидации, конфиг не изменён.${NC}"
+        sleep 2
         return 1
     fi
 
