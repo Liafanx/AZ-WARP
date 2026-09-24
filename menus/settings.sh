@@ -12,11 +12,12 @@
 # Поддерживает сохранённые подключения для Slave и WG.
 # Применяет режим через apply_outbound_mode и сообщает результат.
 #   _menu_apply_mode MODE НАЗВАНИЕ [SETTER [ARGS...]]
+# НАЗВАНИЕ оставлено для читаемости вызовов, итог печатает outbound_mode_label.
 _menu_apply_mode() {
-    local mode="$1" label="$2"; shift 2
+    local mode="$1"; shift 2
     echo -e "${YELLOW}Создание конфигурации...${NC}"
     if apply_outbound_mode "$mode" "$@"; then
-        echo -e "${GREEN}Режим ${label} активирован!${NC}"
+        echo -e "${GREEN}Режим активирован: $(outbound_mode_label)${NC}"
     else
         echo -e "${RED}Не удалось переключиться, прежний режим сохранён.${NC}"
     fi
@@ -35,6 +36,9 @@ switch_outbound_mode() {
     echo -e " ${GREEN}1.${NC} WARP  — трафик через Cloudflare WARP"
     echo -e " ${CYAN}2.${NC} Slave — донор-сервер по Shadowsocks"
     echo -e " ${CYAN}3.${NC} WG    — трафик через WireGuard-соединение"
+    echo -e " ${CYAN}4.${NC} VLESS — VLESS / VLESS+Reality по ссылке"
+    echo -e " ${CYAN}5.${NC} Hysteria2 — по ссылке hy2://"
+    echo -e " ${CYAN}6.${NC} OpenVPN — по файлу .ovpn"
     echo -e " ${CYAN}0.${NC} Назад"
     echo -e "${CYAN}================================================${NC}"
 
@@ -136,6 +140,66 @@ switch_outbound_mode() {
             _menu_apply_mode wg WG select_wg_config
             ;;
 
+        # ── VLESS / Hysteria2 ────────────────────────────────────────────
+        4|5)
+            local mode scheme
+            if [ "$mode_choice" = "4" ]; then mode=vless; scheme="vless://"
+            else mode=hy2; scheme="hy2://"; fi
+
+            echo -e "\n${CYAN}Подключение по ссылке ${scheme}${NC}"
+            echo -e "${YELLOW}Ссылку для своего донора выдаёт команда warperslave link.${NC}"
+            if [ "$CURRENT_OUTBOUND_MODE" = "$mode" ]; then
+                echo -e "Текущее: ${GREEN}$(outbound_mode_label)${NC}"
+                echo -e "Enter без ссылки — пересобрать текущее подключение."
+            fi
+            local link=""
+            read -r -p "Ссылка (Enter — отмена): " link
+            if [ -z "$link" ]; then
+                [ "$CURRENT_OUTBOUND_MODE" = "$mode" ] && _menu_apply_mode "$mode" "$mode"
+                return
+            fi
+            _menu_apply_mode "$mode" "$mode" _set_outbound "$mode" "$link"
+            ;;
+
+        # ── OpenVPN ──────────────────────────────────────────────────────
+        6)
+            echo -e "\n${CYAN}Подключение по файлу .ovpn${NC}"
+            echo -e "${YELLOW}Положите .ovpn в /root или /root/warper — он появится в списке.${NC}"
+            local -a files=()
+            local f i=1
+            while IFS= read -r f; do
+                files+=("$f")
+                echo -e " ${CYAN}${i}.${NC} $f"
+                i=$((i + 1))
+            done < <(scan_ovpn_configs)
+            [ ${#files[@]} -eq 0 ] && echo -e " ${YELLOW}Файлы .ovpn не найдены.${NC}"
+            echo -e " ${CYAN}P.${NC} Указать путь вручную"
+            echo -e " ${CYAN}0.${NC} Отмена"
+
+            local pick path=""
+            read -r -p "Выбор: " pick
+            case "${pick:-}" in
+                p|P) read -r -p "Путь к .ovpn: " path ;;
+                0|"") return ;;
+                *)
+                    if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#files[@]} )); then
+                        path="${files[$((pick - 1))]}"
+                    fi
+                    ;;
+            esac
+            if [ -z "$path" ] || [ ! -f "$path" ]; then
+                echo -e "${RED}Файл не найден.${NC}"; sleep 1; return
+            fi
+
+            local ov_user="" ov_pass=""
+            if ovpn_needs_auth "$path"; then
+                echo -e "${YELLOW}Конфиг требует логин и пароль (auth-user-pass).${NC}"
+                read -r -p "Логин: " ov_user
+                read -r -s -p "Пароль: " ov_pass; echo ""
+            fi
+            _menu_apply_mode openvpn OpenVPN _set_outbound openvpn "$path" "$ov_user" "$ov_pass"
+            ;;
+
         0) return ;;
 
         *)
@@ -176,12 +240,10 @@ settings_menu() {
         else GPT_STAT="${RED}ВЫКЛ${NC}"; fi
 
         load_wg_config
-        if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
-            MODE_STAT="${CYAN}Slave ($SLAVE_SERVER:$SLAVE_PORT)${NC}"
-        elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-            MODE_STAT="${CYAN}WG ($WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT)${NC}"
+        if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+            MODE_STAT="${GREEN}$(outbound_mode_label)${NC}"
         else
-            MODE_STAT="${GREEN}WARP (локальный)${NC}"
+            MODE_STAT="${CYAN}$(outbound_mode_label)${NC}"
         fi
 
         echo -e " ${CYAN}1.${NC} Автопатч DNS при перезагрузке: [$AP_STAT]"

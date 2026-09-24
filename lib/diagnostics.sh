@@ -278,6 +278,7 @@ status_cmd() {
     echo "VPN_WARP: $(az_warp_mode VPN_WARP)"
     echo "WARP rules from up.sh: $warp_rules_stat"
     echo "outbound mode: $CURRENT_OUTBOUND_MODE"
+    echo "outbound: $(outbound_mode_label)"
 
     if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
         echo "slave server: $SLAVE_SERVER:$SLAVE_PORT"
@@ -386,13 +387,18 @@ doctor() {
     
     # Режим маршрутизации
     load_wg_config
-    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
-        echo -e " ${CYAN}!${NC} Режим: Slave ($SLAVE_SERVER:$SLAVE_PORT)"
-    elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-        echo -e " ${CYAN}!${NC} Режим: WG ($WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT)"
-    else
-        echo -e " ${GREEN}✔${NC} Режим: WARP (локальный)"
-    fi
+    case "$CURRENT_OUTBOUND_MODE" in
+        warp) echo -e " ${GREEN}✔${NC} Режим: $(outbound_mode_label)" ;;
+        vless|hy2|openvpn)
+            if [ -s "$OUTBOUND_JSON" ]; then
+                echo -e " ${CYAN}!${NC} Режим: $(outbound_mode_label)"
+            else
+                echo -e " ${RED}✘${NC} Режим $CURRENT_OUTBOUND_MODE, но нет $OUTBOUND_JSON"
+                failed=1
+            fi
+            ;;
+        *) echo -e " ${CYAN}!${NC} Режим: $(outbound_mode_label)" ;;
+    esac
 
     check_item "AntiZapret установлен" "[ -x /root/antizapret/doall.sh ]"
     check_item "Файл конфигурации warper существует" "[ -f '$CONF_FILE' ]"
@@ -424,13 +430,13 @@ doctor() {
             "file_mode_is_600 '$WGCF_DIR/wgcf-profile.conf'"
     fi
 
-    # WARP-ключи
-    if [ -f "$WARP_SYSTEM_CONF" ]; then
-        echo -e " ${GREEN}✔${NC} Используются ключи из $WARP_SYSTEM_CONF"
-    elif [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
-        echo -e " ${CYAN}!${NC} Режим Slave — WARP-ключи не используются"
+    # WARP-ключи: реальный источник текущего ключа, а не наличие файла
+    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+        local key_src
+        key_src=$(get_current_warp_key_source 2>/dev/null || true)
+        echo -e " ${GREEN}✔${NC} WARP-ключ: ${key_src:-конфиг sing-box} (WARP_KEY_SOURCE=$WARP_KEY_SOURCE)"
     else
-        echo -e " ${YELLOW}!${NC} Системный файл $WARP_SYSTEM_CONF не найден, используются локальные ключи"
+        echo -e " ${CYAN}!${NC} WARP-ключи не используются в этом режиме"
     fi
 
     # IP-маршруты

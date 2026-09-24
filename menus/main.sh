@@ -78,17 +78,17 @@ show_main_menu() {
 
     # Режим маршрутизации
     load_wg_config
-    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
-        MODE_DISPLAY="${CYAN}Slave ($SLAVE_SERVER:$SLAVE_PORT)${NC}"
-    elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-        MODE_DISPLAY="${CYAN}WG ($WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT)${NC}"
+    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+        MODE_DISPLAY="${GREEN}$(outbound_mode_label)${NC}"
     else
-        MODE_DISPLAY="${GREEN}WARP (локальный)${NC}"
+        MODE_DISPLAY="${CYAN}$(outbound_mode_label)${NC}"
     fi
 
     # Источник WARP-ключей
     if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
         WARP_KEYS_SRC="${CYAN}не используются (Slave)${NC}"
+    elif [[ "$CURRENT_OUTBOUND_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+        WARP_KEYS_SRC="${CYAN}не используются ($(outbound_protocol_label))${NC}"
     elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
         if [ "$WG_CONF_FILE" = "manual" ] || [ -z "$WG_CONF_FILE" ]; then
             WARP_KEYS_SRC="${CYAN}WG: ручной ввод${NC}"

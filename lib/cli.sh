@@ -311,6 +311,8 @@ cli_config_get() {
         WG_ENDPOINT_PORT) load_wg_config; echo "$WG_ENDPOINT_PORT" ;;
         WG_ADDRESS) load_wg_config; echo "$WG_ADDRESS" ;;
         WG_CONF_FILE) load_wg_config; echo "$WG_CONF_FILE" ;;
+        OUTBOUND_SERVER) jq -r '.server // empty' "$OUTBOUND_JSON" 2>/dev/null ;;
+        OUTBOUND_NAME) jq -r '.name // empty' "$OUTBOUND_JSON" 2>/dev/null ;;
         LOG_LEVEL) get_log_level ;;
         MTU) get_mtu ;;
         *) echo "ERROR: unknown key: $key" >&2; return 1 ;;
@@ -660,6 +662,8 @@ cli_status_json() {
         --arg wg_endpoint_port "$WG_ENDPOINT_PORT" \
         --arg wg_address "$WG_ADDRESS" \
         --arg wg_conf_file "$WG_CONF_FILE" \
+        --arg outbound_label "$(outbound_mode_label)" \
+        --argjson outbound "$(outbound_summary_json)" \
         --argjson singbox_running "$sb_run" \
         --argjson singbox_enabled "$sb_en" \
         --arg log_level "$log_level" \
@@ -700,6 +704,8 @@ cli_status_json() {
                 address: $wg_address,
                 conf_file: $wg_conf_file
             },
+            outbound_label: $outbound_label,
+            outbound: $outbound,
             singbox: {
                 running: $singbox_running,
                 enabled: $singbox_enabled,
@@ -2037,6 +2043,12 @@ IP-подсети:
   mode warp [ИСТОЧНИК]         WARP: system | wgcf | root | generate
   mode slave СЕРВЕР ПОРТ ПАРОЛЬ   подключение к донору
   mode wg /путь/к.conf         WireGuard-конфиг
+  mode vless 'vless://...'     VLESS / VLESS+Reality по ссылке
+  mode hy2 'hy2://...'         Hysteria2 по ссылке
+  mode openvpn ФАЙЛ.ovpn [ЛОГИН ПАРОЛЬ]   OpenVPN
+  mode slave 'ss://...'        донор по ссылке из warperslave link
+  outbound                     текущий режим и сервер без секретов
+  ovpnconfig list              найденные .ovpn
   warpkey list|generate        WARP-ключи
   wgconfig list                доступные WG-конфиги
 

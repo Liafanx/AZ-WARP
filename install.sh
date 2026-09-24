@@ -484,9 +484,15 @@ echo -e "    ${CYAN}(нужен второй сервер с warperslave)${NC}"
 echo -e ""
 echo -e " ${GREEN}3.${NC} WG    — трафик через WireGuard-соединение"
 echo -e "    ${CYAN}(нужен .conf файл от WireGuard-сервера, в папке /root/)${NC}"
+echo -e ""
+echo -e " ${GREEN}4.${NC} VLESS — VLESS / VLESS+Reality по ссылке vless://"
+echo -e " ${GREEN}5.${NC} Hysteria2 — по ссылке hy2://"
+echo -e "    ${CYAN}(ссылку своего донора выдаёт команда warperslave link)${NC}"
+echo -e ""
+echo -e " ${GREEN}6.${NC} OpenVPN — по файлу .ovpn"
 
 while true; do
-    read -r -p "Выбор [1-3] (по умолчанию 1): " install_mode_choice < /dev/tty
+    read -r -p "Выбор [1-6] (по умолчанию 1): " install_mode_choice < /dev/tty
     if [[ -z "$install_mode_choice" || "$install_mode_choice" == "1" ]]; then
         INSTALL_MODE="warp"
         break
@@ -496,8 +502,17 @@ while true; do
     elif [[ "$install_mode_choice" == "3" ]]; then
         INSTALL_MODE="wg"
         break
+    elif [[ "$install_mode_choice" == "4" ]]; then
+        INSTALL_MODE="vless"
+        break
+    elif [[ "$install_mode_choice" == "5" ]]; then
+        INSTALL_MODE="hy2"
+        break
+    elif [[ "$install_mode_choice" == "6" ]]; then
+        INSTALL_MODE="openvpn"
+        break
     else
-        echo -e "${RED}Введите 1, 2 или 3.${NC}"
+        echo -e "${RED}Введите число от 1 до 6.${NC}"
     fi
 done
 
@@ -745,6 +760,35 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     echo -e " - ${GREEN}Режим: WG ($WG_INSTALL_ENDPOINT_HOST:$WG_INSTALL_ENDPOINT_PORT)${NC}"
     MODE_CONFIGURED=true
 
+elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+    mkdir -p "$WARPER_DIR/lib"
+    download_file "$REPO_URL/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" \
+        "разборщик ссылок" || exit 1
+
+    parse_args=()
+    if [ "$INSTALL_MODE" = "openvpn" ]; then
+        read -r -p "Путь к .ovpn: " ovpn_path < /dev/tty
+        parse_args=(ovpn "$ovpn_path")
+        if grep -qiE '^[[:space:]]*auth-user-pass' "$ovpn_path" 2>/dev/null; then
+            echo -e "${YELLOW}Конфиг требует логин и пароль (auth-user-pass).${NC}"
+            read -r -p "Логин: " ovpn_user < /dev/tty
+            read -r -s -p "Пароль: " ovpn_pass < /dev/tty; echo ""
+            parse_args+=(--user "$ovpn_user" --pass "$ovpn_pass")
+        fi
+    else
+        read -r -p "Ссылка: " proxy_link < /dev/tty
+        parse_args=("$([ "$INSTALL_MODE" = "vless" ] && echo vless || echo hy2)" "$proxy_link")
+    fi
+
+    if parsed=$(python3 "$WARPER_DIR/lib/outbound-parse.py" "${parse_args[@]}"); then
+        printf '%s\n' "$parsed" > "$WARPER_DIR/outbound.json"
+        chmod 600 "$WARPER_DIR/outbound.json"
+        echo -e " - ${GREEN}Режим: $INSTALL_MODE ($(jq -r '"\(.server):\(.port // "")"' <<< "$parsed"))${NC}"
+        MODE_CONFIGURED=true
+    else
+        echo -e "${RED}Не удалось разобрать, попробуйте ещё раз.${NC}"
+    fi
+
 else
     MODE_CONFIGURED=true
 fi
@@ -780,6 +824,9 @@ if [ "$INSTALL_MODE" = "slave" ]; then
 elif [ "$INSTALL_MODE" = "wg" ]; then
     echo -e " - ${CYAN}Режим WG — ключи WARP не требуются.${NC}"
     echo -e " - ${CYAN}Данные WireGuard уже получены на предыдущем шаге.${NC}"
+
+elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+    echo -e " - ${CYAN}Режим $INSTALL_MODE — ключи WARP не требуются.${NC}"
 
 else
     # === Режим WARP ===
@@ -999,6 +1046,28 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         echo "WG_DNS=$wg_dns_value"
     } > "$WARPER_DIR/wg_mode.conf"
     chmod 600 "$WARPER_DIR/wg_mode.conf"
+elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+    PROXY_TEMPLATE="$WARPER_DIR/config-proxy.json.template"
+    OUTBOUND_JSON="$WARPER_DIR/outbound.json"
+    download_file "$REPO_URL/templates/config-proxy.json.template" "$PROXY_TEMPLATE" "шаблон proxy" || exit 1
+    for _libfile in singbox outbound; do
+        download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
+        # shellcheck disable=SC1090
+        source "$WARPER_DIR/lib/${_libfile}.sh"
+    done
+    CURRENT_OUTBOUND_MODE="$INSTALL_MODE"
+    rebuild_config_proxy || exit 1
+    if [ -n "${CHOSEN_MTU:-}" ]; then
+        sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
+    fi
+
+    {
+        echo "OUTBOUND_MODE=$INSTALL_MODE"
+        echo "SLAVE_SERVER="
+        echo "SLAVE_PORT=8444"
+        echo "SLAVE_PASSWORD="
+    } > "$WARPER_DIR/slave_mode.conf"
+    chmod 600 "$WARPER_DIR/slave_mode.conf"
 else
     download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json" || exit 1
 
@@ -1131,18 +1200,21 @@ download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" 
 download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
 download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
+download_file "$REPO_URL/templates/config-proxy.json.template" "$WARPER_DIR/config-proxy.json.template" "шаблон VLESS/Hysteria2/OpenVPN" || exit 1
 
 # Скачиваем модули lib/
 echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
 mkdir -p "$WARPER_DIR/lib"
-for _libfile in utils config domains domains-resolve singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+for _libfile in utils config domains domains-resolve singbox outbound kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
     download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
 done
+download_file "$REPO_URL/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" "lib/outbound-parse.py" || exit 1
+chmod 755 "$WARPER_DIR/lib/outbound-parse.py"
 
 # Скачиваем Python API
 echo -e " - ${CYAN}Скачивание Python API...${NC}"
 mkdir -p "$WARPER_DIR/py/warper_api"
-for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates; do
+for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates web; do
     download_file "$REPO_URL/py/warper_api/${_pyfile}.py" \
         "$WARPER_DIR/py/warper_api/${_pyfile}.py" \
         "py/warper_api/${_pyfile}.py" || exit 1
@@ -1152,7 +1224,7 @@ download_file "$REPO_URL/py/setup.py" "$WARPER_DIR/py/setup.py" "py/setup.py" ||
 # Скачиваем модули menus/
 echo -e " - ${CYAN}Скачивание модулей menus/...${NC}"
 mkdir -p "$WARPER_DIR/menus"
-for _menufile in main settings singbox-menu ip-menu web-menu; do
+for _menufile in main settings singbox-menu ip-menu catalog-menu web-menu; do
     download_file "$REPO_URL/menus/${_menufile}.sh" "$WARPER_DIR/menus/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
 done
 

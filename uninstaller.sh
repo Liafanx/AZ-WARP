@@ -316,6 +316,7 @@ if [ "$KEEP_DOMAINS" = true ]; then
         -not -name 'ip-ranges.txt' \
         -not -name 'slave_mode.conf' \
         -not -name 'wg_mode.conf' \
+        -not -name 'outbound.json' \
         -not -name 'traffic.json' \
         -not -name 'catalog.json' \
         -not -name 'catalog-cache.json' \

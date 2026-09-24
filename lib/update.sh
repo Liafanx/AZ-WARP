@@ -21,6 +21,7 @@ rollback_warper_update() {
     restore_if_exists "$backupdir/config.json.template" "$SINGBOX_TEMPLATE"
     restore_if_exists "$backupdir/config-slave-master.json.template" "$SLAVE_TEMPLATE"
     restore_if_exists "$backupdir/config-wg.json.template" "$WG_TEMPLATE"
+    restore_if_exists "$backupdir/config-proxy.json.template" "$PROXY_TEMPLATE"
 
     restore_if_exists "$backupdir/gemini.txt" "$DOWNLOAD_DIR/gemini.txt"
     restore_if_exists "$backupdir/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt"
@@ -148,6 +149,9 @@ update_warper() {
     # Шаблоны конфигурации
     download_file_safe "$REPO_URL/templates/config.json.template" \
         "$tmpdir/config.json.template" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    download_file_safe "$REPO_URL/templates/config-proxy.json.template" \
+        "$tmpdir/config-proxy.json.template" "config-proxy.json.template" || \
+        { rm -rf "$tmpdir" "$backupdir"; return 1; }
     download_file_safe "$REPO_URL/templates/config-slave-master.json.template" \
         "$tmpdir/config-slave-master.json.template" "config-slave-master.json.template" || \
         { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -162,15 +166,18 @@ update_warper() {
 
     # Модули lib/ (cli добавлен в 1.3.3)
     mkdir -p "$tmpdir/lib"
-    for _libfile in utils config domains domains-resolve singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+    for _libfile in utils config domains domains-resolve singbox outbound kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         download_file_safe "$REPO_URL/lib/${_libfile}.sh" \
             "$tmpdir/lib/${_libfile}.sh" "lib/${_libfile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
     done
+    download_file_safe "$REPO_URL/lib/outbound-parse.py" \
+        "$tmpdir/lib/outbound-parse.py" "lib/outbound-parse.py" || \
+        { rm -rf "$tmpdir" "$backupdir"; return 1; }
 
     # Python API (добавлено в 1.4.0)
     mkdir -p "$tmpdir/py/warper_api"
-    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates; do
+    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates web; do
         download_file_safe "$REPO_URL/py/warper_api/${_pyfile}.py" \
             "$tmpdir/py/warper_api/${_pyfile}.py" \
             "py/warper_api/${_pyfile}.py" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -180,7 +187,7 @@ update_warper() {
 
     # Модули menus/ (web-menu добавлен в 1.3.3)
     mkdir -p "$tmpdir/menus"
-    for _menufile in main settings singbox-menu ip-menu web-menu; do
+    for _menufile in main settings singbox-menu ip-menu catalog-menu web-menu; do
         download_file_safe "$REPO_URL/menus/${_menufile}.sh" \
             "$tmpdir/menus/${_menufile}.sh" "menus/${_menufile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -197,12 +204,19 @@ update_warper() {
         syntax_check_bash_file "$_libfile" "$(basename "$_libfile")" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
     done
+    if ! python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' \
+         "$tmpdir/lib/outbound-parse.py" 2>/dev/null; then
+        echo -e "${RED}Синтаксическая ошибка в outbound-parse.py, обновление отменено.${NC}"
+        rm -rf "$tmpdir" "$backupdir"; return 1
+    fi
 
     # ===== Проверка шаблонов =====
     validate_template_marker "$tmpdir/config.json.template" \
         "__WARP_ADDRESS__" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     validate_template_marker "$tmpdir/config.json.template" \
         "__SUBNET__" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    validate_template_marker "$tmpdir/config-proxy.json.template" \
+        "__SUBNET__" "config-proxy.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     validate_template_marker "$tmpdir/config-slave-master.json.template" \
         "__SLAVE_SERVER__" "config-slave-master.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     validate_template_marker "$tmpdir/config-wg.json.template" \
@@ -227,6 +241,7 @@ update_warper() {
     backup_if_exists "$SINGBOX_TEMPLATE"             "$backupdir/config.json.template"
     backup_if_exists "$SLAVE_TEMPLATE"               "$backupdir/config-slave-master.json.template"
     backup_if_exists "$WG_TEMPLATE"                  "$backupdir/config-wg.json.template"
+    backup_if_exists "$PROXY_TEMPLATE"               "$backupdir/config-proxy.json.template"
     backup_if_exists "$DOWNLOAD_DIR/gemini.txt"      "$backupdir/gemini.txt"
     backup_if_exists "$DOWNLOAD_DIR/chatgpt.txt"     "$backupdir/chatgpt.txt"
     for _unit in $WARPER_UNITS; do
@@ -271,6 +286,10 @@ update_warper() {
         echo -e "${RED}Ошибка установки config-slave-master.json.template, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
     }
+    install -m 644 "$tmpdir/config-proxy.json.template" "$PROXY_TEMPLATE" || {
+        echo -e "${RED}Ошибка установки config-proxy.json.template, откат.${NC}"
+        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+    }
     install -m 644 "$tmpdir/config-wg.json.template" "$WG_TEMPLATE" || {
         echo -e "${RED}Ошибка установки config-wg.json.template, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
@@ -300,6 +319,10 @@ update_warper() {
             return 1
         }
     done
+    install -m 755 "$tmpdir/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" || {
+        echo -e "${RED}Ошибка установки outbound-parse.py, откат.${NC}"
+        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+    }
     # Python API
     mkdir -p "$WARPER_DIR/py/warper_api"
     for _pyfile in "$tmpdir"/py/warper_api/*.py; do
@@ -362,6 +385,10 @@ update_warper() {
         wg)
             template_for_current_mode="$WG_TEMPLATE"
             backup_for_current_mode="$backupdir/config-wg.json.template"
+            ;;
+        vless|hy2|openvpn)
+            template_for_current_mode="$PROXY_TEMPLATE"
+            backup_for_current_mode="$backupdir/config-proxy.json.template"
             ;;
     esac
 
