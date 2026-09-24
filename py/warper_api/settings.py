@@ -428,7 +428,8 @@ def set_mode_openvpn(conf_path: str, username: str | None = None,
 
     Args:
         conf_path: Путь к .ovpn.
-        username: Логин, если в конфиге есть auth-user-pass.
+        username: Логин, если в конфиге есть auth-user-pass. Без него
+            берутся сохранённые для этого файла; переданные сохраняются.
         password: Пароль к нему.
 
     Returns:
@@ -445,18 +446,26 @@ def list_ovpn_configs() -> WarperResult:
     Файлы .ovpn в /root/ и /root/warper/.
 
     Returns:
-        WarperResult с data=list[dict]: path, server.
+        WarperResult с data=list[dict]: path, server, needs_auth (bool),
+        saved_user (сохранённый логин или '').
     """
     result = run_warper("ovpnconfig", "list", timeout=10)
     if not result.ok:
         return result
     configs = []
     for line in result.raw_stdout.splitlines():
-        path, _, server = line.strip().partition("|")
-        if path:
-            configs.append({"path": path, "server": server})
+        parts = line.strip().split("|")
+        if parts[0]:
+            parts += [""] * (4 - len(parts))
+            configs.append({"path": parts[0], "server": parts[1],
+                            "needs_auth": parts[2] == "1", "saved_user": parts[3]})
     result.data = configs
     return result
+
+
+def forget_ovpn_credentials(conf_path: str) -> WarperResult:
+    """Удалить сохранённые логин и пароль для файла .ovpn."""
+    return run_warper("ovpnconfig", "forget", str(conf_path).strip(), timeout=10)
 
 
 def get_outbound() -> WarperResult:

@@ -783,6 +783,11 @@ elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
     if parsed=$(python3 "$WARPER_DIR/lib/outbound-parse.py" "${parse_args[@]}"); then
         printf '%s\n' "$parsed" > "$WARPER_DIR/outbound.json"
         chmod 600 "$WARPER_DIR/outbound.json"
+        if [ -n "${ovpn_user:-}" ]; then
+            jq -n --arg f "$(realpath -m "$ovpn_path")" --arg u "$ovpn_user" --arg p "$ovpn_pass" \
+                '{($f): {username: $u, password: $p}}' > "$WARPER_DIR/ovpn-auth.json"
+            chmod 600 "$WARPER_DIR/ovpn-auth.json"
+        fi
         echo -e " - ${GREEN}Режим: $INSTALL_MODE ($(jq -r '"\(.server):\(.port // "")"' <<< "$parsed"))${NC}"
         MODE_CONFIGURED=true
     else

@@ -131,7 +131,12 @@ Hysteria2 master переключается в режим `vless` / `hy2` — т
 - **Hysteria2** — по ссылке `hy2://…` или `hysteria2://…` (obfs salamander,
   диапазоны портов, пиннинг сертификата `pinSHA256`);
 - **OpenVPN** — по файлу `.ovpn` (`dev tun`, инлайн-сертификаты, `tls-auth`,
-  `tls-crypt`, логин/пароль для `auth-user-pass`).
+  `tls-crypt`, логин/пароль для `auth-user-pass`). Логин и пароль
+  запоминаются для каждого файла — между профилями (например, серверами
+  ProtonVPN) можно переключаться без повторного ввода.
+
+VLESS Encryption из Xray (`encryption=mlkem768x25519plus…`) sing-box не
+поддерживает — нужна ссылка с `encryption=none`.
 
 Ссылка или файл проверяются до применения: при ошибке режим и конфиг остаются
 прежними.
@@ -496,6 +501,7 @@ warper mode hy2 'hy2://…'
 warper mode openvpn /root/server.ovpn [ЛОГИН ПАРОЛЬ]
 warper outbound                 # текущий режим и сервер без секретов
 warper ovpnconfig list          # найденные .ovpn
+warper ovpnconfig forget ФАЙЛ   # забыть сохранённые логин и пароль
 warper warpkey list             # доступные источники ключей
 warper warpkey generate         # сгенерировать новый ключ
 warper wgconfig list            # найденные WG-конфиги
@@ -548,7 +554,8 @@ warper webupdate                # обновить файлы панели
 ### Авто-резолв доменов в IP-маршруты
 
 Резолвит домены из `domains.txt` и складывает адреса в блок `RESOLVED`
-внутри `ip-ranges.txt`. По умолчанию **выключен**.
+внутри `ip-ranges.txt`. По умолчанию **выключен**. В меню: `warper` →
+`Настройки (9)` → `A`; в веб-панели — «Настройки» → «Дополнительные опции».
 
 ```bash
 warper resolve on                  # включить (раз в час)

@@ -107,6 +107,7 @@ def parse_vless(link):
     if parts.scheme != "vless":
         fail("ожидается ссылка vless://")
     q = query(parts)
+    warnings = []
     uuid = unquote(parts.username or "")
     if not UUID_RE.match(uuid):
         fail("UUID в ссылке отсутствует или имеет неверный формат")
@@ -114,8 +115,11 @@ def parse_vless(link):
     port = check_port(port_s)
     name = unquote(parts.fragment) or server
 
-    if q.get("encryption", "none") not in ("", "none"):
-        fail(f"encryption={q['encryption']} не поддерживается, нужен none")
+    enc = q.get("encryption", "none")
+    if enc not in ("", "none"):
+        # VLESS Encryption (mlkem768x25519plus) есть только в Xray
+        fail(f"encryption={enc.split('.')[0]} (VLESS Encryption из Xray) sing-box не поддерживает. "
+             "Нужна ссылка с encryption=none — попросите её у провайдера")
 
     ob = {"type": "vless", "tag": TAG, "server": server, "server_port": port, "uuid": uuid}
 
@@ -147,6 +151,9 @@ def parse_vless(link):
             if not q.get("sni"):
                 fail("для Reality в ссылке нужен sni")
             tls["reality"] = {"enabled": True, "public_key": pbk, "short_id": sid}
+            if q.get("pqv"):
+                warnings.append("pqv (ML-DSA-65) sing-box не поддерживает — "
+                                "дополнительная проверка подписи Reality пропущена")
         elif fp:
             tls["utls"] = {"enabled": True, "fingerprint": fp}
         if q.get("alpn"):
@@ -196,7 +203,7 @@ def parse_vless(link):
             fail(f"packetEncoding={q['packetEncoding']} не поддерживается")
         ob["packet_encoding"] = q["packetEncoding"]
 
-    return result("vless", "outbound", server, port, name, link.strip(), ob)
+    return result("vless", "outbound", server, port, name, link.strip(), ob, warnings)
 
 
 # ===== Hysteria2 =====

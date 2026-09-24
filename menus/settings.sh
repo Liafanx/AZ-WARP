@@ -191,11 +191,17 @@ switch_outbound_mode() {
                 echo -e "${RED}Файл не найден.${NC}"; sleep 1; return
             fi
 
-            local ov_user="" ov_pass=""
+            local ov_user="" ov_pass="" saved_user
             if ovpn_needs_auth "$path"; then
                 echo -e "${YELLOW}Конфиг требует логин и пароль (auth-user-pass).${NC}"
-                read -r -p "Логин: " ov_user
-                read -r -s -p "Пароль: " ov_pass; echo ""
+                saved_user=$(ovpn_saved_auth "$path" username)
+                if [ -n "$saved_user" ]; then
+                    echo -e "Сохранён логин: ${GREEN}${saved_user}${NC}"
+                    read -r -p "Логин (Enter — сохранённый): " ov_user
+                else
+                    read -r -p "Логин: " ov_user
+                fi
+                [ -n "$ov_user" ] && { read -r -s -p "Пароль: " ov_pass; echo ""; }
             fi
             _menu_apply_mode openvpn OpenVPN _set_outbound openvpn "$path" "$ov_user" "$ov_pass"
             ;;
@@ -262,11 +268,15 @@ settings_menu() {
         else
             FULLVPN_STAT="${RED}ВЫКЛ${NC}"
         fi
-        echo -e " ${CYAN}9.${NC} FullVPN WARP-резолвинг:      [$FULLVPN_STAT]"        
+        echo -e " ${CYAN}9.${NC} FullVPN WARP-резолвинг:        [$FULLVPN_STAT]"
+        local AR_STAT
+        if [ "$(cli_resolve status)" = "enabled" ]; then AR_STAT="${GREEN}ВКЛ${NC}"
+        else AR_STAT="${RED}ВЫКЛ${NC}"; fi
+        echo -e " ${CYAN}A.${NC} Авто-резолв доменов в IP:      [$AR_STAT]"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
 
-        read -r -e -p "Выбор [0-8]: " set_choice
+        read -r -e -p "Выбор [0-9, A]: " set_choice
         case "${set_choice:-}" in
 
             # ── Автопатч ──────────────────────────────────────────────────
@@ -415,6 +425,9 @@ settings_menu() {
                 sleep 1
                 ;;
 
+            # ── Авто-резолв ───────────────────────────────────────────────
+            a|A) auto_resolve_menu ;;
+
             # ── Назад ─────────────────────────────────────────────────────
             0) return ;;
 
@@ -424,4 +437,31 @@ settings_menu() {
                 ;;
         esac
     done
+}
+
+# Авто-резолв доменов в IP-маршруты (блок RESOLVED в ip-ranges.txt)
+auto_resolve_menu() {
+    local enabled choice
+    enabled=$(cli_resolve status)
+    echo -e "\n${CYAN}Авто-резолв доменов в IP:${NC} $([ "$enabled" = "enabled" ] \
+        && echo -e "${GREEN}ВКЛ${NC} (раз в час)" || echo -e "${RED}ВЫКЛ${NC}")"
+    echo -e "${YELLOW}Адреса копятся в блоке RESOLVED в ip-ranges.txt и не удаляются сами.${NC}"
+    if [ "$enabled" = "enabled" ]; then
+        echo -e " ${CYAN}1.${NC} Выключить"
+    else
+        echo -e " ${CYAN}1.${NC} Включить"
+    fi
+    echo -e " ${CYAN}2.${NC} Резолвить сейчас"
+    echo -e " ${CYAN}3.${NC} Очистить блок RESOLVED"
+    echo -e " ${CYAN}0.${NC} Назад"
+    read -r -p "Выбор: " choice
+    case "${choice:-}" in
+        1)
+            if [ "$enabled" = "enabled" ]; then cli_resolve off; else cli_resolve on; fi
+            ;;
+        2) cli_resolve_sync ;;
+        3) prompt_confirm && cli_resolve_clean ;;
+        *) return 0 ;;
+    esac
+    sleep 2
 }

@@ -118,7 +118,12 @@
     sing-box — об этом сообщается сразу.
   - Разбор и проверка ссылок — `lib/outbound-parse.py`: sing-box `check` не
     ловит пустой UUID или битый ключ Reality, а `short_id` длиннее 16
-    символов роняет его с panic.
+    символов роняет его с panic. VLESS Encryption (`mlkem768x25519plus`) и
+    `pqv` — возможности Xray, в sing-box их нет: первое отклоняется с
+    пояснением, второе пропускается с предупреждением.
+  - Логин и пароль OpenVPN запоминаются для каждого `.ovpn` отдельно
+    (`ovpn-auth.json`, 0600) — между профилями можно переключаться без
+    повторного ввода. `warper ovpnconfig forget ФАЙЛ` — забыть.
   - `warper mode slave 'ss://…'`, `warper outbound`, `warper ovpnconfig list`.
   - Пункты в меню, карточки и загрузка `.ovpn` в веб-панели, режим в
     `status`, `doctor` и `status json` (объект `outbound` без секретов).
@@ -137,7 +142,8 @@
 - Новое в `warperslave`: `singbox version|upgrade`, `restart`,
   `loglevel [УРОВЕНЬ]`, `mtu [ЗНАЧЕНИЕ]`, `showkey`, `logs [N]`, `version`.
 - Каталог доменов был доступен только из CLI и веб-панели — добавлен
-  пункт `C` в главное меню.
+  пункт `C` в главное меню. Авто-резолв — пункт `A` в меню настроек и
+  строка в шапке главного меню.
 - `experimental.cache_file` со `store_fakeip`: маппинги переживают рестарт.
 - `doctor` проверяет ёмкость пула fake-IP, приватность подсети, маршрут
   fake-подсети в таблицах AntiZapret, авто-резолв и то, что sing-box не

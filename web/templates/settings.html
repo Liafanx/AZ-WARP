@@ -168,8 +168,8 @@
             </div>
 
             <!-- Авто-резолв доменов -->
-            <div class="flex items-center justify-between">
-                <div>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 border-b border-emerald-900/30 pb-4">
+                <div class="min-w-0">
                     <div class="text-sm text-emerald-100 font-medium">Авто-резолв доменов в IP</div>
                     <div class="text-xs text-emerald-500/60">
                         Раз в час резолвит домены и копит адреса в блоке RESOLVED
@@ -178,7 +178,7 @@
                     </div>
                 </div>
 
-                <div class="flex gap-2">
+                <div class="flex flex-wrap gap-2 sm:shrink-0">
                     <button hx-post="{{ url_for('htmx_settings_auto_resolve') }}"
                             hx-swap="none"
                             hx-vals='{"enable":"1"}'
@@ -538,11 +538,16 @@
                         <div class="flex-1 min-w-0">
                             <div class="text-sm text-emerald-100 font-mono truncate">{{ cfg.name }}</div>
                             <div class="text-xs text-emerald-500/70 truncate">{{ cfg.path }} → {{ cfg.server }}</div>
+                            {% if cfg.saved_user %}
+                            <div class="text-xs text-emerald-400">🔑 сохранён логин: {{ cfg.saved_user }}</div>
+                            {% elif cfg.needs_auth %}
+                            <div class="text-xs text-amber-400/80">нужен логин и пароль</div>
+                            {% endif %}
                         </div>
                     </label>
                     {% endfor %}
                     <div class="grid grid-cols-2 gap-2">
-                        <input type="text" name="username" placeholder="Логин (если нужен)" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                        <input type="text" name="username" placeholder="Логин (пусто — сохранённый)" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                         <input type="password" name="password" placeholder="Пароль" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                     </div>
                     <button type="submit" class="w-full justify-center px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить выбранный</button>
@@ -573,7 +578,8 @@
                     <button type="submit" class="w-full justify-center px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Загрузить и применить</button>
                 </form>
                 <p class="text-xs text-emerald-500/60 mt-2">
-                    Нужен dev tun и сертификат CA. Логин и пароль — если в конфиге есть auth-user-pass.
+                    Нужен dev tun и сертификат CA. Логин и пароль — если в конфиге есть auth-user-pass;
+                    они запоминаются для каждого файла отдельно.
                 </p>
             </div>
 

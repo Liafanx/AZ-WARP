@@ -219,7 +219,7 @@ AntiZapret отдают чистые CIDR.
 | `set_mode_wg(conf_path)` | Режим WireGuard |
 | `set_mode_vless(link)` | Режим VLESS / VLESS+Reality по ссылке `vless://…` |
 | `set_mode_hy2(link)` | Режим Hysteria2 по ссылке `hy2://…` или `hysteria2://…` |
-| `set_mode_openvpn(conf_path, username=None, password=None)` | Режим OpenVPN по файлу `.ovpn` на сервере; логин и пароль — для `auth-user-pass` |
+| `set_mode_openvpn(conf_path, username=None, password=None)` | Режим OpenVPN по файлу `.ovpn` на сервере; логин и пароль — для `auth-user-pass`. Переданные сохраняются для этого файла, без них берутся сохранённые |
 | `get_mode()` | Текущий режим: `warp` / `slave` / `wg` / `vless` / `hy2` / `openvpn` |
 | `get_outbound()` | Текущий режим и сервер без секретов (`data=dict`: mode, label, protocol, server, port, ports, name, transport) |
 | `set_subnet(subnet)` | Изменить fake-подсеть |
@@ -231,7 +231,8 @@ AntiZapret отдают чистые CIDR.
 | `set_fullvpn(enable)` | FullVPN WARP-резолвинг |
 | `list_warp_keys()` | Доступные WARP-ключи |
 | `list_wg_configs()` | Доступные WG-конфиги |
-| `list_ovpn_configs()` | Файлы `.ovpn` в `/root/` и `/root/warper/` (`data=list[dict]`: path, server) |
+| `list_ovpn_configs()` | Файлы `.ovpn` в `/root/` и `/root/warper/` (`data=list[dict]`: path, server, needs_auth, saved_user) |
+| `forget_ovpn_credentials(conf_path)` | Удалить сохранённые логин и пароль для `.ovpn` |
 
 ### Веб-панель
 

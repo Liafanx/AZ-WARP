@@ -2049,6 +2049,7 @@ IP-подсети:
   mode slave 'ss://...'        донор по ссылке из warperslave link
   outbound                     текущий режим и сервер без секретов
   ovpnconfig list              найденные .ovpn
+  ovpnconfig forget ФАЙЛ       забыть сохранённые логин и пароль
   warpkey list|generate        WARP-ключи
   wgconfig list                доступные WG-конфиги
 

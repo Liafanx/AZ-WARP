@@ -173,7 +173,12 @@ show_main_menu() {
     else
         fullvpn_resolve_display="${RED}ВЫКЛ${NC}"
     fi
-    echo -e " 🌐 ${CYAN}FullVPN WARP доменов:${NC}  $fullvpn_resolve_display"    
+    echo -e " 🌐 ${CYAN}FullVPN WARP доменов:${NC}  $fullvpn_resolve_display"
+    if [ "$(cli_resolve status)" = "enabled" ]; then
+        echo -e " 🔁 ${CYAN}Авто-резолв в IP:${NC}  ${GREEN}ВКЛ${NC}"
+    else
+        echo -e " 🔁 ${CYAN}Авто-резолв в IP:${NC}  ${RED}ВЫКЛ${NC}"
+    fi
 
     # Предупреждение о правилах up.sh
     if needs_down_sh; then

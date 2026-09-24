@@ -587,6 +587,10 @@ class WarperAPI:
         """Файлы .ovpn в /root/ и /root/warper/."""
         return settings.list_ovpn_configs()
 
+    def forget_ovpn_credentials(self, conf_path: str) -> WarperResult:
+        """Удалить сохранённые логин и пароль для файла .ovpn."""
+        return settings.forget_ovpn_credentials(conf_path)
+
     def get_outbound(self) -> WarperResult:
         """Текущий режим и сервер без секретов."""
         return settings.get_outbound()

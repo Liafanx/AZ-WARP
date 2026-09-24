@@ -32,6 +32,7 @@ WG_MODE_FILE="$WARPER_DIR/wg_mode.conf"
 # готовый объект sing-box плюс сервер, имя и источник. Отдельно от
 # slave_mode.conf, который save_slave_config перезаписывает целиком.
 OUTBOUND_JSON="$WARPER_DIR/outbound.json"
+OVPN_AUTH_JSON="$WARPER_DIR/ovpn-auth.json"
 PROXY_TEMPLATE="$WARPER_DIR/config-proxy.json.template"
 IP_RANGES_FILE="$WARPER_DIR/ip-ranges.txt"
 AZ_WARPER_INCLUDE_IPS="/root/antizapret/config/warper-include-ips.txt"
@@ -384,8 +385,9 @@ case "${1:-}" in
     outbound)    cli_outbound; exit $? ;;
     ovpnconfig)
         case "${2:-}" in
-            list) cli_ovpn_list; exit 0 ;;
-            *)    echo "Использование: warper ovpnconfig list" >&2; exit 1 ;;
+            list)   cli_ovpn_list; exit 0 ;;
+            forget) cli_ovpn_forget "${3:-}"; exit $? ;;
+            *)      echo "Использование: warper ovpnconfig list | forget ФАЙЛ" >&2; exit 1 ;;
         esac
         ;;
     listupdate)  cli_list_update; exit $? ;;

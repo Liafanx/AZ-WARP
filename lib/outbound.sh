@@ -6,6 +6,7 @@
 # Подключается через source из warper.sh
 
 OUTBOUND_PARSER="${OUTBOUND_PARSER:-$WARPER_DIR/lib/outbound-parse.py}"
+OVPN_AUTH_JSON="${OVPN_AUTH_JSON:-$WARPER_DIR/ovpn-auth.json}"
 
 # Режим warper → подкоманда разборщика
 _outbound_parser_kind() {
@@ -26,12 +27,21 @@ _set_outbound() {
         echo "ERROR: unknown mode $mode" >&2; return 1; }
 
     local -a args=("$kind" "$source")
+    local user="${3:-}" pass="${4:-}"
     if [ "$mode" = "openvpn" ]; then
-        [ -n "${3:-}" ] && args+=(--user "$3")
-        [ -n "${4:-}" ] && args+=(--pass "$4")
+        # Без логина в аргументах — сохранённый для этого файла
+        if [ -z "$user" ] && ovpn_needs_auth "$source"; then
+            user=$(ovpn_saved_auth "$source" username)
+            pass=$(ovpn_saved_auth "$source" password)
+        fi
+        [ -n "$user" ] && args+=(--user "$user")
+        [ -n "$pass" ] && args+=(--pass "$pass")
     fi
 
     parsed=$(python3 "$OUTBOUND_PARSER" "${args[@]}") || return 1
+    if [ "$mode" = "openvpn" ] && [ -n "${3:-}" ]; then
+        ovpn_save_auth "$source" "$user" "$pass"
+    fi
 
     local warning
     while IFS= read -r warning; do
@@ -158,6 +168,35 @@ ovpn_needs_auth() {
     grep -qiE '^[[:space:]]*auth-user-pass' "$1" 2>/dev/null
 }
 
+# Логин и пароль хранятся отдельно для каждого .ovpn (ключ — полный путь).
+#   ovpn_saved_auth ФАЙЛ username|password
+ovpn_saved_auth() {
+    [ -s "$OVPN_AUTH_JSON" ] || return 0
+    jq -r --arg f "$(realpath -m "$1")" --arg k "$2" '.[$f][$k] // empty' \
+        "$OVPN_AUTH_JSON" 2>/dev/null
+}
+
+ovpn_save_auth() {
+    local file tmp
+    file=$(realpath -m "$1")
+    tmp=$(mktemp)
+    { [ -s "$OVPN_AUTH_JSON" ] && cat "$OVPN_AUTH_JSON" || echo '{}'; } \
+        | jq --arg f "$file" --arg u "$2" --arg p "$3" '.[$f] = {username: $u, password: $p}' \
+        > "$tmp" || { rm -f "$tmp"; return 1; }
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$OVPN_AUTH_JSON"
+}
+
+ovpn_forget_auth() {
+    [ -s "$OVPN_AUTH_JSON" ] || return 0
+    local tmp
+    tmp=$(mktemp)
+    jq --arg f "$(realpath -m "$1")" 'del(.[$f])' "$OVPN_AUTH_JSON" > "$tmp" \
+        || { rm -f "$tmp"; return 1; }
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$OVPN_AUTH_JSON"
+}
+
 # ===== CLI =====
 
 # warper mode vless|hy2 ССЫЛКА
@@ -193,11 +232,20 @@ cli_outbound() {
     esac
 }
 
-# warper ovpnconfig list — path|server
+# warper ovpnconfig list — path|server|auth|saved_user
+# auth: 1 — нужен логин (auth-user-pass), 0 — нет
 cli_ovpn_list() {
-    local file server
+    local file server auth
     while IFS= read -r file; do
         server=$(grep -m1 -iE '^[[:space:]]*remote[[:space:]]' "$file" | awk '{print $2":"($3?$3:"1194")}')
-        echo "$file|$server"
+        auth=0
+        ovpn_needs_auth "$file" && auth=1
+        echo "$file|$server|$auth|$(ovpn_saved_auth "$file" username)"
     done < <(scan_ovpn_configs)
+}
+
+# warper ovpnconfig forget ФАЙЛ — удалить сохранённые логин и пароль
+cli_ovpn_forget() {
+    [ -n "${1:-}" ] || { echo "Usage: warper ovpnconfig forget /path/file.ovpn" >&2; return 1; }
+    ovpn_forget_auth "$1" && echo "Saved credentials removed for $1"
 }
