@@ -11,17 +11,22 @@
 # Читает валидные CIDR из ip-ranges.txt (без комментариев и пустых строк).
 # Хвостовой комментарий отбрасывается: авторезолв пишет источник адреса
 # в виде "1.2.3.4/32 #gemini.google.com".
-# Сортирует лексикографически для совместимости с comm.
+# Проверка — те же правила, что в validate_cidr, но одним awk: цикл с
+# вызовом функции на каждую строку заметно тормозил меню на сотнях CIDR.
 extract_ip_ranges() {
     local file="${1:-$IP_RANGES_FILE}"
     [ -f "$file" ] || return 0
-    grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$file" | while IFS= read -r line; do
-        local trimmed
-        trimmed=$(echo "${line%%#*}" | tr -d '[:space:]')
-        if validate_cidr "$trimmed" >/dev/null 2>&1; then
-            echo "$trimmed"
-        fi
-    done
+    awk '
+    {
+        sub(/#.*/, ""); gsub(/[[:space:]]/, "")
+        if ($0 !~ /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\/[0-9]{1,2}$/) next
+        split($0, p, /[.\/]/)
+        o1 = p[1] + 0; o2 = p[2] + 0; m = p[5] + 0
+        if (o1 > 255 || o2 > 255 || p[3] + 0 > 255 || p[4] + 0 > 255) next
+        if (m < 1 || m > 32) next
+        if (o1 == 127 || o1 == 0 || o1 >= 224 || (o1 == 169 && o2 == 254)) next
+        print
+    }' "$file"
 }
 
 # Читает последнее применённое состояние маршрутов из ip-ranges.applied.
@@ -290,11 +295,15 @@ sync_az_table_routes() {
         az_table_active "$table" || continue
         ip route replace "$SUBNET" dev singbox-tun table "$table" 2>/dev/null || true
         [ -n "$desired_file" ] && [ -f "$desired_file" ] || continue
-        while IFS= read -r cidr; do
-            [ -z "$cidr" ] && continue
-            ip route replace "$cidr" dev singbox-tun table "$table" 2>/dev/null || true
-        done < "$desired_file"
+        _ip_batch "route replace %s dev singbox-tun table $table" < "$desired_file"
     done
+}
+
+# Одна команда ip на весь список вместо вызова на каждый CIDR.
+# -force: ошибка в строке не прерывает остальные.
+#   _ip_batch ШАБЛОН < список   (%s в шаблоне — CIDR)
+_ip_batch() {
+    awk -v f="$1" 'NF { printf f "\n", $1 }' | ip -force -batch - >/dev/null 2>&1 || true
 }
 
 # Удаляет один CIDR из всех таблиц AntiZapret.
@@ -362,16 +371,13 @@ sync_ip_ranges() {
     fi
 
     # Чистим stale routes из предыдущего режима
-    while IFS= read -r cidr; do
-        [ -z "$cidr" ] && continue
-        if [ -z "$source_net" ]; then
-            # Сейчас main table — удаляем старые из table 100
-            ip route del "$cidr" dev singbox-tun table "$IP_ROUTE_TABLE" 2>/dev/null || true
-        else
-            # Сейчас table 100 — удаляем старые из main
-            ip route del "$cidr" dev singbox-tun 2>/dev/null || true
-        fi
-    done < "$applied_tmp"
+    if [ -z "$source_net" ]; then
+        # Сейчас main table — удаляем старые из table 100
+        _ip_batch "route del %s dev singbox-tun table $IP_ROUTE_TABLE" < "$applied_tmp"
+    else
+        # Сейчас table 100 — удаляем старые из main
+        _ip_batch "route del %s dev singbox-tun" < "$applied_tmp"
+    fi
 
     # Удаляем лишние маршруты (были в applied, удалены из файла)
     while IFS= read -r cidr; do
@@ -425,7 +431,8 @@ sync_ip_ranges() {
 
     # ipset: добавляем ВСЕ желаемые CIDR (не только новые).
     # Важно при перезагрузке ipset через doall.sh / up.sh.
-    if [ "$use_ipset" = true ]; then
+    if [ "$use_ipset" = true ] && ! awk 'NF { print "add antizapret-forward " $1 }' "$desired_tmp" \
+            | ipset restore -exist 2>/dev/null; then
         while IFS= read -r cidr; do
             [ -z "$cidr" ] && continue
             ipset add antizapret-forward "$cidr" -exist 2>/dev/null || true

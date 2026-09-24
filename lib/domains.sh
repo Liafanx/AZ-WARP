@@ -256,18 +256,20 @@ EOF
 
 # Фильтрует файл доменов: оставляет только валидные домены (без комментариев и дубликатов)
 # Используется для генерации warper-domains.txt
+# Правила — как в validate_domain, но одним awk вместо вызова на строку.
 filter_valid_domains_file() {
     local input="$1" output="$2"
-    : > "$output"
-    while IFS= read -r line; do
-        local trimmed clean
-        trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        [ -z "$trimmed" ] && continue
-        [[ "$trimmed" =~ ^# ]] && continue
-        clean=$(validate_domain "$trimmed" 2>/dev/null || true)
-        [ -n "$clean" ] && echo "$clean" >> "$output"
-    done < "$input"
-    sort -u -o "$output" "$output"
+    awk '
+    {
+        d = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", d)
+        if (d == "" || d ~ /^#/) next
+        sub(/\.$/, "", d); d = tolower(d)
+        if (d !~ /\./ || d ~ /\.\./ || d !~ /^[a-z0-9._-]+$/) next
+        n = split(d, l, ".")
+        for (i = 1; i <= n; i++)
+            if (l[i] == "" || length(l[i]) > 63 || l[i] ~ /^-|-$/) next
+        print d
+    }' "$input" | sort -u > "$output"
 }
 
 # Синхронизирует domains.txt → warper-domains.txt (активный список для kresd)

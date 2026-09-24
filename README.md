@@ -445,6 +445,7 @@ warper enable gemini            # включить встроенный спис
 warper disable gemini           # выключить встроенный список
 warper listupdate               # обновить встроенные списки из репозитория
 warper sync                     # применить список к DNS
+warper sync --force             # то же, с обязательным перезапуском kresd
 warper patch                    # переприменить патч kresd
 ```
 

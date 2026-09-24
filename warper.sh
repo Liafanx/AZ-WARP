@@ -87,36 +87,48 @@ MENU_UPDATE_AVAILABLE=false
 MENU_REMOTE_VER="$LOCAL_VER"
 
 # ===== Lock-файл =====
-# Lock берётся ТОЛЬКО для тяжёлых команд (toggle, sync, ipsync, mode, subnet, patch, update).
-# Все остальные команды (включая TUI-меню без аргументов) работают БЕЗ блокировки,
-# чтобы веб-панель могла параллельно вызывать warper.
+# Lock берётся для команд, которые меняют состояние. Чтение (status, list,
+# TUI-меню) идёт без него, чтобы веб-панель могла параллельно вызывать warper.
+# WARPER_LOCK_HELD наследуют дочерние вызовы warper (update → ipsync,
+# sync → doall.sh → resync) — иначе они ждали бы сами себя.
+# Файл блокировки не удаляется: процесс, ждущий на старом файле, и новый на
+# свежем получили бы блокировку одновременно.
 
 acquire_lock() {
+    [ -n "${WARPER_LOCK_HELD:-}" ] && return 0
     exec 9>"$LOCK_FILE"
     if ! flock -w 30 9; then
         echo -e "${RED}Не удалось получить блокировку (другая операция > 30 сек)${NC}" >&2
         exit 1
     fi
+    export WARPER_LOCK_HELD=$$
 }
 
 release_lock() {
-    flock -u 9 2>/dev/null || true
-    rm -f "$LOCK_FILE" 2>/dev/null || true
+    [ "${WARPER_LOCK_HELD:-}" = "$$" ] && flock -u 9 2>/dev/null
+    return 0
 }
 
 trap 'release_lock' EXIT
 
-# Lock берём ТОЛЬКО для тяжёлых команд по первому аргументу
-case "${1:-}" in
-    toggle|sync|ipsync|patch|mode|subnet|update|resync|resolvesync|resolveclean)
-        # Вызов из custom-doall.sh идёт внутри уже запущенного warper —
-        # повторный lock привёл бы к ожиданию самого себя
-        [ "${WARPER_FROM_DOALL:-}" = "1" ] || acquire_lock
-        ;;
-    *)
-        :  # без lock - TUI и быстрые команды
-        ;;
-esac
+_needs_lock() {
+    case "${1:-}" in
+        toggle|sync|ipsync|patch|mode|subnet|update|resync|resolvesync|resolveclean) return 0 ;;
+        add|remove|enable|disable|ipadd|ipremove) return 0 ;;
+        domains)  [[ "${2:-}" =~ ^(save|edit)$ ]] ;;
+        ipranges) [ "${2:-}" = "save" ] ;;
+        catalog)  [[ "${2:-}" =~ ^(add|remove|update|updateall)$ ]] ;;
+        config)   [ "${2:-}" = "set" ] ;;
+        resolve)  [[ "${2:-}" =~ ^(on|off|enable|disable)$ ]] ;;
+        iproutes) [ "${2:-}" = "clear" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+# Вызов из custom-doall.sh идёт внутри уже запущенного warper
+if _needs_lock "$@" && [ "${WARPER_FROM_DOALL:-}" != "1" ]; then
+    acquire_lock
+fi
 
 # ===== Подключение модулей =====
 WARPER_LIB="$WARPER_DIR/lib"
@@ -262,7 +274,10 @@ case "${1:-}" in
     sync)
         rebuild_master_file
         if is_warper_active; then
-            patch_kresd
+            patch_kresd "${2:-}" || exit 1
+            [ "${KRESD_RESTART_SKIPPED:-0}" = 1 ] \
+                && echo "Список доменов не изменился, kresd не перезапускался (--force — перезапустить)"
+            exit 0
         else
             sync_domains
             echo -e "${GREEN}Домены синхронизированы.${NC}"

@@ -354,7 +354,7 @@ run_main_menu() {
                 echo -e "\n${YELLOW}Запуск синхронизации...${NC}"
                 rebuild_master_file
                 if is_warper_active; then
-                    if patch_kresd; then
+                    if patch_kresd --force; then
                         echo -e "${GREEN}Готово!${NC}"
                     else
                         echo -e "${RED}Ошибка синхронизации.${NC}"

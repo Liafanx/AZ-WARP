@@ -60,8 +60,7 @@ validate_subnet() {
 # Отклоняет loopback, link-local, multicast, нулевой октет.
 # Возвращает нормализованный CIDR или код ошибки 1.
 validate_cidr() {
-    local cidr="$1"
-    cidr=$(echo "$cidr" | tr -d '[:space:]')
+    local cidr="${1//[[:space:]]/}"
     [ -z "$cidr" ] && return 1
 
     if [[ ! "$cidr" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})$ ]]; then
