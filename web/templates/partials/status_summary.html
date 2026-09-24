@@ -55,12 +55,6 @@
         </div>
 
         <!-- Предупреждения -->
-        {% if status.antizapret_warp %}
-            <div class="mt-3 p-3 bg-red-900/30 border border-red-700/50 rounded-lg text-sm text-red-200">
-                <div class="font-semibold">⚠ ANTIZAPRET_WARP=y — конфликт</div>
-                <div class="text-xs mt-1 text-red-300/80">WARPER не может работать. Установите ANTIZAPRET_WARP=n в /root/antizapret/setup и выполните down.sh && up.sh</div>
-            </div>
-        {% endif %}
 
         {% if status.warp_rules_active %}
             <div class="mt-3 p-3 bg-amber-900/30 border border-amber-700/50 rounded-lg text-sm text-amber-200">
@@ -129,6 +123,9 @@
             {% if status.outbound_mode == 'warp' %}WARP (Cloudflare)
             {% elif status.outbound_mode == 'slave' %}Slave (донор)
             {% elif status.outbound_mode == 'wg' %}WireGuard
+            {% elif status.outbound_mode == 'vless' %}VLESS
+            {% elif status.outbound_mode == 'hy2' %}Hysteria2
+            {% elif status.outbound_mode == 'openvpn' %}OpenVPN
             {% else %}{{ status.outbound_mode }}{% endif %}
         </div>
         <div class="space-y-1.5 text-sm">
@@ -136,6 +133,21 @@
                 <div class="flex justify-between">
                     <span class="text-emerald-400/70">Сервер</span>
                     <span class="text-emerald-200 font-mono text-xs">{{ status.slave.server }}:{{ status.slave.port }}</span>
+                </div>
+            {% elif status.outbound_mode in ('vless', 'hy2', 'openvpn') %}
+                <div class="flex justify-between">
+                    <span class="text-emerald-400/70">Сервер</span>
+                    <span class="text-emerald-200 font-mono text-xs">{{ status.outbound.server }}{% if status.outbound.port %}:{{ status.outbound.port }}{% endif %}</span>
+                </div>
+                {% if status.outbound.name and status.outbound.name != status.outbound.server %}
+                <div class="flex justify-between">
+                    <span class="text-emerald-400/70">Имя</span>
+                    <span class="text-emerald-200 text-xs truncate ml-2">{{ status.outbound.name }}</span>
+                </div>
+                {% endif %}
+                <div class="flex justify-between">
+                    <span class="text-emerald-400/70">Протокол</span>
+                    <span class="text-emerald-200 text-xs">{{ status.outbound_label.split(' (')[0] }}{% if status.outbound.transport %} / {{ status.outbound.transport }}{% endif %}</span>
                 </div>
             {% elif status.outbound_mode == 'wg' %}
                 <div class="flex justify-between">
@@ -246,23 +258,19 @@
                 <span class="text-emerald-400/70">FullVPN WARP-резолвинг</span>
                 <span class="text-emerald-200">
                     {% if status.fullvpn_warp_resolve == 'y' %}
-                        {% if status.vpn_warp %}
-                            <span class="text-red-400">включён (конфликт VPN_WARP=y)</span>
-                        {% else %}
-                            <span class="text-brand-400">включён</span>
-                        {% endif %}
+                        <span class="text-brand-400">включён</span>
                     {% else %}
                         выключен
                     {% endif %}
                 </span>
             </div>
             <div class="flex justify-between">
-                <span class="text-emerald-400/70">VPN_WARP в AntiZapret</span>
-                <span class="text-emerald-200">{% if status.vpn_warp %}включён{% else %}выключен{% endif %}</span>
+                <span class="text-emerald-400/70">Встроенный WARP: FullVPN</span>
+                <span class="text-emerald-200">{{ status.get('vpn_warp_mode', 'off') }}</span>
             </div>
             <div class="flex justify-between">
-                <span class="text-emerald-400/70">ANTIZAPRET_WARP</span>
-                <span class="text-emerald-200">{% if status.antizapret_warp %}<span class="text-red-400">включён ⚠</span>{% else %}выключен{% endif %}</span>
+                <span class="text-emerald-400/70">Встроенный WARP: AntiZapret</span>
+                <span class="text-emerald-200">{{ status.get('antizapret_warp_mode', 'off') }}</span>
             </div>
             <div class="flex justify-between">
                 <span class="text-emerald-400/70">Трафик через WARPER</span>

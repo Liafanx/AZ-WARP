@@ -2,8 +2,8 @@
 
 set -uo pipefail
 
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
-SB_VERSION="1.13.11"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/dev"
+SB_VERSION="1.14.1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -206,19 +206,37 @@ ensure_iptables_rule() {
         iptables -I "$chain" "$iface_flag" "$iface_name" -j ACCEPT
 }
 
+# Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
+# warp-vpn/warp-antizapret, старые — единый warp. Порядок = приоритет.
+WARP_SYSTEM_CANDIDATES="/etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf"
+CF_WARP_PUBKEY='bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo='
+
+# Печатает первый существующий системный WARP-конфиг Cloudflare.
+resolve_warp_system_conf() {
+    local candidate
+    for candidate in $WARP_SYSTEM_CANDIDATES; do
+        if [ -f "$candidate" ] && grep -q "$CF_WARP_PUBKEY" "$candidate" 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Функция поиска существующих WARP-ключей
 find_existing_warp_keys() {
     local address="" private_key=""
 
-    if [ -f "/etc/wireguard/warp.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-        private_key=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        address=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+    local sys_conf=""
+    if sys_conf=$(resolve_warp_system_conf); then
+        private_key=$(grep -m 1 '^PrivateKey' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        address=$(grep -m 1 '^Address' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$private_key" ]; then
             [ -z "$address" ] && address="172.16.0.2/32"
             [[ ! "$address" =~ / ]] && address="${address}/32"
             echo "$address"
             echo "$private_key"
-            echo "/etc/wireguard/warp.conf"
+            echo "$sys_conf"
             return 0
         fi
     fi
@@ -305,8 +323,8 @@ fi
 
 ADD_GEMINI="n"
 ADD_CHATGPT="n"
-SUBNET="198.20.0.0/24"
-TUN_IP="198.20.0.1/24"
+SUBNET="10.224.0.0/16"
+TUN_IP="10.224.0.1/16"
 
 echo -e "\n${YELLOW}⚙️  Настройка маршрутизации доменов${NC}"
 
@@ -452,6 +470,8 @@ WG_INSTALL_PRESHARED_KEY=""
 WG_INSTALL_ENDPOINT_HOST=""
 WG_INSTALL_ENDPOINT_PORT=""
 WG_INSTALL_KEEPALIVE="15"
+WG_INSTALL_MTU=""
+WG_INSTALL_DNS=""
 WG_INSTALL_CONF_FILE=""
 
 echo -e "\n${YELLOW}⚙️  Выбор режима маршрутизации${NC}"
@@ -464,9 +484,15 @@ echo -e "    ${CYAN}(нужен второй сервер с warperslave)${NC}"
 echo -e ""
 echo -e " ${GREEN}3.${NC} WG    — трафик через WireGuard-соединение"
 echo -e "    ${CYAN}(нужен .conf файл от WireGuard-сервера, в папке /root/)${NC}"
+echo -e ""
+echo -e " ${GREEN}4.${NC} VLESS — VLESS / VLESS+Reality по ссылке vless://"
+echo -e " ${GREEN}5.${NC} Hysteria2 — по ссылке hy2://"
+echo -e "    ${CYAN}(ссылку своего донора выдаёт команда warperslave link)${NC}"
+echo -e ""
+echo -e " ${GREEN}6.${NC} OpenVPN — по файлу .ovpn"
 
 while true; do
-    read -r -p "Выбор [1-3] (по умолчанию 1): " install_mode_choice < /dev/tty
+    read -r -p "Выбор [1-6] (по умолчанию 1): " install_mode_choice < /dev/tty
     if [[ -z "$install_mode_choice" || "$install_mode_choice" == "1" ]]; then
         INSTALL_MODE="warp"
         break
@@ -476,8 +502,17 @@ while true; do
     elif [[ "$install_mode_choice" == "3" ]]; then
         INSTALL_MODE="wg"
         break
+    elif [[ "$install_mode_choice" == "4" ]]; then
+        INSTALL_MODE="vless"
+        break
+    elif [[ "$install_mode_choice" == "5" ]]; then
+        INSTALL_MODE="hy2"
+        break
+    elif [[ "$install_mode_choice" == "6" ]]; then
+        INSTALL_MODE="openvpn"
+        break
     else
-        echo -e "${RED}Введите 1, 2 или 3.${NC}"
+        echo -e "${RED}Введите число от 1 до 6.${NC}"
     fi
 done
 
@@ -530,28 +565,42 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         return 0
     }
 
+    # Устойчиво к отсутствию пробелов вокруг "=" и к inline-комментариям
+    _wg_conf_value_install() {
+        local file="$1" key="$2"
+        grep -m 1 -E "^[[:space:]]*${key}[[:space:]]*=" "$file" 2>/dev/null \
+            | sed -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//; s/[[:space:]]+#.*$//; s/[[:space:]]+$//" \
+            | tr -d '\r'
+    }
+
     _parse_wg_conf_install() {
         local file="$1"
         WG_INSTALL_CONF_FILE="$file"
-        WG_INSTALL_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_ADDRESS=$(grep -m 1 '^Address' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_ADDRESS="${WG_INSTALL_ADDRESS%%,*}"
-        WG_INSTALL_ADDRESS=$(echo "$WG_INSTALL_ADDRESS" | tr -d ' ')
-        WG_INSTALL_PUBLIC_KEY=$(grep -m 1 '^PublicKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_PRESHARED_KEY=$(grep -m 1 '^PresharedKey' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        WG_INSTALL_PRIVATE_KEY=$(_wg_conf_value_install "$file" "PrivateKey")
+        WG_INSTALL_ADDRESS=$(_wg_conf_value_install "$file" "Address")
+        WG_INSTALL_ADDRESS=$(echo "${WG_INSTALL_ADDRESS%%,*}" | tr -d '[:space:]')
+        WG_INSTALL_PUBLIC_KEY=$(_wg_conf_value_install "$file" "PublicKey")
+        WG_INSTALL_PRESHARED_KEY=$(_wg_conf_value_install "$file" "PresharedKey")
+        WG_INSTALL_MTU=$(_wg_conf_value_install "$file" "MTU")
+        WG_INSTALL_DNS=$(_wg_conf_value_install "$file" "DNS")
+        WG_INSTALL_DNS=$(echo "${WG_INSTALL_DNS%%,*}" | tr -d '[:space:]')
         local ep
-        ep=$(grep -m 1 '^Endpoint' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        WG_INSTALL_ENDPOINT_HOST="${ep%:*}"
-        WG_INSTALL_ENDPOINT_PORT="${ep##*:}"
+        ep=$(_wg_conf_value_install "$file" "Endpoint" | tr -d '[:space:]')
+        if [[ "$ep" =~ ^\[(.+)\]:([0-9]+)$ ]]; then
+            WG_INSTALL_ENDPOINT_HOST="${BASH_REMATCH[1]}"
+            WG_INSTALL_ENDPOINT_PORT="${BASH_REMATCH[2]}"
+        else
+            WG_INSTALL_ENDPOINT_HOST="${ep%:*}"
+            WG_INSTALL_ENDPOINT_PORT="${ep##*:}"
+        fi
         local ka
-        ka=$(grep -m 1 '^PersistentKeepalive' "$file" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        ka=$(_wg_conf_value_install "$file" "PersistentKeepalive")
         WG_INSTALL_KEEPALIVE="${ka:-15}"
 
         local missing=()
         [ -z "$WG_INSTALL_ADDRESS" ]       && missing+=("Address")
         [ -z "$WG_INSTALL_PRIVATE_KEY" ]   && missing+=("PrivateKey")
         [ -z "$WG_INSTALL_PUBLIC_KEY" ]    && missing+=("PublicKey")
-        [ -z "$WG_INSTALL_PRESHARED_KEY" ] && missing+=("PresharedKey")
         [ -z "$WG_INSTALL_ENDPOINT_HOST" ] && missing+=("Endpoint")
 
         if [ ${#missing[@]} -gt 0 ]; then
@@ -630,11 +679,7 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                         [ -n "$WG_INSTALL_PUBLIC_KEY" ] && break
                         echo -e "${RED}PublicKey обязателен!${NC}"
                     done
-                    while true; do
-                        read -r -p "PresharedKey: " WG_INSTALL_PRESHARED_KEY < /dev/tty
-                        [ -n "$WG_INSTALL_PRESHARED_KEY" ] && break
-                        echo -e "${RED}PresharedKey обязателен!${NC}"
-                    done
+                    read -r -p "PresharedKey (Enter — нет): " WG_INSTALL_PRESHARED_KEY < /dev/tty
                     read -r -p "PersistentKeepalive [15]: " WG_INSTALL_KEEPALIVE < /dev/tty
                     WG_INSTALL_KEEPALIVE="${WG_INSTALL_KEEPALIVE:-15}"
                     WG_INSTALL_CONF_FILE="manual"
@@ -687,11 +732,7 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
                         [ -n "$WG_INSTALL_PUBLIC_KEY" ] && break
                         echo -e "${RED}PublicKey обязателен!${NC}"
                     done
-                    while true; do
-                        read -r -p "PresharedKey: " WG_INSTALL_PRESHARED_KEY < /dev/tty
-                        [ -n "$WG_INSTALL_PRESHARED_KEY" ] && break
-                        echo -e "${RED}PresharedKey обязателен!${NC}"
-                    done
+                    read -r -p "PresharedKey (Enter — нет): " WG_INSTALL_PRESHARED_KEY < /dev/tty
                     read -r -p "PersistentKeepalive [15]: " WG_INSTALL_KEEPALIVE < /dev/tty
                     WG_INSTALL_KEEPALIVE="${WG_INSTALL_KEEPALIVE:-15}"
                     WG_INSTALL_CONF_FILE="manual"
@@ -718,6 +759,40 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
 
     echo -e " - ${GREEN}Режим: WG ($WG_INSTALL_ENDPOINT_HOST:$WG_INSTALL_ENDPOINT_PORT)${NC}"
     MODE_CONFIGURED=true
+
+elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+    mkdir -p "$WARPER_DIR/lib"
+    download_file "$REPO_URL/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" \
+        "разборщик ссылок" || exit 1
+
+    parse_args=()
+    if [ "$INSTALL_MODE" = "openvpn" ]; then
+        read -r -p "Путь к .ovpn: " ovpn_path < /dev/tty
+        parse_args=(ovpn "$ovpn_path")
+        if grep -qiE '^[[:space:]]*auth-user-pass' "$ovpn_path" 2>/dev/null; then
+            echo -e "${YELLOW}Конфиг требует логин и пароль (auth-user-pass).${NC}"
+            read -r -p "Логин: " ovpn_user < /dev/tty
+            read -r -s -p "Пароль: " ovpn_pass < /dev/tty; echo ""
+            parse_args+=(--user "$ovpn_user" --pass "$ovpn_pass")
+        fi
+    else
+        read -r -p "Ссылка: " proxy_link < /dev/tty
+        parse_args=("$([ "$INSTALL_MODE" = "vless" ] && echo vless || echo hy2)" "$proxy_link")
+    fi
+
+    if parsed=$(python3 "$WARPER_DIR/lib/outbound-parse.py" "${parse_args[@]}"); then
+        printf '%s\n' "$parsed" > "$WARPER_DIR/outbound.json"
+        chmod 600 "$WARPER_DIR/outbound.json"
+        if [ -n "${ovpn_user:-}" ]; then
+            jq -n --arg f "$(realpath -m "$ovpn_path")" --arg u "$ovpn_user" --arg p "$ovpn_pass" \
+                '{($f): {username: $u, password: $p}}' > "$WARPER_DIR/ovpn-auth.json"
+            chmod 600 "$WARPER_DIR/ovpn-auth.json"
+        fi
+        echo -e " - ${GREEN}Режим: $INSTALL_MODE ($(jq -r '"\(.server):\(.port // "")"' <<< "$parsed"))${NC}"
+        MODE_CONFIGURED=true
+    else
+        echo -e "${RED}Не удалось разобрать, попробуйте ещё раз.${NC}"
+    fi
 
 else
     MODE_CONFIGURED=true
@@ -755,6 +830,9 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     echo -e " - ${CYAN}Режим WG — ключи WARP не требуются.${NC}"
     echo -e " - ${CYAN}Данные WireGuard уже получены на предыдущем шаге.${NC}"
 
+elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+    echo -e " - ${CYAN}Режим $INSTALL_MODE — ключи WARP не требуются.${NC}"
+
 else
     # === Режим WARP ===
     echo -e "\n${YELLOW}Выбор источника WARP-ключей:${NC}"
@@ -763,12 +841,13 @@ else
     warp_labels=()
     widx=1
 
-    if [ -f "/etc/wireguard/warp.conf" ] && grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-        sys_pk=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-        sys_addr=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+    WARP_SYS_CONF=""
+    if WARP_SYS_CONF=$(resolve_warp_system_conf); then
+        sys_pk=$(grep -m 1 '^PrivateKey' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        sys_addr=$(grep -m 1 '^Address' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
         if [ -n "$sys_pk" ]; then
             warp_sources+=("system")
-            warp_labels+=("/etc/wireguard/warp.conf (${sys_addr:-без адреса}) — рекомендуется")
+            warp_labels+=("$WARP_SYS_CONF (${sys_addr:-без адреса}) — ключи AntiZapret, рекомендуется")
             echo -e " ${GREEN}${widx}.${NC} ${warp_labels[$((widx-1))]}"
             ((widx++))
         fi
@@ -813,12 +892,13 @@ else
 
     case "$warp_selected" in
         system)
-            WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            WARP_ADDRESS=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            WARP_ADDRESS=$(grep -m 1 '^Address' "$WARP_SYS_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
             [ -z "$WARP_ADDRESS" ] && WARP_ADDRESS="172.16.0.2/32"
             [[ ! "$WARP_ADDRESS" =~ / ]] && WARP_ADDRESS="${WARP_ADDRESS}/32"
-            WARP_SOURCE="/etc/wireguard/warp.conf"
-            echo -e " - ${GREEN}Используем ключи из /etc/wireguard/warp.conf${NC}"
+            WARP_SOURCE="$WARP_SYS_CONF"
+            WARP_KEY_SOURCE_SEL="system"
+            echo -e " - ${GREEN}Используем ключи из $WARP_SYS_CONF${NC}"
             ;;
         wgcf)
             WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" | awk '{print $3}' | tr -d '\r\n')
@@ -888,6 +968,10 @@ else
         exit 1
     fi
     echo -e " - ${GREEN}Ключи получены! Источник: $WARP_SOURCE${NC}"
+
+    # Только при явном выборе system warper следует за ключами AntiZapret
+    # и пересобирает конфиг, когда up.sh их перегенерирует
+    echo "WARP_KEY_SOURCE=${WARP_KEY_SOURCE_SEL:-local}" >> "$CONF_FILE"
 fi
 
 echo -e "\n${YELLOW}[3/8] Создание конфигурации sing-box (IPv4 only)...${NC}"
@@ -922,8 +1006,12 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
     
     tmp_wg=$(mktemp)
+    wg_mtu_value="${WG_INSTALL_MTU:-${CHOSEN_MTU:-1420}}"
+    wg_dns_value="${WG_INSTALL_DNS:-1.1.1.1}"
     sed \
         -e "s|__SUBNET__|$SUBNET|g" \
+        -e "s|__WG_MTU__|$wg_mtu_value|g" \
+        -e "s|__WG_DNS__|$wg_dns_value|g" \
         -e "s|__TUN_IP__|$TUN_IP|g" \
         -e "s|__WG_ADDRESS__|$WG_INSTALL_ADDRESS|g" \
         -e "s|__WG_PRIVATE_KEY__|$WG_INSTALL_PRIVATE_KEY|g" \
@@ -940,10 +1028,7 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     fi
 
     mv "$tmp_wg" "$SINGBOX_CONF"
-    if [ -n "${CHOSEN_MTU:-}" ]; then
-      sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
-    fi
-    
+
     # Сохраняем WG-настройки
     {
         echo "OUTBOUND_MODE=wg"
@@ -962,8 +1047,32 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
         echo "WG_ENDPOINT_HOST=$WG_INSTALL_ENDPOINT_HOST"
         echo "WG_ENDPOINT_PORT=$WG_INSTALL_ENDPOINT_PORT"
         echo "WG_KEEPALIVE=$WG_INSTALL_KEEPALIVE"
+        echo "WG_MTU=$wg_mtu_value"
+        echo "WG_DNS=$wg_dns_value"
     } > "$WARPER_DIR/wg_mode.conf"
     chmod 600 "$WARPER_DIR/wg_mode.conf"
+elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+    PROXY_TEMPLATE="$WARPER_DIR/config-proxy.json.template"
+    OUTBOUND_JSON="$WARPER_DIR/outbound.json"
+    download_file "$REPO_URL/templates/config-proxy.json.template" "$PROXY_TEMPLATE" "шаблон proxy" || exit 1
+    for _libfile in singbox outbound; do
+        download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
+        # shellcheck disable=SC1090
+        source "$WARPER_DIR/lib/${_libfile}.sh"
+    done
+    CURRENT_OUTBOUND_MODE="$INSTALL_MODE"
+    rebuild_config_proxy || exit 1
+    if [ -n "${CHOSEN_MTU:-}" ]; then
+        sed -i "s/\"mtu\": 1420/\"mtu\": $CHOSEN_MTU/g" "$SINGBOX_CONF"
+    fi
+
+    {
+        echo "OUTBOUND_MODE=$INSTALL_MODE"
+        echo "SLAVE_SERVER="
+        echo "SLAVE_PORT=8444"
+        echo "SLAVE_PASSWORD="
+    } > "$WARPER_DIR/slave_mode.conf"
+    chmod 600 "$WARPER_DIR/slave_mode.conf"
 else
     download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json" || exit 1
 
@@ -1000,6 +1109,11 @@ download_file "$REPO_URL/templates/sing-box.service" "/etc/systemd/system/sing-b
 download_file "$REPO_URL/templates/warper-autopatch.service" "/etc/systemd/system/warper-autopatch.service" "служба warper-autopatch.service" || exit 1
 download_file "$REPO_URL/templates/warper-traffic-snapshot.service" "/etc/systemd/system/warper-traffic-snapshot.service" "служба warper-traffic-snapshot.service" || exit 1
 download_file "$REPO_URL/templates/warper-traffic-snapshot.timer" "/etc/systemd/system/warper-traffic-snapshot.timer" "таймер warper-traffic-snapshot.timer" || exit 1
+download_file "$REPO_URL/templates/warper-resync.service" "/etc/systemd/system/warper-resync.service" "служба warper-resync.service" || exit 1
+download_file "$REPO_URL/templates/warper-resync.timer" "/etc/systemd/system/warper-resync.timer" "таймер warper-resync.timer" || exit 1
+# Авто-резолв опционален: таймер ставим, но не включаем
+download_file "$REPO_URL/templates/warper-resolve.service" "/etc/systemd/system/warper-resolve.service" "служба warper-resolve.service" || exit 1
+download_file "$REPO_URL/templates/warper-resolve.timer" "/etc/systemd/system/warper-resolve.timer" "таймер warper-resolve.timer" || exit 1
 systemctl daemon-reload
 
 if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
@@ -1017,6 +1131,8 @@ else
     # Таймер периодических snapshot'ов трафика
     systemctl enable warper-traffic-snapshot.timer > /dev/null 2>&1
     systemctl start warper-traffic-snapshot.timer > /dev/null 2>&1 || true
+    systemctl enable warper-resync.timer > /dev/null 2>&1
+    systemctl start warper-resync.timer > /dev/null 2>&1 || true
 
     sleep 2
 fi
@@ -1039,6 +1155,23 @@ if [ -f "$AZ_INC" ]; then
         normalize_include_ips "$AZ_INC"
         echo -e " - ${GREEN}Подсеть $SUBNET уже присутствует в include-ips.txt.${NC}"
     fi
+fi
+
+# Ночной doall.sh пересобирает ipset и правила FORWARD, затирая состояние
+# WARPER. custom-doall.sh — официальная точка расширения AntiZapret.
+AZ_CUSTOM_DOALL="/root/antizapret/custom-doall.sh"
+if [ -f "$AZ_CUSTOM_DOALL" ] && ! grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null; then
+    echo -e " - ${CYAN}Регистрация в custom-doall.sh...${NC}"
+    cat >> "$AZ_CUSTOM_DOALL" <<'HOOKEOF'
+
+# --- WARPER ---
+# Восстанавливает состояние WARPER после пересборки правил AntiZapret
+if [ -x /usr/local/bin/warper ]; then
+    WARPER_FROM_DOALL=1 /usr/local/bin/warper resync >/dev/null 2>&1 || true
+fi
+# --- END WARPER ---
+HOOKEOF
+    chmod +x "$AZ_CUSTOM_DOALL" 2>/dev/null || true
 fi
 
 echo -e "\n${YELLOW}[6/8] Скачивание базовых списков с GitHub...${NC}"
@@ -1072,18 +1205,21 @@ download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" 
 download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
 download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1
+download_file "$REPO_URL/templates/config-proxy.json.template" "$WARPER_DIR/config-proxy.json.template" "шаблон VLESS/Hysteria2/OpenVPN" || exit 1
 
 # Скачиваем модули lib/
 echo -e " - ${CYAN}Скачивание модулей lib/...${NC}"
 mkdir -p "$WARPER_DIR/lib"
-for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+for _libfile in utils config domains domains-resolve singbox outbound kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
     download_file "$REPO_URL/lib/${_libfile}.sh" "$WARPER_DIR/lib/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
 done
+download_file "$REPO_URL/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" "lib/outbound-parse.py" || exit 1
+chmod 755 "$WARPER_DIR/lib/outbound-parse.py"
 
 # Скачиваем Python API
 echo -e " - ${CYAN}Скачивание Python API...${NC}"
 mkdir -p "$WARPER_DIR/py/warper_api"
-for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates; do
+for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates web; do
     download_file "$REPO_URL/py/warper_api/${_pyfile}.py" \
         "$WARPER_DIR/py/warper_api/${_pyfile}.py" \
         "py/warper_api/${_pyfile}.py" || exit 1
@@ -1093,7 +1229,7 @@ download_file "$REPO_URL/py/setup.py" "$WARPER_DIR/py/setup.py" "py/setup.py" ||
 # Скачиваем модули menus/
 echo -e " - ${CYAN}Скачивание модулей menus/...${NC}"
 mkdir -p "$WARPER_DIR/menus"
-for _menufile in main settings singbox-menu ip-menu web-menu; do
+for _menufile in main settings singbox-menu ip-menu catalog-menu web-menu; do
     download_file "$REPO_URL/menus/${_menufile}.sh" "$WARPER_DIR/menus/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
 done
 

@@ -9,21 +9,9 @@
 # Включает или выключает WARPER (без интерактивности).
 # Аналог пункта 8 в главном меню, но без вопросов.
 cli_toggle_warper() {
-    if check_antizapret_warp; then
-        echo "ERROR: ANTIZAPRET_WARP=y - WARPER cannot work" >&2
-        return 1
-    fi
-
     if needs_down_sh; then
         echo "ERROR: WARP rules from up.sh are active. Run /root/antizapret/down.sh && /root/antizapret/up.sh" >&2
         return 1
-    fi
-
-    # Автоотключение FullVPN при VPN_WARP=y
-    if [ "$FULLVPN_WARP_RESOLVE" = "y" ] && check_vpn_warp; then
-        unpatch_kresd_fullvpn
-        FULLVPN_WARP_RESOLVE="n"
-        save_main_config
     fi
 
     if systemctl is-active --quiet sing-box || \
@@ -70,21 +58,8 @@ cli_toggle_warper() {
             echo "ERROR: failed to patch kresd" >&2
             return 1
         fi
-        # Fake-подсеть должна быть в include-ips.txt, иначе клиенты
-        # получают fake-IP от kresd, но не имеют маршрута через AntiZapret.
-        # При выключении подсеть намеренно оставляем (как было при установке).
-        if [ -f "$AZ_INC" ] && ! grep -qxF "$SUBNET" "$AZ_INC" 2>/dev/null; then
-            echo "$SUBNET" >> "$AZ_INC"
-            normalize_include_ips "$AZ_INC"
-            export DEBIAN_FRONTEND=noninteractive
-            export SYSTEMD_PAGER=""
-            timeout 180 bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1 || {
-                echo "WARNING: doall.sh ip exited non-zero or timed out" >&2
-            }
-        fi
-        if [ "$(count_ip_ranges)" -gt 0 ]; then
-            sync_ip_ranges >/dev/null 2>&1 || true
-        fi
+        ensure_subnet_in_include_ips
+        resync_ip_routes_if_needed
         echo "WARPER enabled"
         return 0
     fi
@@ -94,99 +69,89 @@ cli_toggle_warper() {
 
 # Переключает на режим WARP.
 # Опционально принимает source: system | wgcf | root | generate
-cli_mode_warp() {
+# Выбирает ключ WARP из явного источника и запоминает его для сборки.
+# Без источника ничего не делает: сборка возьмёт текущий ключ.
+_select_warp_key() {
     local key_source="${1:-}"
+    [ -z "$key_source" ] && return 0
 
-    load_slave_config
-    CURRENT_OUTBOUND_MODE="warp"
-    save_slave_config
-
-    # Если указан источник ключа, применяем его
-    if [ -n "$key_source" ]; then
-        local new_address="" new_private_key=""
-        case "$key_source" in
-            system)
-                if [ ! -f "$WARP_SYSTEM_CONF" ]; then
-                    echo "ERROR: $WARP_SYSTEM_CONF not found" >&2
-                    return 1
-                fi
-                new_private_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" \
-                    | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-                new_address=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" \
-                    | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-                [ -z "$new_address" ] && new_address="172.16.0.2/32"
-                [[ ! "$new_address" =~ / ]] && new_address="${new_address}/32"
-                ;;
-            wgcf)
-                local wgcf_file="$WGCF_DIR/wgcf-profile.conf"
-                if [ ! -f "$wgcf_file" ]; then
-                    echo "ERROR: $wgcf_file not found" >&2
-                    return 1
-                fi
-                new_private_key=$(grep -m 1 '^PrivateKey = ' "$wgcf_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                new_address=$(grep -m 1 '^Address = ' "$wgcf_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                ;;
-            root)
-                local root_file="/root/wgcf-profile.conf"
-                if [ ! -f "$root_file" ]; then
-                    echo "ERROR: $root_file not found" >&2
-                    return 1
-                fi
-                new_private_key=$(grep -m 1 '^PrivateKey = ' "$root_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                new_address=$(grep -m 1 '^Address = ' "$root_file" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                ;;
-            generate)
-                cli_generate_warp_key || return 1
-                new_private_key=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                new_address=$(grep -m 1 '^Address = ' "$WGCF_DIR/wgcf-profile.conf" \
-                    | awk '{print $3}' | tr -d '\r\n')
-                ;;
-            *)
-                echo "ERROR: unknown key_source '$key_source' (use: system|wgcf|root|generate)" >&2
+    local new_address="" new_private_key=""
+    case "$key_source" in
+        system)
+            if [ ! -f "$WARP_SYSTEM_CONF" ]; then
+                echo "ERROR: $WARP_SYSTEM_CONF not found" >&2
                 return 1
-                ;;
-        esac
-
-        if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
-            echo "ERROR: failed to extract WARP keys" >&2
+            fi
+            new_private_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" \
+                | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            new_address=$(grep -m 1 '^Address' "$WARP_SYSTEM_CONF" \
+                | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+            [ -z "$new_address" ] && new_address="172.16.0.2/32"
+            [[ ! "$new_address" =~ / ]] && new_address="${new_address}/32"
+            ;;
+        wgcf)
+            local wgcf_file="$WGCF_DIR/wgcf-profile.conf"
+            if [ ! -f "$wgcf_file" ]; then
+                echo "ERROR: $wgcf_file not found" >&2
+                return 1
+            fi
+            new_private_key=$(grep -m 1 '^PrivateKey = ' "$wgcf_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            new_address=$(grep -m 1 '^Address = ' "$wgcf_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            ;;
+        root)
+            local root_file="/root/wgcf-profile.conf"
+            if [ ! -f "$root_file" ]; then
+                echo "ERROR: $root_file not found" >&2
+                return 1
+            fi
+            new_private_key=$(grep -m 1 '^PrivateKey = ' "$root_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            new_address=$(grep -m 1 '^Address = ' "$root_file" \
+                | awk '{print $3}' | tr -d '\r\n')
+            ;;
+        generate)
+            cli_generate_warp_key || return 1
+            new_private_key=$(grep -m 1 '^PrivateKey = ' "$WGCF_DIR/wgcf-profile.conf" \
+                | awk '{print $3}' | tr -d '\r\n')
+            new_address=$(grep -m 1 '^Address = ' "$WGCF_DIR/wgcf-profile.conf" \
+                | awk '{print $3}' | tr -d '\r\n')
+            ;;
+        *)
+            echo "ERROR: unknown key_source '$key_source' (use: system|wgcf|root|generate)" >&2
             return 1
-        fi
+            ;;
+    esac
 
-        if [ ! -f "$SINGBOX_TEMPLATE" ]; then
-            download_file_safe "$REPO_URL/templates/config.json.template" \
-                "$SINGBOX_TEMPLATE" "config.json.template" || return 1
-        fi
-
-        sed \
-            -e "s|__WARP_ADDRESS__|$new_address|g" \
-            -e "s|__WARP_PRIVATE_KEY__|$new_private_key|g" \
-            -e "s|__SUBNET__|$SUBNET|g" \
-            -e "s|__TUN_IP__|$TUN_IP|g" \
-            "$SINGBOX_TEMPLATE" > "$SINGBOX_CONF"
-        chmod 600 "$SINGBOX_CONF"
-    else
-        # Без указания source — стандартная пересборка через get_warp_credentials
-        if ! rebuild_config "$SINGBOX_TEMPLATE"; then
-            echo "ERROR: failed to rebuild config" >&2
-            return 1
-        fi
-    fi
-
-    if ! validate_singbox_config; then
-        echo "ERROR: invalid sing-box config" >&2
+    if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
+        echo "ERROR: failed to extract WARP keys" >&2
         return 1
     fi
 
-    if systemctl is-active --quiet sing-box; then
-        if ! restart_singbox_full; then
-            echo "ERROR: failed to restart sing-box" >&2
-            return 1
-        fi
+    WARP_OVERRIDE_ADDRESS="$new_address"
+    WARP_OVERRIDE_KEY="$new_private_key"
+
+    # Следовать за ключами AntiZapret только при явном выборе system
+    if [ "$key_source" = "system" ]; then
+        WARP_KEY_SOURCE="system"
+    else
+        WARP_KEY_SOURCE="local"
+    fi
+    save_main_config
+}
+
+cli_mode_warp() {
+    local key_source="${1:-}"
+
+    if [ ! -f "$SINGBOX_TEMPLATE" ]; then
+        download_file_safe "$REPO_URL/templates/config.json.template" \
+            "$SINGBOX_TEMPLATE" "config.json.template" || return 1
+    fi
+
+    if ! apply_outbound_mode warp _select_warp_key "$key_source"; then
+        echo "ERROR: failed to switch to WARP mode" >&2
+        return 1
     fi
 
     echo "Mode switched to WARP"
@@ -195,13 +160,28 @@ cli_mode_warp() {
 
 # Переключает на режим Slave.
 # Аргументы: SERVER PORT PASSWORD
+_set_slave_params() {
+    SLAVE_SERVER="$1"
+    SLAVE_PORT="$2"
+    SLAVE_PASSWORD="$3"
+}
+
 cli_mode_slave() {
     local server="$1"
     local port="$2"
     local password="$3"
 
+    if [[ "$server" == ss://* ]]; then
+        if ! apply_outbound_mode slave _set_slave_from_link "$server"; then
+            echo "ERROR: failed to switch to slave mode" >&2
+            return 1
+        fi
+        echo "Mode switched to Slave ($SLAVE_SERVER:$SLAVE_PORT)"
+        return 0
+    fi
+
     if [ -z "$server" ] || [ -z "$port" ] || [ -z "$password" ]; then
-        echo "Usage: warper mode slave SERVER PORT PASSWORD" >&2
+        echo "Usage: warper mode slave SERVER PORT PASSWORD | 'ss://...'" >&2
         return 1
     fi
 
@@ -215,22 +195,9 @@ cli_mode_slave() {
         return 1
     fi
 
-    SLAVE_SERVER="$server"
-    SLAVE_PORT="$port"
-    SLAVE_PASSWORD="$password"
-    CURRENT_OUTBOUND_MODE="slave"
-    save_slave_config
-
-    if ! rebuild_config_slave; then
-        echo "ERROR: failed to rebuild slave config" >&2
+    if ! apply_outbound_mode slave _set_slave_params "$server" "$port" "$password"; then
+        echo "ERROR: failed to switch to slave mode" >&2
         return 1
-    fi
-
-    if systemctl is-active --quiet sing-box; then
-        if ! restart_singbox_full; then
-            echo "ERROR: failed to restart sing-box" >&2
-            return 1
-        fi
     fi
 
     echo "Mode switched to Slave ($server:$port)"
@@ -238,6 +205,10 @@ cli_mode_slave() {
 }
 
 # Переключает на режим WG из указанного .conf файла.
+_set_wg_params() {
+    parse_wg_conf "$1" && save_wg_config
+}
+
 cli_mode_wg() {
     local conf_path="$1"
 
@@ -256,26 +227,9 @@ cli_mode_wg() {
         return 1
     fi
 
-    if ! parse_wg_conf "$conf_path"; then
-        echo "ERROR: failed to parse WG config" >&2
+    if ! apply_outbound_mode wg _set_wg_params "$conf_path"; then
+        echo "ERROR: failed to switch to WG mode" >&2
         return 1
-    fi
-
-    save_wg_config
-
-    CURRENT_OUTBOUND_MODE="wg"
-    save_slave_config
-
-    if ! rebuild_config_wg; then
-        echo "ERROR: failed to rebuild WG config" >&2
-        return 1
-    fi
-
-    if systemctl is-active --quiet sing-box; then
-        if ! restart_singbox_full; then
-            echo "ERROR: failed to restart sing-box" >&2
-            return 1
-        fi
     fi
 
     echo "Mode switched to WG ($WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT)"
@@ -349,6 +303,7 @@ cli_config_get() {
         IP_ROUTE_MODE) echo "$IP_ROUTE_MODE" ;;
         IP_EXPORT_TO_ANTIZAPRET) echo "$IP_EXPORT_TO_ANTIZAPRET" ;;
         FULLVPN_WARP_RESOLVE) echo "$FULLVPN_WARP_RESOLVE" ;;
+        WARP_KEY_SOURCE) echo "$WARP_KEY_SOURCE" ;;
         OUTBOUND_MODE) echo "$CURRENT_OUTBOUND_MODE" ;;
         SLAVE_SERVER) echo "$SLAVE_SERVER" ;;
         SLAVE_PORT) echo "$SLAVE_PORT" ;;
@@ -356,6 +311,8 @@ cli_config_get() {
         WG_ENDPOINT_PORT) load_wg_config; echo "$WG_ENDPOINT_PORT" ;;
         WG_ADDRESS) load_wg_config; echo "$WG_ADDRESS" ;;
         WG_CONF_FILE) load_wg_config; echo "$WG_CONF_FILE" ;;
+        OUTBOUND_SERVER) jq -r '.server // empty' "$OUTBOUND_JSON" 2>/dev/null ;;
+        OUTBOUND_NAME) jq -r '.name // empty' "$OUTBOUND_JSON" 2>/dev/null ;;
         LOG_LEVEL) get_log_level ;;
         MTU) get_mtu ;;
         *) echo "ERROR: unknown key: $key" >&2; return 1 ;;
@@ -369,7 +326,7 @@ cli_subnet() {
     local new_subnet="$1"
 
     if [ -z "$new_subnet" ]; then
-        echo "Usage: warper subnet NEW_SUBNET (e.g. 198.20.0.0/24)" >&2
+        echo "Usage: warper subnet NEW_SUBNET (e.g. 10.224.0.0/16)" >&2
         return 1
     fi
 
@@ -429,7 +386,12 @@ cli_subnet() {
     }
 
     if systemctl is-active --quiet sing-box; then
-        systemctl restart sing-box
+        # Маппинги из старого пула переживают рестарт (store_fakeip),
+        # а kresd продолжает отдавать клиентам старые адреса — без сброса
+        # обоих кэшей домены остаются на неотмаршрутизированных IP.
+        systemctl stop sing-box
+        rm -f /var/lib/sing-box/cache.db
+        systemctl start sing-box
         if ! ensure_singbox_running; then
             echo "ERROR: sing-box failed to restart" >&2
             return 1
@@ -438,6 +400,7 @@ cli_subnet() {
         ensure_iptables_rule FORWARD -i singbox-tun
         resync_ip_routes_if_needed
     fi
+    flush_kresd_cache
 
     echo "Subnet changed: $old_subnet -> $new_subnet"
     return 0
@@ -504,10 +467,6 @@ cli_fullvpn() {
     local action="$1"
     case "$action" in
         on|enable)
-            if check_vpn_warp; then
-                echo "ERROR: VPN_WARP=y - cannot enable FullVPN WARP resolve" >&2
-                return 1
-            fi
             if patch_kresd_fullvpn; then
                 FULLVPN_WARP_RESOLVE="y"
                 save_main_config
@@ -664,6 +623,9 @@ cli_status_json() {
     subnet_conflicts "$SUBNET" && sub_conflict="true"
     check_antizapret_warp && az_warp_en="true"
     check_vpn_warp && vpn_warp_en="true"
+    local az_warp_mode_v vpn_warp_mode_v
+    az_warp_mode_v=$(az_warp_mode ANTIZAPRET_WARP)
+    vpn_warp_mode_v=$(az_warp_mode VPN_WARP)
     needs_down_sh && warp_rules="true"
     grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null && fullvpn_patched="true"
     ip_ranges_in_sync && ip_synced="true"
@@ -688,7 +650,9 @@ cli_status_json() {
         --arg remote_version "$remote_ver" \
         --argjson update_available "$update_avail" \
         --argjson antizapret_warp "$az_warp_en" \
+        --arg antizapret_warp_mode "$az_warp_mode_v" \
         --argjson vpn_warp "$vpn_warp_en" \
+        --arg vpn_warp_mode "$vpn_warp_mode_v" \
         --argjson warp_rules_active "$warp_rules" \
         --arg outbound_mode "$CURRENT_OUTBOUND_MODE" \
         --arg slave_server "$SLAVE_SERVER" \
@@ -698,6 +662,8 @@ cli_status_json() {
         --arg wg_endpoint_port "$WG_ENDPOINT_PORT" \
         --arg wg_address "$WG_ADDRESS" \
         --arg wg_conf_file "$WG_CONF_FILE" \
+        --arg outbound_label "$(outbound_mode_label)" \
+        --argjson outbound "$(outbound_summary_json)" \
         --argjson singbox_running "$sb_run" \
         --argjson singbox_enabled "$sb_en" \
         --arg log_level "$log_level" \
@@ -722,7 +688,9 @@ cli_status_json() {
             remote_version: $remote_version,
             update_available: $update_available,
             antizapret_warp: $antizapret_warp,
+            antizapret_warp_mode: $antizapret_warp_mode,
             vpn_warp: $vpn_warp,
+            vpn_warp_mode: $vpn_warp_mode,
             warp_rules_active: $warp_rules_active,
             outbound_mode: $outbound_mode,
             slave: {
@@ -736,6 +704,8 @@ cli_status_json() {
                 address: $wg_address,
                 conf_file: $wg_conf_file
             },
+            outbound_label: $outbound_label,
+            outbound: $outbound,
             singbox: {
                 running: $singbox_running,
                 enabled: $singbox_enabled,
@@ -880,14 +850,19 @@ IPEOF
             continue
         fi
 
-        # CIDR - валидируем
-        local cidr="$stripped"
+        # CIDR с необязательной аннотацией авторезолва: "1.2.3.4/32 #домен"
+        local cidr note=""
+        cidr="${stripped%%#*}"
+        if [ "$cidr" != "$stripped" ]; then
+            note=" #${stripped#*#}"
+        fi
+        cidr=$(echo "$cidr" | tr -d '[:space:]')
         if [[ "$cidr" != */* ]]; then
             cidr="${cidr}/32"
         fi
 
         if validate_cidr "$cidr" >/dev/null 2>&1; then
-            echo "$cidr" >> "$tmp"
+            echo "${cidr}${note}" >> "$tmp"
             valid_count=$((valid_count + 1))
         else
             invalid_count=$((invalid_count + 1))
@@ -1313,6 +1288,22 @@ cli_web_update() {
 
 cli_web_https() {
     local web_dir="/root/warper/web"
+
+    # В режиме без nginx TLS держит сам gunicorn — управлять vhost нечем
+    if grep -qx "WEB_MODE=standalone" "$web_dir/.env" 2>/dev/null; then
+        if [ "${1:-status}" = "status" ]; then
+            if grep -q -- "--certfile" /etc/systemd/system/warper-web.service 2>/dev/null; then
+                echo "https (standalone, gunicorn TLS)"
+            else
+                echo "http (standalone)"
+            fi
+            return 0
+        fi
+        echo "ERROR: панель установлена без nginx — сертификатом управляет gunicorn." >&2
+        echo "Переустановите панель или правьте --certfile/--keyfile в warper-web.service" >&2
+        return 1
+    fi
+
     local nginx_conf="/etc/nginx/sites-available/warper-web"
     local nginx_link="/etc/nginx/sites-enabled/warper-web"
     local ssl_dir="/etc/nginx/ssl"
@@ -1352,10 +1343,10 @@ cli_web_https() {
             if grep -q "ssl_certificate" "$nginx_conf" 2>/dev/null; then
                 cert_file=$(grep -oP 'ssl_certificate\s+\K[^;]+' "$nginx_conf" | head -1)
 
-                if echo "$cert_file" | grep -q "letsencrypt"; then
+                if grep -q "letsencrypt" <<< "$cert_file"; then
                     mode="letsencrypt"
                     domain=$(echo "$cert_file" | grep -oP 'live/\K[^/]+')
-                elif echo "$cert_file" | grep -q "warper-web"; then
+                elif grep -q "warper-web" <<< "$cert_file"; then
                     mode="selfsigned"
                 fi
 
@@ -1625,4 +1616,481 @@ HTTPEOF
             return 1
             ;;
     esac
+}
+
+# ===== РЕСИНК СОСТОЯНИЯ =====
+
+# Fake-подсеть должна быть в include-ips.txt, иначе kresd отдаёт клиентам
+# fake-IP, а маршрута до него AntiZapret им не пушит.
+# При выключении WARPER подсеть намеренно остаётся (как после установки).
+ensure_subnet_in_include_ips() {
+    [ -f "$AZ_INC" ] || return 0
+    grep -qxF "$SUBNET" "$AZ_INC" 2>/dev/null && return 0
+
+    echo "$SUBNET" >> "$AZ_INC"
+    normalize_include_ips "$AZ_INC"
+
+    # Вызваны из custom-doall.sh — doall.sh уже идёт, второй запуск не нужен
+    [ "${WARPER_FROM_DOALL:-}" = "1" ] && return 0
+
+    export DEBIAN_FRONTEND=noninteractive
+    export SYSTEMD_PAGER=""
+    timeout 180 bash /root/antizapret/doall.sh ip </dev/null >/dev/null 2>&1 || {
+        echo "WARNING: doall.sh ip exited non-zero or timed out" >&2
+    }
+    return 0
+}
+
+# Идемпотентно переприменяет состояние WARPER, которое может затереть
+# AntiZapret: правила FORWARD, ipset antizapret-forward, ip rule,
+# маршруты (включая fake-подсеть в таблицах 13335/13336) и патч kresd.
+# Ничего не трогает, если всё на месте. Рассчитан на вызов по таймеру
+# и из custom-doall.sh после ночного обновления AntiZapret.
+cli_resync() {
+    local verbose="${1:-}" fixed=0
+
+    ensure_az_doall_hook
+
+    # Отключённый WARPER не восстанавливаем — это осознанное состояние
+    if ! systemctl is-enabled --quiet sing-box 2>/dev/null; then
+        [ "$verbose" = "-v" ] && echo "sing-box disabled, nothing to do"
+        return 0
+    fi
+
+    if ! systemctl is-active --quiet sing-box; then
+        systemctl start sing-box 2>/dev/null || true
+        ensure_singbox_running >/dev/null 2>&1 || true
+        fixed=1
+    fi
+
+    if ! iptables -C FORWARD -o singbox-tun -j ACCEPT 2>/dev/null; then
+        ensure_iptables_rule FORWARD -o singbox-tun
+        fixed=1
+    fi
+    if ! iptables -C FORWARD -i singbox-tun -j ACCEPT 2>/dev/null; then
+        ensure_iptables_rule FORWARD -i singbox-tun
+        fixed=1
+    fi
+
+    # AntiZapret пересобирает kresd.conf при обновлении
+    if ! grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+        patch_kresd >/dev/null 2>&1 && fixed=1
+    fi
+
+    ensure_subnet_in_include_ips
+
+    # Маршруты и ipset: up.sh пересоздаёт antizapret-forward с нуля
+    resync_ip_routes_if_needed
+
+    if [ "$verbose" = "-v" ]; then
+        if [ "$fixed" -eq 1 ]; then
+            echo "State restored"
+        else
+            echo "State OK"
+        fi
+    fi
+    return 0
+}
+
+# ===== ХУК В ANTIZAPRET =====
+
+AZ_CUSTOM_DOALL="/root/antizapret/custom-doall.sh"
+
+# Прописывает вызов warper resync в custom-doall.sh — официальную точку
+# расширения AntiZapret. Нужно потому, что ночной doall.sh пересобирает
+# ipset antizapret-forward и правила FORWARD, затирая состояние WARPER.
+ensure_az_doall_hook() {
+    [ -f "$AZ_CUSTOM_DOALL" ] || return 0
+    grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null && return 0
+
+    cat >> "$AZ_CUSTOM_DOALL" <<'EOF'
+
+# --- WARPER ---
+# Восстанавливает состояние WARPER после пересборки правил AntiZapret
+if [ -x /usr/local/bin/warper ]; then
+    WARPER_FROM_DOALL=1 /usr/local/bin/warper resync >/dev/null 2>&1 || true
+fi
+# --- END WARPER ---
+EOF
+    chmod +x "$AZ_CUSTOM_DOALL" 2>/dev/null || true
+    return 0
+}
+
+# Удаляет блок WARPER из custom-doall.sh (деинсталляция).
+remove_az_doall_hook() {
+    [ -f "$AZ_CUSTOM_DOALL" ] || return 0
+    grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null || return 0
+    sed -i '/^# --- WARPER ---$/,/^# --- END WARPER ---$/d' "$AZ_CUSTOM_DOALL"
+    return 0
+}
+
+# ===== CLI: ВЕБ-ПАНЕЛЬ =====
+
+# Установлена ли веб-панель.
+web_is_installed() {
+    [ -f "$WEB_DIR/app.py" ]
+}
+
+# CLI: управление веб-панелью без интерактивного меню.
+cli_web() {
+    local action="${1:-status}"
+    case "$action" in
+        install)
+            local installer="/tmp/warper-install-web.sh"
+            rm -f "$installer"
+            if ! curl -sfSL "$REPO_URL/web/install-web.sh?t=$(date +%s)" -o "$installer"; then
+                echo "ERROR: failed to download install-web.sh" >&2
+                return 1
+            fi
+            bash "$installer"
+            local rc=$?
+            rm -f "$installer"
+            return $rc
+            ;;
+        uninstall)
+            web_is_installed || { echo "web panel is not installed"; return 0; }
+            local uninstaller="/tmp/warper-uninstall-web.sh"
+            rm -f "$uninstaller"
+            if ! curl -sfSL "$REPO_URL/web/uninstall-web.sh?t=$(date +%s)" -o "$uninstaller"; then
+                echo "ERROR: failed to download uninstall-web.sh" >&2
+                return 1
+            fi
+            bash "$uninstaller"
+            local rc=$?
+            rm -f "$uninstaller"
+            return $rc
+            ;;
+        start|stop|restart)
+            systemctl "$action" "$WEB_SERVICE" || {
+                echo "ERROR: systemctl $action $WEB_SERVICE failed" >&2
+                journalctl -u "$WEB_SERVICE" -n 10 --no-pager >&2
+                return 1
+            }
+            [ "$action" != "stop" ] && sleep 2
+            echo "web panel: $(systemctl is-active "$WEB_SERVICE" 2>/dev/null)"
+            ;;
+        enable|disable)
+            systemctl "$action" "$WEB_SERVICE" >/dev/null 2>&1 || {
+                echo "ERROR: systemctl $action $WEB_SERVICE failed" >&2; return 1; }
+            echo "web panel autostart: $action"
+            ;;
+        status)
+            if ! web_is_installed; then
+                echo "installed=false"
+                return 0
+            fi
+            echo "installed=true"
+            echo "active=$(systemctl is-active "$WEB_SERVICE" 2>/dev/null)"
+            echo "enabled=$(systemctl is-enabled "$WEB_SERVICE" 2>/dev/null || echo disabled)"
+            echo "mode=$(grep -m1 '^WEB_MODE=' "$WEB_DIR/.env" 2>/dev/null | cut -d= -f2 || echo nginx)"
+            echo "external_port=$(cli_web_port_get)"
+            ;;
+        port)
+            local new_port="${2:-}"
+            if [ -z "$new_port" ]; then
+                cli_web_port_get
+                return 0
+            fi
+            cli_web_port_set "$new_port"
+            ;;
+        logs)
+            local lines="${2:-50}"
+            [[ "$lines" =~ ^[0-9]+$ ]] || lines=50
+            journalctl -u "$WEB_SERVICE" -n "$lines" --no-pager
+            ;;
+        authlog)
+            local lines="${2:-30}"
+            [[ "$lines" =~ ^[0-9]+$ ]] || lines=30
+            local auth_log="$WEB_DIR/data/auth.log"
+            if [ ! -f "$auth_log" ]; then
+                echo "auth log is empty ($auth_log not found)"
+                return 0
+            fi
+            tail -n "$lines" "$auth_log"
+            ;;
+        *)
+            echo "Usage: warper web install|uninstall|start|stop|restart|enable|disable|status|port [PORT]|logs [N]|authlog [N]" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Внешний порт панели: из nginx-vhost или из .env в режиме без nginx.
+cli_web_port_get() {
+    if grep -qx "WEB_MODE=standalone" "$WEB_DIR/.env" 2>/dev/null; then
+        grep -m1 '^EXTERNAL_PORT=' "$WEB_DIR/.env" 2>/dev/null | cut -d= -f2
+        return 0
+    fi
+    local conf="/etc/nginx/sites-available/warper-web" ports
+    [ -f "$conf" ] || return 1
+    ports=$(grep -oE '^[[:space:]]*listen[[:space:]]+[0-9]+' "$conf" 2>/dev/null \
+        | grep -oE '[0-9]+$' | grep -v '^80$' | head -1)
+    [ -n "$ports" ] && echo "$ports"
+}
+
+# Смена внешнего порта панели. В режиме без nginx порт задан в юните,
+# менять его на лету нельзя — переустановка панели.
+cli_web_port_set() {
+    local new_port="$1" conf="/etc/nginx/sites-available/warper-web"
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || (( new_port < 1 || new_port > 65535 )); then
+        echo "ERROR: port must be 1-65535" >&2
+        return 1
+    fi
+    if grep -qx "WEB_MODE=standalone" "$WEB_DIR/.env" 2>/dev/null; then
+        echo "ERROR: panel runs without nginx, port is set at install time" >&2
+        return 1
+    fi
+    [ -f "$conf" ] || { echo "ERROR: $conf not found" >&2; return 1; }
+
+    local current
+    current=$(cli_web_port_get) || true
+    [ -z "$current" ] && { echo "ERROR: cannot detect current port" >&2; return 1; }
+    [ "$current" = "$new_port" ] && { echo "port unchanged ($current)"; return 0; }
+
+    if output_has ":${new_port}[[:space:]]" ss -tln; then
+        echo "ERROR: port $new_port is already in use" >&2
+        return 1
+    fi
+
+    cp -a "$conf" "${conf}.bak"
+    sed -i -E "s|^([[:space:]]*listen[[:space:]]+)${current}\b|\1${new_port}|" "$conf"
+    if ! nginx -t >/dev/null 2>&1; then
+        mv -f "${conf}.bak" "$conf"
+        echo "ERROR: nginx config invalid, rolled back" >&2
+        return 1
+    fi
+    rm -f "${conf}.bak"
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+    echo "web panel port: $current -> $new_port"
+}
+
+# ===== CLI: ДОМЕНЫ (текстовый вид) =====
+
+# Пользовательский блок domains.txt как есть — симметрия с `ipranges list`.
+cli_domains_text() {
+    [ -f "$MASTER_FILE" ] || return 0
+    extract_user_block_raw "$MASTER_FILE"
+}
+
+# Сохраняет пользовательский блок из stdin, сохраняя комментарии.
+# Встроенные списки (GEMINI/CHATGPT) не трогаются.
+cli_domains_save() {
+    local input_tmp rebuilt_tmp
+    input_tmp=$(mktemp)
+    rebuilt_tmp=$(mktemp)
+    cat > "$input_tmp"
+
+    {
+        cat << 'EOF'
+# ==========================================
+# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP
+# Строки, начинающиеся с '#', игнорируются.
+# ⚠️ НЕ удаляйте служебные маркеры блоков GEMINI/CHATGPT
+# ==========================================
+
+# Пользовательские домены:
+EOF
+        cat "$input_tmp"
+        local name
+        for name in gemini chatgpt; do
+            if has_list_block "$name"; then
+                echo ""
+                extract_block "$MASTER_FILE" "$name"
+            fi
+        done
+    } > "$rebuilt_tmp"
+
+    mv "$rebuilt_tmp" "$MASTER_FILE"
+    rm -f "$input_tmp"
+    rebuild_master_file
+
+    if is_warper_active; then
+        patch_kresd >/dev/null 2>&1 || true
+    else
+        sync_domains
+    fi
+    echo "Saved $(extract_user_domains "$MASTER_FILE" | grep -c '') domains"
+}
+
+# ===== CLI: ПРОЧЕЕ =====
+
+# Подсети VPN-клиентов, определённые из конфигурации AntiZapret.
+cli_subnets() {
+    detect_client_subnets
+    echo "antizapret=$AZ_CLIENT_NET"
+    echo "fullvpn=$FULLVPN_CLIENT_NET"
+    echo "all=$ALL_CLIENT_NET"
+    echo "route_mode=$IP_ROUTE_MODE"
+    echo "route_source=$(get_rule_source_net)"
+}
+
+# Обновляет встроенные списки доменов (gemini/chatgpt) из репозитория.
+cli_list_update() {
+    local name updated=0
+    for name in gemini chatgpt; do
+        if ! download_file_safe "$REPO_URL/download/${name}.txt" \
+             "$DOWNLOAD_DIR/${name}.txt" "список ${name}" >/dev/null 2>&1; then
+            echo "WARNING: failed to download ${name}.txt" >&2
+            continue
+        fi
+        updated=$((updated + 1))
+    done
+
+    [ "$updated" -eq 0 ] && { echo "ERROR: no lists updated" >&2; return 1; }
+
+    update_list_blocks
+    if is_warper_active; then
+        patch_kresd >/dev/null 2>&1 || true
+    else
+        sync_domains
+    fi
+    echo "Lists updated: $updated"
+}
+
+# CLI: изменить параметр конфигурации.
+cli_config_set() {
+    local key="${1:-}" value="${2:-}"
+    if [ -z "$key" ] || [ -z "$value" ]; then
+        echo "Usage: warper config set KEY VALUE" >&2
+        return 1
+    fi
+    case "$key" in
+        SUBNET)                  cli_subnet "$value" ;;
+        IP_ROUTE_MODE)           cli_iproutemode "$value" ;;
+        IP_EXPORT_TO_ANTIZAPRET) cli_ipexport "$value" ;;
+        FULLVPN_WARP_RESOLVE)    cli_fullvpn "$value" ;;
+        LOG_LEVEL)               cli_loglevel "$value" ;;
+        MTU)                     cli_mtu "$value" ;;
+        WARP_KEY_SOURCE)
+            case "$value" in
+                system|local) WARP_KEY_SOURCE="$value"; save_main_config
+                              echo "WARP_KEY_SOURCE=$value" ;;
+                *) echo "ERROR: WARP_KEY_SOURCE must be system|local" >&2; return 1 ;;
+            esac
+            ;;
+        *)
+            echo "ERROR: unknown or read-only key: $key" >&2
+            echo "Writable: SUBNET IP_ROUTE_MODE IP_EXPORT_TO_ANTIZAPRET FULLVPN_WARP_RESOLVE LOG_LEVEL MTU WARP_KEY_SOURCE" >&2
+            return 1
+            ;;
+    esac
+}
+
+# CLI: полное удаление WARPER.
+cli_uninstall() {
+    if [ "${1:-}" != "--yes" ]; then
+        echo "ERROR: destructive action, pass --yes to confirm" >&2
+        echo "Usage: warper uninstall --yes" >&2
+        return 1
+    fi
+    if [ -x "$WARPER_DIR/uninstaller.sh" ]; then
+        exec bash "$WARPER_DIR/uninstaller.sh" --yes
+    fi
+    local tmp="/tmp/warper-uninstaller.sh"
+    if ! curl -sfSL "$REPO_URL/uninstaller.sh?t=$(date +%s)" -o "$tmp"; then
+        echo "ERROR: failed to download uninstaller" >&2
+        return 1
+    fi
+    exec bash "$tmp" --yes
+}
+
+# ===== CLI: СПРАВКА =====
+
+cli_help() {
+    cat <<'EOF'
+WARPER — маршрутизация доменов и IP-подсетей через WARP / Slave / WG
+
+Использование: warper [КОМАНДА] [АРГУМЕНТЫ]
+Без аргументов открывается интерактивное меню.
+
+Домены:
+  add ДОМЕН                    добавить домен
+  remove ДОМЕН                 удалить домен
+  domains list                 показать пользовательский блок как текст
+  domains save                 заменить блок текстом из stdin
+  domainslist                  машинный список: домен|источник|включён
+  enable gemini|chatgpt        включить встроенный список
+  disable gemini|chatgpt       выключить встроенный список
+  listupdate                   обновить встроенные списки из репозитория
+  sync [--force]               применить список доменов к DNS (--force — перезапустить kresd)
+  patch                        переприменить патч kresd
+
+IP-подсети:
+  ipadd CIDR                   добавить подсеть
+  ipremove CIDR                удалить подсеть
+  iplist                       подсети из файла
+  ipranges list|save           файл ip-ranges.txt как текст (save — из stdin)
+  ipsync                       синхронизировать маршруты
+  iproutes [clear]             показать или удалить применённые маршруты
+  iproutemode РЕЖИМ            antizapret | all_vpn | all
+  ipexport on|off              экспорт CIDR в AntiZapret
+  subnets                      подсети VPN-клиентов и режим маршрутизации
+
+Авто-резолв доменов в IP:
+  resolve on|off|status        почасовой таймер
+  resolvesync [--force]        резолвить сейчас
+  resolveclean [ДОМЕН]         очистить блок RESOLVED целиком или по домену
+
+Каталог доменов:
+  catalog search [ЗАПРОС]      поиск категорий
+  catalog show ИМЯ             предпросмотр
+  catalog add|remove ИМЯ       установить или удалить
+  catalog update [ИМЯ]         обновить
+  catalog list                 установленные
+  catalog refresh              обновить кэш категорий
+
+Режим работы:
+  mode warp [ИСТОЧНИК]         WARP: system | wgcf | root | generate
+  mode slave СЕРВЕР ПОРТ ПАРОЛЬ   подключение к донору
+  mode wg /путь/к.conf         WireGuard-конфиг
+  mode vless 'vless://...'     VLESS / VLESS+Reality по ссылке
+  mode hy2 'hy2://...'         Hysteria2 по ссылке
+  mode openvpn ФАЙЛ.ovpn [ЛОГИН ПАРОЛЬ]   OpenVPN
+  mode slave 'ss://...'        донор по ссылке из warperslave link
+  outbound                     текущий режим и сервер без секретов
+  ovpnconfig list              найденные .ovpn
+  ovpnconfig forget ФАЙЛ       забыть сохранённые логин и пароль
+  warpkey list|generate        WARP-ключи
+  wgconfig list                доступные WG-конфиги
+
+Служба sing-box:
+  singbox start|stop|restart   управление службой
+  singbox enable|disable       автозагрузка
+  singbox status               состояние
+  singbox version              установленная версия
+  singbox upgrade [ВЕРСИЯ]     обновить бинарь
+  logs [N]                     логи sing-box
+  loglevel УРОВЕНЬ             debug | info | warn | error
+  mtu ЗНАЧЕНИЕ                 1280-1500
+
+Веб-панель:
+  web status                   состояние панели
+  web install|uninstall        установка и удаление
+  web start|stop|restart       управление службой
+  web enable|disable           автозагрузка
+  web port [ПОРТ]              показать или изменить внешний порт
+  web logs [N]                 логи службы
+  web authlog [N]              журнал авторизаций
+  webpass [ЛОГИН ПАРОЛЬ]       смена пароля (--reset, --unblock)
+  webhttps ...                 status | enable-selfsigned | enable-letsencrypt ДОМЕН
+                               | disable | renew
+  webupdate                    обновить панель
+
+Состояние и обслуживание:
+  status [json]                краткий статус
+  doctor                       диагностика
+  resync [-v]                  восстановить правила, ipset, маршруты, патч DNS
+  toggle                       включить или выключить WARPER
+  traffic [ПЕРИОД] [json]      today | week | month | all
+  config get КЛЮЧ              прочитать параметр
+  config set КЛЮЧ ЗНАЧЕНИЕ     изменить параметр
+  subnet CIDR                  сменить fake-подсеть
+  autopatch on|off             автопатч DNS при загрузке
+  fullvpn on|off               WARP-резолвинг для FullVPN-клиентов
+  update                       обновить WARPER
+  uninstall --yes              полное удаление
+
+  help, --help, -h             эта справка
+  version, --version, -v       версия WARPER
+EOF
 }

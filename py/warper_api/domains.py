@@ -144,223 +144,46 @@ def patch_kresd() -> WarperResult:
 
 def get_user_domains_text() -> WarperResult:
     """
-    Возвращает текст пользовательского блока domains.txt
-    БЕЗ шапки и БЕЗ блоков GEMINI/CHATGPT.
+    Пользовательский блок domains.txt как текст.
 
-    Сохраняет:
-        - пользовательские комментарии (# ...)
-        - пустые строки
-        - порядок строк
-
-    Используется для отображения в textarea для ручного редактирования
-    с сохранением комментариев каталогов вида '# Discord (catalog: discord)'.
+    Без шапки файла и без блоков GEMINI/CHATGPT. Сохраняет комментарии,
+    пустые строки и порядок — подходит для редактирования в textarea.
 
     Returns:
         WarperResult с data=str — содержимое для редактирования.
-
-    Example:
-        >>> result = get_user_domains_text()
-        >>> print(result.data)
-        # Discord (catalog: discord)
-        airhorn.solutions
-        airhornbot.com
-        ...
-
-        # Telegram (catalog: telegram)
-        telegram.org
-        ...
     """
-    import os
-    import re
-
-    domains_file = "/root/warper/domains.txt"
-
-    if not os.path.exists(domains_file):
-        return WarperResult(ok=True, message="Файл доменов отсутствует", data="")
-
-    try:
-        with open(domains_file, "r", encoding="utf-8") as f:
-            content = f.read()
-    except OSError as e:
-        return WarperResult(ok=False, message=f"Ошибка чтения: {e}", data="")
-
-    lines = content.splitlines()
-    user_lines: list[str] = []
-    in_block = False
-    skip_header = True
-    header_marker = "# Пользовательские домены:"
-
-    for ln in lines:
-        # Пропускаем шапку до маркера
-        if skip_header:
-            if ln.strip() == header_marker:
-                skip_header = False
-            continue
-
-        # Пропускаем блоки GEMINI/CHATGPT целиком
-        if re.match(r"^# --- [A-Z0-9_]+ ---$", ln.strip()):
-            in_block = True
-            continue
-        if re.match(r"^# --- END [A-Z0-9_]+ ---$", ln.strip()):
-            in_block = False
-            continue
-        if in_block:
-            continue
-
-        user_lines.append(ln)
-
-    # Убираем хвостовые пустые строки
-    while user_lines and not user_lines[-1].strip():
-        user_lines.pop()
-
-    text = "\n".join(user_lines)
-
-    return WarperResult(
-        ok=True,
-        message=f"{len([l for l in user_lines if l.strip() and not l.strip().startswith('#')])} доменов",
-        data=text,
-    )
+    result = run_warper("domains", "list")
+    if result.ok:
+        result.data = result.raw_stdout.rstrip("\n")
+    return result
 
 
 def save_user_domains_text(text: str) -> WarperResult:
     """
-    Сохраняет текст пользовательского блока в domains.txt и запускает синхронизацию.
+    Заменяет пользовательский блок domains.txt текстом.
 
-    Сохраняет:
-        - пользовательские комментарии (# ...)
-        - пустые строки
-        - порядок строк
-
-    Восстанавливает:
-        - шапку файла
-        - блоки GEMINI/CHATGPT из существующего файла
-
-    Валидирует только строки-домены. Комментарии и пустые строки сохраняются как есть.
+    Комментарии и пустые строки сохраняются, встроенные списки
+    GEMINI/CHATGPT не трогаются. После записи выполняется синхронизация.
 
     Args:
-        text: Содержимое для записи в пользовательский блок.
+        text: Новое содержимое пользовательского блока.
 
     Returns:
         WarperResult.
-
-    Example:
-        >>> text = '''# Мои домены
-        ... example.com
-        ... openai.com
-        ...
-        ... # Discord
-        ... discord.com'''
-        >>> result = save_user_domains_text(text)
-        >>> if result:
-        ...     print(result.message)
-        'Сохранено 3 доменов, синхронизация выполнена'
     """
-    import os
-    import re
+    return run_warper("domains", "save", timeout=120,
+                      input_data=text if text.endswith("\n") else text + "\n")
 
-    domains_file = "/root/warper/domains.txt"
-    header_marker = "# Пользовательские домены:"
 
-    # Фильтруем строку маркера если пользователь её ввёл вручную
-    raw_lines = [ln for ln in text.splitlines() if ln.strip() != header_marker]
+def update_lists() -> WarperResult:
+    """
+    Обновляет встроенные списки доменов (gemini/chatgpt) из репозитория
+    и переприменяет их к DNS.
 
-    # Валидация только доменов
-    invalid: list[str] = []
-    valid_count = 0
-
-    for raw in raw_lines:
-        s = raw.strip()
-        if not s or s.startswith("#"):
-            continue
-        if not _is_valid_domain_format(s.lower()):
-            invalid.append(s)
-        else:
-            valid_count += 1
-
-    if invalid:
-        msg = "Некорректные домены: " + ", ".join(invalid[:5])
-        if len(invalid) > 5:
-            msg += f" (и ещё {len(invalid) - 5})"
-        return WarperResult(ok=False, message=msg)
-
-    # Убираем хвостовые пустые строки
-    while raw_lines and not raw_lines[-1].strip():
-        raw_lines.pop()
-
-    # Читаем существующие блоки GEMINI/CHATGPT
-    gemini_block: list[str] = []
-    chatgpt_block: list[str] = []
-
-    if os.path.exists(domains_file):
-        try:
-            with open(domains_file, "r", encoding="utf-8") as f:
-                existing = f.read().splitlines()
-        except OSError:
-            existing = []
-
-        block: str | None = None
-        for ln in existing:
-            stripped = ln.strip()
-            if stripped == "# --- GEMINI ---":
-                block = "gemini"
-                gemini_block.append(ln)
-                continue
-            if stripped == "# --- END GEMINI ---":
-                gemini_block.append(ln)
-                block = None
-                continue
-            if stripped == "# --- CHATGPT ---":
-                block = "chatgpt"
-                chatgpt_block.append(ln)
-                continue
-            if stripped == "# --- END CHATGPT ---":
-                chatgpt_block.append(ln)
-                block = None
-                continue
-            if block == "gemini":
-                gemini_block.append(ln)
-            elif block == "chatgpt":
-                chatgpt_block.append(ln)
-
-    # Собираем итоговый файл
-    out_lines = [
-        "# ==========================================",
-        "# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ WARP",
-        "# Строки, начинающиеся с '#', игнорируются.",
-        "# ⚠️ НЕ удаляйте служебные маркеры блоков GEMINI/CHATGPT",
-        "# ==========================================",
-        "",
-        header_marker,
-    ]
-    out_lines.extend(raw_lines)
-
-    if gemini_block:
-        out_lines.append("")
-        out_lines.extend(gemini_block)
-    if chatgpt_block:
-        out_lines.append("")
-        out_lines.extend(chatgpt_block)
-
-    # Записываем файл
-    try:
-        with open(domains_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(out_lines) + "\n")
-    except OSError as e:
-        return WarperResult(ok=False, message=f"Ошибка записи: {e}")
-
-    # Запускаем sync
-    sync_result = sync_domains()
-    if not sync_result.ok:
-        return WarperResult(
-            ok=False,
-            message=f"Файл сохранён, но sync упал: {sync_result.message}",
-        )
-
-    return WarperResult(
-        ok=True,
-        message=f"Сохранено {valid_count} доменов, синхронизация выполнена",
-        data={"count": valid_count},
-    )
+    Returns:
+        WarperResult.
+    """
+    return run_warper("listupdate", timeout=120)
 
 
 def _is_valid_domain_format(domain: str) -> bool:

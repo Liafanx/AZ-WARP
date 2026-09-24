@@ -3,8 +3,8 @@
 # Меню управления веб-панелью: установка, удаление, смена пароля, логи.
 # Подключается через source из warper.sh
 
-WEB_DIR="/root/warper/web"
-WEB_SERVICE="warper-web"
+WEB_DIR="${WEB_DIR:-/root/warper/web}"
+WEB_SERVICE="${WEB_SERVICE:-warper-web}"
 
 # Проверка установлена ли веб-панель
 web_is_installed() {
@@ -423,7 +423,7 @@ web_action_change_port() {
     fi
 
     # Проверка занятости порта
-    if ss -tlnp 2>/dev/null | grep -qE ":${new_port}\s"; then
+    if output_has ":${new_port}[[:space:]]" ss -tlnp; then
         echo -e "${RED}Порт $new_port уже занят другим процессом!${NC}"
         ss -tlnp 2>/dev/null | grep -E ":${new_port}\s"
         sleep 3

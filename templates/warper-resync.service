@@ -1,0 +1,7 @@
+[Unit]
+Description=WARPER State Resync
+After=sing-box.service antizapret.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/warper resync

@@ -13,7 +13,7 @@ import subprocess
 import time as _time
 import urllib.request
 
-from ._runner import run_warper, WARPER_BIN
+from ._runner import read_version, run_warper, warper_command
 from ._result import WarperResult
 
 
@@ -60,6 +60,10 @@ def check_for_updates(force: bool = False) -> WarperResult:
         "update_available": False,
         "error": None,
     }
+    if result_data["current"] == "0.0.0":
+        return WarperResult(ok=False, message="Не удалось определить текущую версию WARPER "
+                                              "(нет прав: нужен root или WARPER_SUDO=1)",
+                            data=result_data)
 
     branch = _detect_warper_branch()
 
@@ -175,7 +179,7 @@ def update_async() -> WarperResult:
         })
 
         proc = subprocess.Popen(
-            [WARPER_BIN, "update"],
+            warper_command("update"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -230,7 +234,7 @@ def update_stream():
         })
 
         proc = subprocess.Popen(
-            [WARPER_BIN, "update"],
+            warper_command("update"),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -253,17 +257,8 @@ def invalidate_version_cache() -> None:
 # ===== Helpers =====
 
 def _get_current_version() -> str:
-    """Читает текущую версию из /root/warper/version."""
-    version_file = "/root/warper/version"
-    if os.path.exists(version_file):
-        try:
-            with open(version_file, "r") as f:
-                v = f.read().strip()
-                if v:
-                    return v
-        except OSError:
-            pass
-    return "0.0.0"
+    """Текущая версия WARPER."""
+    return read_version()
 
 
 def _detect_warper_branch() -> str:

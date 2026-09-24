@@ -3,7 +3,7 @@
 set -uo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
-SB_VERSION="1.13.11"
+SB_VERSION="1.14.1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -13,7 +13,6 @@ NC='\033[0m'
 
 SLAVE_DIR="/root/warperslave"
 SLAVE_CONF="$SLAVE_DIR/slave.conf"
-SINGBOX_SLAVE_CONF="/etc/sing-box-slave/config.json"
 SERVICE_NAME="sing-box-slave"
 DEFAULT_PORT=8444
 WGCF_DIR="$SLAVE_DIR/wgcf"
@@ -111,11 +110,17 @@ validate_port() {
 }
 
 check_port_available() {
-    local port="$1"
-    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
-        return 1
-    fi
-    return 0
+    local listening
+    listening=$(ss -tulnp 2>/dev/null)
+    ! grep -q ":${1} " <<< "$listening"
+}
+
+# Reality маскируется под сайт — он должен отвечать по TLS 1.3.
+check_reality_sni() {
+    local out
+    out=$(timeout 10 openssl s_client -connect "${1}:443" -servername "$1" -tls1_3 \
+        </dev/null 2>/dev/null || true)
+    grep -q "TLSv1.3" <<< "$out"
 }
 
 ensure_port_open() {
@@ -172,22 +177,37 @@ get_local_public_ipv4() {
     return 1
 }
 
-find_warp_keys() {
-    local address="" private_key=""
+# Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
+# warp-vpn/warp-antizapret, старые — единый warp. Порядок = приоритет.
+WARP_SYSTEM_CANDIDATES="/etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf"
+CF_WARP_PUBKEY='bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo='
 
-    # Приоритет 1: /etc/wireguard/warp.conf
-    if [ -f "/etc/wireguard/warp.conf" ]; then
-        if grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "/etc/wireguard/warp.conf" 2>/dev/null; then
-            private_key=$(grep -m 1 '^PrivateKey' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            address=$(grep -m 1 '^Address' "/etc/wireguard/warp.conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
-            if [ -n "$private_key" ]; then
-                [ -z "$address" ] && address="172.16.0.2/32"
-                [[ ! "$address" =~ / ]] && address="${address}/32"
-                echo "$address"
-                echo "$private_key"
-                echo "/etc/wireguard/warp.conf"
-                return 0
-            fi
+# Печатает первый существующий системный WARP-конфиг Cloudflare.
+resolve_warp_system_conf() {
+    local candidate
+    for candidate in $WARP_SYSTEM_CANDIDATES; do
+        if [ -f "$candidate" ] && grep -q "$CF_WARP_PUBKEY" "$candidate" 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_warp_keys() {
+    local address="" private_key="" sys_conf=""
+
+    # Приоритет 1: системный конфиг AntiZapret
+    if sys_conf=$(resolve_warp_system_conf); then
+        private_key=$(grep -m 1 '^PrivateKey' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        address=$(grep -m 1 '^Address' "$sys_conf" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
+        if [ -n "$private_key" ]; then
+            [ -z "$address" ] && address="172.16.0.2/32"
+            [[ ! "$address" =~ / ]] && address="${address}/32"
+            echo "$address"
+            echo "$private_key"
+            echo "$sys_conf"
+            return 0
         fi
     fi
 
@@ -261,7 +281,7 @@ generate_warp_keys() {
 
 # ===== Начало установки =====
 
-echo -e "\n${YELLOW}[0/7] Предварительные проверки...${NC}"
+echo -e "\n${YELLOW}[0/6] Предварительные проверки...${NC}"
 check_os
 SYSTEM_ARCH=$(detect_arch)
 echo -e " - ${GREEN}Архитектура: ${SYSTEM_ARCH}${NC}"
@@ -311,9 +331,52 @@ while true; do
 done
 echo -e " - ${GREEN}Режим: ${SLAVE_MODE}${NC}"
 
+# ===== Выбор протокола =====
+
+echo -e "\n${CYAN}================================================${NC}"
+echo -e "    ${YELLOW}Протокол подключения master → донор${NC}"
+echo -e "${CYAN}================================================${NC}"
+echo -e " ${GREEN}1.${NC} Shadowsocks 2022"
+echo -e " ${GREEN}2.${NC} VLESS+Reality ${CYAN}(рекомендуется: маскируется под обычный TLS)${NC}"
+echo -e " ${GREEN}3.${NC} Hysteria2 ${CYAN}(QUIC/UDP, быстрее на каналах с потерями)${NC}"
+echo -e "${CYAN}================================================${NC}"
+
+SLAVE_PROTO=""
+while true; do
+    read -r -p "Выбор [1-3, по умолчанию 2]: " proto_choice < /dev/tty
+    case "${proto_choice:-2}" in
+        1) SLAVE_PROTO="ss"; break ;;
+        2) SLAVE_PROTO="vless"; break ;;
+        3) SLAVE_PROTO="hy2"; break ;;
+        *) echo -e "${RED}Введите 1, 2 или 3.${NC}" ;;
+    esac
+done
+echo -e " - ${GREEN}Протокол: ${SLAVE_PROTO}${NC}"
+
+SLAVE_SNI="www.microsoft.com"
+if [ "$SLAVE_PROTO" = "vless" ]; then
+    echo -e "\n${YELLOW}⚙️  Сайт для маскировки Reality${NC}"
+    echo -e "${CYAN}Нужен популярный сайт с TLS 1.3, доступный из вашей сети.${NC}"
+    while true; do
+        read -r -p "SNI [по умолчанию $SLAVE_SNI]: " custom_sni < /dev/tty
+        custom_sni="${custom_sni:-$SLAVE_SNI}"
+        if check_reality_sni "$custom_sni"; then
+            SLAVE_SNI="$custom_sni"
+            break
+        fi
+        echo -e "${YELLOW}⚠️  $custom_sni не ответил по TLS 1.3.${NC}"
+        read -r -p "Всё равно использовать? (y/N): " sni_force < /dev/tty
+        if [[ "$sni_force" =~ ^[Yy]$ ]]; then
+            SLAVE_SNI="$custom_sni"
+            break
+        fi
+    done
+    echo -e " - ${GREEN}SNI: ${SLAVE_SNI}${NC}"
+fi
+
 # ===== Настройка порта =====
 
-echo -e "\n${YELLOW}⚙️  Настройка порта Shadowsocks${NC}"
+echo -e "\n${YELLOW}⚙️  Настройка порта${NC}"
 SLAVE_PORT=$DEFAULT_PORT
 
 while true; do
@@ -327,7 +390,7 @@ while true; do
     fi
     if ! check_port_available "$custom_port"; then
         echo -e "${YELLOW}⚠️  Порт $custom_port уже занят:${NC}"
-        ss -tlnp 2>/dev/null | grep ":${custom_port} " || true
+        ss -tulnp 2>/dev/null | grep ":${custom_port} " || true
         while true; do
             read -r -p "Использовать другой порт? (Y/n): " retry < /dev/tty
             if [[ -z "$retry" || "$retry" =~ ^[Yy]$ ]]; then
@@ -347,28 +410,21 @@ while true; do
 done
 echo -e " - ${GREEN}Порт: ${SLAVE_PORT}${NC}"
 
-# ===== Генерация или ввод ключа Shadowsocks =====
+# ===== Ключ Shadowsocks =====
+# Для VLESS и Hysteria2 учётные данные генерирует warperslave rebuild.
 
+SS_PASSWORD=""
+if [ "$SLAVE_PROTO" = "ss" ]; then
 echo -e "\n${YELLOW}⚙️  Настройка ключа Shadowsocks${NC}"
-echo -e "${CYAN}Этот ключ должен совпадать на основном WARPER-сервере и на slave.${NC}"
-echo -e ""
 echo -e " ${GREEN}1.${NC} Сгенерировать новый ключ"
 echo -e " ${GREEN}2.${NC} Ввести существующий ключ (если уже настроен на основном сервере)"
 
-SS_PASSWORD=""
 while true; do
     read -r -p "Выбор [1-2]: " key_choice < /dev/tty
     case "$key_choice" in
         1)
             SS_PASSWORD=$(openssl rand -base64 16)
-            echo -e ""
-            echo -e "${GREEN}================================================${NC}"
-            echo -e " 🔑 Сгенерирован ключ: ${YELLOW}${SS_PASSWORD}${NC}"
-            echo -e "${GREEN}================================================${NC}"
-            echo -e "${RED}⚠️  ВАЖНО! Сохраните этот ключ!${NC}"
-            echo -e "${YELLOW}   Он понадобится при настройке основного${NC}"
-            echo -e "${YELLOW}   WARPER-сервера в режиме Slave.${NC}"
-            echo -e "${GREEN}================================================${NC}"
+            echo -e " - ${GREEN}Ключ сгенерирован, ссылка для master — в конце установки.${NC}"
             break
             ;;
         2)
@@ -393,44 +449,31 @@ while true; do
         *) echo -e "${RED}Введите 1 или 2.${NC}" ;;
     esac
 done
+fi
 
 # ===== WARP-ключи (если режим WARP) =====
 
-WARP_ADDRESS=""
-WARP_PRIVATE_KEY=""
-WARP_SOURCE=""
-
 if [ "$SLAVE_MODE" = "warp" ]; then
-    echo -e "\n${YELLOW}[1/7] Получение ключей WARP...${NC}"
+    echo -e "\n${YELLOW}[1/6] Получение ключей WARP...${NC}"
 
     if existing_keys=$(find_warp_keys); then
-        WARP_ADDRESS=$(echo "$existing_keys" | sed -n '1p')
-        WARP_PRIVATE_KEY=$(echo "$existing_keys" | sed -n '2p')
-        WARP_SOURCE=$(echo "$existing_keys" | sed -n '3p')
-        echo -e " - ${GREEN}Найдены WARP-ключи в: $WARP_SOURCE${NC}"
+        echo -e " - ${GREEN}Найдены WARP-ключи в: $(sed -n '3p' <<< "$existing_keys")${NC}"
     else
         echo -e " - ${CYAN}WARP-ключи не найдены. Генерируем...${NC}"
         if ! generate_warp_keys "$SYSTEM_ARCH"; then
             echo -e "${RED}Не удалось получить WARP-ключи!${NC}"
             exit 1
         fi
-        cd "$SLAVE_DIR/wgcf" || exit 1
-        WARP_ADDRESS=$(grep -m 1 '^Address = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
-        WARP_PRIVATE_KEY=$(grep -m 1 '^PrivateKey = ' wgcf-profile.conf | awk '{print $3}' | tr -d '\r\n')
+        cd "$SLAVE_DIR" || exit 1
+        echo -e " - ${GREEN}WARP-ключи получены!${NC}"
     fi
-
-    if [ -z "$WARP_ADDRESS" ] || [ -z "$WARP_PRIVATE_KEY" ]; then
-        echo -e "${RED}Ошибка: не удалось извлечь WARP-ключи!${NC}"
-        exit 1
-    fi
-    echo -e " - ${GREEN}WARP-ключи получены!${NC}"
 else
-    echo -e "\n${YELLOW}[1/7] Режим Direct — WARP-ключи не требуются.${NC}"
+    echo -e "\n${YELLOW}[1/6] Режим Direct — WARP-ключи не требуются.${NC}"
 fi
 
 # ===== Установка sing-box =====
 
-echo -e "\n${YELLOW}[2/7] Установка sing-box...${NC}"
+echo -e "\n${YELLOW}[2/6] Установка sing-box...${NC}"
 if command -v sing-box >/dev/null 2>&1; then
     CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
     if [ "$CURRENT_SB" == "$SB_VERSION" ]; then
@@ -450,50 +493,39 @@ if ! command -v sing-box >/dev/null 2>&1; then
 fi
 echo -e " - ${GREEN}sing-box готов.${NC}"
 
-# ===== Создание конфигурации =====
+# ===== Утилита управления =====
 
-echo -e "\n${YELLOW}[3/7] Создание конфигурации...${NC}"
+echo -e "\n${YELLOW}[3/6] Установка утилиты управления...${NC}"
+download_file "$REPO_URL/warperslave.sh" "$SLAVE_DIR/warperslave.sh" "утилита warperslave" || exit 1
+download_file "$REPO_URL/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" "деинсталлятор" || exit 1
+download_file "$REPO_URL/versionslave" "$SLAVE_DIR/versionslave" "файл версии" || exit 1
+chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
+ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
+
+# ===== Конфигурация =====
+# Конфиг sing-box собирает warperslave — та же логика, что при смене
+# протокола и обновлении.
+
+echo -e "\n${YELLOW}[4/6] Создание конфигурации...${NC}"
 mkdir -p /etc/sing-box-slave
-
-if [ "$SLAVE_MODE" = "direct" ]; then
-    download_file "$REPO_URL/templates/config-slave-direct.json.template" "$SLAVE_DIR/config-slave.json.template" "шаблон конфигурации (direct)" || exit 1
-    sed \
-        -e "s|__SLAVE_PORT__|$SLAVE_PORT|g" \
-        -e "s|__SLAVE_PASSWORD__|$SS_PASSWORD|g" \
-        "$SLAVE_DIR/config-slave.json.template" > "$SINGBOX_SLAVE_CONF"
-else
-    download_file "$REPO_URL/templates/config-slave-warp.json.template" "$SLAVE_DIR/config-slave.json.template" "шаблон конфигурации (warp)" || exit 1
-    sed \
-        -e "s|__SLAVE_PORT__|$SLAVE_PORT|g" \
-        -e "s|__SLAVE_PASSWORD__|$SS_PASSWORD|g" \
-        -e "s|__WARP_ADDRESS__|$WARP_ADDRESS|g" \
-        -e "s|__WARP_PRIVATE_KEY__|$WARP_PRIVATE_KEY|g" \
-        "$SLAVE_DIR/config-slave.json.template" > "$SINGBOX_SLAVE_CONF"
-fi
-
-chmod 600 "$SINGBOX_SLAVE_CONF"
-
-if ! sing-box check -c "$SINGBOX_SLAVE_CONF" >/dev/null 2>&1; then
-    echo -e "${RED}Ошибка: конфигурация sing-box невалидна!${NC}"
-    echo -e "${YELLOW}Проверьте: sing-box check -c $SINGBOX_SLAVE_CONF${NC}"
-    exit 1
-fi
-echo -e " - ${GREEN}Конфигурация создана и проверена.${NC}"
-
-# ===== Сохранение конфигурации slave =====
-
-echo -e "\n${YELLOW}[4/7] Сохранение настроек...${NC}"
 {
     echo "SLAVE_MODE=$SLAVE_MODE"
+    echo "SLAVE_PROTO=$SLAVE_PROTO"
     echo "SLAVE_PORT=$SLAVE_PORT"
+    echo "SLAVE_SNI=$SLAVE_SNI"
     echo "SS_PASSWORD=$SS_PASSWORD"
 } > "$SLAVE_CONF"
 chmod 600 "$SLAVE_CONF"
+
+if ! "$SLAVE_DIR/warperslave.sh" rebuild; then
+    echo -e "${RED}Ошибка: не удалось собрать конфигурацию sing-box!${NC}"
+    exit 1
+fi
 echo -e " - ${GREEN}Настройки сохранены в $SLAVE_CONF${NC}"
 
 # ===== Systemd сервис =====
 
-echo -e "\n${YELLOW}[5/7] Настройка systemd...${NC}"
+echo -e "\n${YELLOW}[5/6] Настройка systemd...${NC}"
 
 download_file "$REPO_URL/templates/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service" "служба ${SERVICE_NAME}" || {
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" << 'SVCEOF'
@@ -529,25 +561,16 @@ echo -e " - ${GREEN}Служба $SERVICE_NAME запущена и добавл�
 
 # ===== Открытие порта =====
 
-echo -e "\n${YELLOW}[6/7] Настройка firewall...${NC}"
+echo -e "\n${YELLOW}[6/6] Настройка firewall...${NC}"
 ensure_port_open "$SLAVE_PORT"
 echo -e " - ${GREEN}Порт $SLAVE_PORT открыт (TCP+UDP).${NC}"
 
 echo -e " - ${CYAN}Проверка доступности порта...${NC}"
-if ss -tlnp 2>/dev/null | grep -q ":${SLAVE_PORT} "; then
+if ! check_port_available "$SLAVE_PORT"; then
     echo -e " - ${GREEN}Порт $SLAVE_PORT слушается.${NC}"
 else
-    echo -e " - ${YELLOW}Порт $SLAVE_PORT не обнаружен в списке слушающих (может быть UDP).${NC}"
+    echo -e " - ${YELLOW}Порт $SLAVE_PORT не обнаружен в списке слушающих.${NC}"
 fi
-
-# ===== Установка утилиты управления =====
-
-echo -e "\n${YELLOW}[7/7] Установка утилиты управления...${NC}"
-download_file "$REPO_URL/warperslave.sh" "$SLAVE_DIR/warperslave.sh" "утилита warperslave" || exit 1
-download_file "$REPO_URL/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" "деинсталлятор" || exit 1
-download_file "$REPO_URL/versionslave" "$SLAVE_DIR/versionslave" "файл версии" || exit 1
-chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
-ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
 
 # ===== Определяем публичный IPv4 локально =====
 
@@ -566,21 +589,18 @@ echo -e "\n${GREEN}================================================${NC}"
 echo -e " 🎉 WARPERSLAVE v${LOCAL_VER} УСПЕШНО УСТАНОВЛЕН!"
 echo -e "${GREEN}================================================${NC}"
 echo -e ""
-echo -e " ${CYAN}Режим:${NC}      ${YELLOW}${SLAVE_MODE}${NC}"
+echo -e " ${CYAN}Выход:${NC}      ${YELLOW}${SLAVE_MODE}${NC}"
+echo -e " ${CYAN}Протокол:${NC}   ${YELLOW}${SLAVE_PROTO}${NC}"
 echo -e " ${CYAN}Порт:${NC}       ${YELLOW}${SLAVE_PORT}${NC}"
-echo -e " ${CYAN}Ключ SS:${NC}    ${YELLOW}${SS_PASSWORD}${NC}"
 echo -e " ${CYAN}Внешний IP:${NC} ${YELLOW}${EXTERNAL_IP}${NC}"
 echo -e ""
 echo -e "${CYAN}================================================${NC}"
-echo -e "${YELLOW}📋 Для настройки основного WARPER-сервера:${NC}"
+echo -e "${YELLOW}📋 Выполните на основном WARPER-сервере:${NC}"
 echo -e ""
-echo -e "  1. На основном сервере запустите: ${GREEN}warper${NC}"
-echo -e "  2. Перейдите в: ${GREEN}Настройки (9) → Режим маршрутизации (7)${NC}"
-echo -e "  3. Выберите: ${GREEN}Slave (донор-сервер)${NC}"
-echo -e "  4. Укажите:"
-echo -e "     - IP:    ${YELLOW}${EXTERNAL_IP}${NC}"
-echo -e "     - Порт:  ${YELLOW}${SLAVE_PORT}${NC}"
-echo -e "     - Ключ:  ${YELLOW}${SS_PASSWORD}${NC}"
+echo -e "  ${GREEN}$("$SLAVE_DIR/warperslave.sh" link --command)${NC}"
+echo -e ""
+echo -e "${RED}⚠️  Команда содержит ключи доступа — не публикуйте её.${NC}"
+echo -e " Показать снова: ${GREEN}warperslave link${NC}"
 echo -e "${CYAN}================================================${NC}"
 echo -e ""
 echo -e " Управление:  ${GREEN}warperslave${NC}"

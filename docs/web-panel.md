@@ -48,7 +48,7 @@ systemd timer (5 мин)
 файл traffic.json (hourly агрегация)
 ```
 
-Веб-панель **не дублирует логику** WARPER — она вызывает CLI-команды `warper add`, `warper sync`, `warper mode wg`, и т.д.
+Веб-панель **не дублирует логику** WARPER — она вызывает CLI-команды `warper add`, `warper sync`, `warper mode wg`, `warper mode vless` и т.д.
 
 - **Каталог готовых доменов**: поиск и подключение готовых списков из community-репозитория.
 - Поиск идёт по кэшированному списку категорий.

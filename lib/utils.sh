@@ -60,8 +60,7 @@ validate_subnet() {
 # Отклоняет loopback, link-local, multicast, нулевой октет.
 # Возвращает нормализованный CIDR или код ошибки 1.
 validate_cidr() {
-    local cidr="$1"
-    cidr=$(echo "$cidr" | tr -d '[:space:]')
+    local cidr="${1//[[:space:]]/}"
     [ -z "$cidr" ] && return 1
 
     if [[ ! "$cidr" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})$ ]]; then
@@ -120,7 +119,7 @@ subnet_conflicts() {
     while IFS= read -r line; do
         route_net=$(echo "$line" | awk '{print $1}')
         [ "$route_net" = "$subnet" ] || continue
-        echo "$line" | grep -q "dev singbox-tun" && continue
+        grep -q "dev singbox-tun" <<< "$line" && continue
         return 0
     done < <(ip route 2>/dev/null)
 
@@ -131,8 +130,9 @@ subnet_conflicts() {
             local -a id_array
             mapfile -t id_array <<< "$ids"
             if [ ${#id_array[@]} -gt 0 ]; then
-                docker network inspect "${id_array[@]}" 2>/dev/null \
-                    | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+                local nets
+                nets=$(docker network inspect "${id_array[@]}" 2>/dev/null || true)
+                grep -qF "\"Subnet\": \"$subnet\"" <<< "$nets" && return 0
             fi
         fi
     fi
@@ -219,6 +219,38 @@ validate_template_marker() {
         return 1
     fi
     return 0
+}
+
+# ===== Безопасные проверки вывода =====
+
+# Проверяет, содержит ли вывод команды подстроку.
+# Прямой конвейер `cmd | grep -q` ненадёжен при `set -o pipefail`:
+# grep выходит по первому совпадению, писатель получает SIGPIPE,
+# и конвейер возвращает 141 даже когда совпадение было.
+output_has() {
+    local pattern="$1"; shift
+    local out
+    out=$("$@" 2>/dev/null || true)
+    [ -n "$out" ] || return 1
+    grep -qE -- "$pattern" <<< "$out"
+}
+
+# ===== WARP-конфиг AntiZapret =====
+
+# Возвращает первый существующий системный WARP-конфиг AntiZapret.
+# Если ни одного нет — печатает последний кандидат и возвращает 1,
+# чтобы вызывающий код мог показать осмысленный путь в сообщении.
+resolve_warp_system_conf() {
+    local candidate last=""
+    for candidate in $WARP_SYSTEM_CANDIDATES; do
+        last="$candidate"
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    echo "$last"
+    return 1
 }
 
 # ===== Управление iptables =====

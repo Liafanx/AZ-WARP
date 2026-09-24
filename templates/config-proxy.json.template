@@ -2,7 +2,7 @@
   "log": { "level": "info" },
   "dns": {
     "servers": [
-      { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "warp" },
+      { "tag": "real-dns", "type": "udp", "server": "1.1.1.1", "detour": "proxy" },
       { "tag": "local", "type": "udp", "server": "8.8.8.8" },
       { "tag": "fakeip-dns", "type": "fakeip", "inet4_range": "__SUBNET__" }
     ],
@@ -11,29 +11,9 @@
     ],
     "strategy": "ipv4_only"
   },
-  "endpoints": [
-    {
-      "type": "wireguard",
-      "tag": "warp",
-      "name": "warp-tun",
-      "system": false,
-      "mtu": 1420,
-      "address": [ "__WARP_ADDRESS__" ],
-      "private_key": "__WARP_PRIVATE_KEY__",
-      "peers": [
-        {
-          "address": "162.159.192.1",
-          "port": 2408,
-          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-          "allowed_ips": ["0.0.0.0/0"],
-          "reserved": [0, 0, 0]
-        }
-      ]
-    }
-  ],
   "inbounds": [
     { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 40000, "network": "udp" },
-    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "auto_route": false, "strict_route": false, "stack": "system", "dns_mode": "disabled" }
+    { "type": "tun", "tag": "tun-in", "interface_name": "singbox-tun", "address": ["__TUN_IP__"], "mtu": 1420, "auto_route": false, "strict_route": false, "stack": "system", "dns_mode": "disabled" }
   ],
   "outbounds": [
     { "type": "direct", "tag": "direct" }
@@ -42,8 +22,7 @@
     "rules": [
       { "inbound": "dns-in", "action": "hijack-dns" },
       { "protocol": "dns", "action": "hijack-dns" },
-      { "inbound": "tun-in", "action": "resolve", "server": "real-dns" },
-      { "inbound": "tun-in", "outbound": "warp" }
+      { "inbound": "tun-in", "outbound": "proxy" }
     ],
     "default_domain_resolver": "local",
     "auto_detect_interface": true,

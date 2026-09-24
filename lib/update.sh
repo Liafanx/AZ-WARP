@@ -5,6 +5,12 @@
 # Подключается через source из warper.sh
 
 # Откатывает обновление: восстанавливает все файлы из backup-директории.
+# Systemd-юниты, которыми управляет WARPER
+WARPER_UNITS="sing-box.service warper-autopatch.service \
+warper-traffic-snapshot.service warper-traffic-snapshot.timer \
+warper-resync.service warper-resync.timer \
+warper-resolve.service warper-resolve.timer"
+
 rollback_warper_update() {
     local backupdir="$1"
 
@@ -15,18 +21,15 @@ rollback_warper_update() {
     restore_if_exists "$backupdir/config.json.template" "$SINGBOX_TEMPLATE"
     restore_if_exists "$backupdir/config-slave-master.json.template" "$SLAVE_TEMPLATE"
     restore_if_exists "$backupdir/config-wg.json.template" "$WG_TEMPLATE"
+    restore_if_exists "$backupdir/config-proxy.json.template" "$PROXY_TEMPLATE"
 
     restore_if_exists "$backupdir/gemini.txt" "$DOWNLOAD_DIR/gemini.txt"
     restore_if_exists "$backupdir/chatgpt.txt" "$DOWNLOAD_DIR/chatgpt.txt"
 
-    restore_if_exists "$backupdir/sing-box.service" \
-        "/etc/systemd/system/sing-box.service"
-    restore_if_exists "$backupdir/warper-autopatch.service" \
-        "/etc/systemd/system/warper-autopatch.service"
-    restore_if_exists "$backupdir/warper-traffic-snapshot.service" \
-        "/etc/systemd/system/warper-traffic-snapshot.service"
-    restore_if_exists "$backupdir/warper-traffic-snapshot.timer" \
-        "/etc/systemd/system/warper-traffic-snapshot.timer"        
+    local _unit
+    for _unit in $WARPER_UNITS; do
+        restore_if_exists "$backupdir/$_unit" "/etc/systemd/system/$_unit"
+    done
 
     restore_if_exists "$backupdir/config.json" "$SINGBOX_CONF"
     restore_if_exists "$backupdir/domains.txt" "$MASTER_FILE"
@@ -62,6 +65,52 @@ rollback_warper_update() {
 #   8. Перезапустить sing-box и проверить
 #   9. Обновить домены и IP-маршруты
 #  При любой ошибке — откат к backup.
+# Миграция fake-подсети на актуальный дефолт.
+# Две причины: старый /24 (254 адреса) исчерпывался за сутки-двое, так как
+# kresd раздаёт fake-IP каждому ПОДдомену; и 198.18/198.20 — не bogon,
+# а реальное публичное пространство (198.18.0.0/15 к тому же занят
+# AntiZapret). Новый дефолт — приватный диапазон RFC1918, свободный
+# и от Docker, и от подсетей клиентов AntiZapret.
+migrate_fakeip_pool() {
+    local new_subnet="$DEFAULT_SUBNET"
+    [ "$SUBNET" = "$new_subnet" ] && return 0
+
+    local reason="" mask="${SUBNET##*/}"
+    case "$SUBNET" in
+        198.18.*|198.19.*|198.20.*)
+            reason="подсеть $SUBNET занимает публичное адресное пространство" ;;
+    esac
+    if [ -z "$reason" ] && [ "$mask" -ge 20 ] 2>/dev/null; then
+        reason="пул $SUBNET вмещает мало адресов"
+    fi
+    [ -n "$reason" ] || return 0
+
+    echo ""
+    echo -e "${YELLOW}Фейковая подсеть: ${reason}.${NC}"
+    echo -e "${YELLOW}kresd выдаёт fake-IP каждому поддомену, поэтому мелкий${NC}"
+    echo -e "${YELLOW}пул исчерпывается и домены перестают открываться.${NC}"
+    echo -e "${CYAN}Рекомендуется перейти на $new_subnet.${NC}"
+    echo -e "${YELLOW}Клиентам после этого потребуется переподключение —${NC}"
+    echo -e "${YELLOW}AntiZapret пушит им маршрут фейковой подсети.${NC}"
+
+    if [ -t 0 ] && [ -t 1 ]; then
+        read -r -e -p "Перейти сейчас? [Y/n] (по умолчанию Y): " answer
+        [[ -n "$answer" && ! "$answer" =~ ^[Yy]$ ]] && {
+            echo -e "${CYAN}Пропущено. Позже: warper subnet $new_subnet${NC}"
+            return 0
+        }
+    else
+        echo -e "${CYAN}Неинтерактивный режим. Выполните: warper subnet $new_subnet${NC}"
+        return 0
+    fi
+
+    if cli_subnet "$new_subnet"; then
+        echo -e "${GREEN}Фейковая подсеть переведена на $new_subnet.${NC}"
+    else
+        echo -e "${RED}Не удалось сменить подсеть, оставлена $SUBNET.${NC}"
+    fi
+}
+
 update_warper() {
     echo -e "\n${CYAN}Скачивание обновления с GitHub...${NC}"
     mkdir -p "$DOWNLOAD_DIR"
@@ -91,18 +140,18 @@ update_warper() {
         "$tmpdir/version" "version" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
 
     # Systemd unit-файлы
-    download_file_safe "$REPO_URL/templates/sing-box.service" \
-        "$tmpdir/sing-box.service" "sing-box.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-    download_file_safe "$REPO_URL/templates/warper-autopatch.service" \
-        "$tmpdir/warper-autopatch.service" "warper-autopatch.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-    download_file_safe "$REPO_URL/templates/warper-traffic-snapshot.service" \
-        "$tmpdir/warper-traffic-snapshot.service" "warper-traffic-snapshot.service" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-    download_file_safe "$REPO_URL/templates/warper-traffic-snapshot.timer" \
-        "$tmpdir/warper-traffic-snapshot.timer" "warper-traffic-snapshot.timer" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
-        
+    local _unit
+    for _unit in $WARPER_UNITS; do
+        download_file_safe "$REPO_URL/templates/$_unit" \
+            "$tmpdir/$_unit" "$_unit" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    done
+
     # Шаблоны конфигурации
     download_file_safe "$REPO_URL/templates/config.json.template" \
         "$tmpdir/config.json.template" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    download_file_safe "$REPO_URL/templates/config-proxy.json.template" \
+        "$tmpdir/config-proxy.json.template" "config-proxy.json.template" || \
+        { rm -rf "$tmpdir" "$backupdir"; return 1; }
     download_file_safe "$REPO_URL/templates/config-slave-master.json.template" \
         "$tmpdir/config-slave-master.json.template" "config-slave-master.json.template" || \
         { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -117,15 +166,18 @@ update_warper() {
 
     # Модули lib/ (cli добавлен в 1.3.3)
     mkdir -p "$tmpdir/lib"
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+    for _libfile in utils config domains domains-resolve singbox outbound kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         download_file_safe "$REPO_URL/lib/${_libfile}.sh" \
             "$tmpdir/lib/${_libfile}.sh" "lib/${_libfile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
     done
+    download_file_safe "$REPO_URL/lib/outbound-parse.py" \
+        "$tmpdir/lib/outbound-parse.py" "lib/outbound-parse.py" || \
+        { rm -rf "$tmpdir" "$backupdir"; return 1; }
 
     # Python API (добавлено в 1.4.0)
     mkdir -p "$tmpdir/py/warper_api"
-    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates; do
+    for _pyfile in __init__ _result _runner domains ip_ranges catalog singbox settings traffic status updates web; do
         download_file_safe "$REPO_URL/py/warper_api/${_pyfile}.py" \
             "$tmpdir/py/warper_api/${_pyfile}.py" \
             "py/warper_api/${_pyfile}.py" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -135,7 +187,7 @@ update_warper() {
 
     # Модули menus/ (web-menu добавлен в 1.3.3)
     mkdir -p "$tmpdir/menus"
-    for _menufile in main settings singbox-menu ip-menu web-menu; do
+    for _menufile in main settings singbox-menu ip-menu catalog-menu web-menu; do
         download_file_safe "$REPO_URL/menus/${_menufile}.sh" \
             "$tmpdir/menus/${_menufile}.sh" "menus/${_menufile}.sh" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
@@ -152,12 +204,19 @@ update_warper() {
         syntax_check_bash_file "$_libfile" "$(basename "$_libfile")" || \
             { rm -rf "$tmpdir" "$backupdir"; return 1; }
     done
+    if ! python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' \
+         "$tmpdir/lib/outbound-parse.py" 2>/dev/null; then
+        echo -e "${RED}Синтаксическая ошибка в outbound-parse.py, обновление отменено.${NC}"
+        rm -rf "$tmpdir" "$backupdir"; return 1
+    fi
 
     # ===== Проверка шаблонов =====
     validate_template_marker "$tmpdir/config.json.template" \
         "__WARP_ADDRESS__" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     validate_template_marker "$tmpdir/config.json.template" \
         "__SUBNET__" "config.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
+    validate_template_marker "$tmpdir/config-proxy.json.template" \
+        "__SUBNET__" "config-proxy.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     validate_template_marker "$tmpdir/config-slave-master.json.template" \
         "__SLAVE_SERVER__" "config-slave-master.json.template" || { rm -rf "$tmpdir" "$backupdir"; return 1; }
     validate_template_marker "$tmpdir/config-wg.json.template" \
@@ -182,16 +241,12 @@ update_warper() {
     backup_if_exists "$SINGBOX_TEMPLATE"             "$backupdir/config.json.template"
     backup_if_exists "$SLAVE_TEMPLATE"               "$backupdir/config-slave-master.json.template"
     backup_if_exists "$WG_TEMPLATE"                  "$backupdir/config-wg.json.template"
+    backup_if_exists "$PROXY_TEMPLATE"               "$backupdir/config-proxy.json.template"
     backup_if_exists "$DOWNLOAD_DIR/gemini.txt"      "$backupdir/gemini.txt"
     backup_if_exists "$DOWNLOAD_DIR/chatgpt.txt"     "$backupdir/chatgpt.txt"
-    backup_if_exists "/etc/systemd/system/sing-box.service" \
-        "$backupdir/sing-box.service"
-    backup_if_exists "/etc/systemd/system/warper-autopatch.service" \
-        "$backupdir/warper-autopatch.service"
-    backup_if_exists "/etc/systemd/system/warper-traffic-snapshot.service" \
-        "$backupdir/warper-traffic-snapshot.service"
-    backup_if_exists "/etc/systemd/system/warper-traffic-snapshot.timer" \
-        "$backupdir/warper-traffic-snapshot.timer"        
+    for _unit in $WARPER_UNITS; do
+        backup_if_exists "/etc/systemd/system/$_unit" "$backupdir/$_unit"
+    done
     backup_if_exists "$SINGBOX_CONF"  "$backupdir/config.json"
     backup_if_exists "$MASTER_FILE"   "$backupdir/domains.txt"
     # Backup модулей
@@ -231,6 +286,10 @@ update_warper() {
         echo -e "${RED}Ошибка установки config-slave-master.json.template, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
     }
+    install -m 644 "$tmpdir/config-proxy.json.template" "$PROXY_TEMPLATE" || {
+        echo -e "${RED}Ошибка установки config-proxy.json.template, откат.${NC}"
+        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+    }
     install -m 644 "$tmpdir/config-wg.json.template" "$WG_TEMPLATE" || {
         echo -e "${RED}Ошибка установки config-wg.json.template, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
@@ -243,26 +302,12 @@ update_warper() {
         echo -e "${RED}Ошибка установки chatgpt.txt, откат.${NC}"
         rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
     }
-    install -m 644 "$tmpdir/sing-box.service" \
-        "/etc/systemd/system/sing-box.service" || {
-        echo -e "${RED}Ошибка установки sing-box.service, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }
-    install -m 644 "$tmpdir/warper-autopatch.service" \
-        "/etc/systemd/system/warper-autopatch.service" || {
-        echo -e "${RED}Ошибка установки warper-autopatch.service, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }
-    install -m 644 "$tmpdir/warper-traffic-snapshot.service" \
-        "/etc/systemd/system/warper-traffic-snapshot.service" || {
-        echo -e "${RED}Ошибка установки warper-traffic-snapshot.service, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }
-    install -m 644 "$tmpdir/warper-traffic-snapshot.timer" \
-        "/etc/systemd/system/warper-traffic-snapshot.timer" || {
-        echo -e "${RED}Ошибка установки warper-traffic-snapshot.timer, откат.${NC}"
-        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
-    }    
+    for _unit in $WARPER_UNITS; do
+        install -m 644 "$tmpdir/$_unit" "/etc/systemd/system/$_unit" || {
+            echo -e "${RED}Ошибка установки $_unit, откат.${NC}"
+            rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+        }
+    done
 
     # Устанавливаем модули lib/ и menus/
     mkdir -p "$WARPER_DIR/lib" "$WARPER_DIR/menus"
@@ -274,6 +319,10 @@ update_warper() {
             return 1
         }
     done
+    install -m 755 "$tmpdir/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" || {
+        echo -e "${RED}Ошибка установки outbound-parse.py, откат.${NC}"
+        rollback_warper_update "$backupdir"; rm -rf "$tmpdir" "$backupdir"; return 1
+    }
     # Python API
     mkdir -p "$WARPER_DIR/py/warper_api"
     for _pyfile in "$tmpdir"/py/warper_api/*.py; do
@@ -337,6 +386,10 @@ update_warper() {
             template_for_current_mode="$WG_TEMPLATE"
             backup_for_current_mode="$backupdir/config-wg.json.template"
             ;;
+        vless|hy2|openvpn)
+            template_for_current_mode="$PROXY_TEMPLATE"
+            backup_for_current_mode="$backupdir/config-proxy.json.template"
+            ;;
     esac
 
     local template_changed="no"
@@ -391,13 +444,13 @@ update_warper() {
         sync_domains >/dev/null 2>&1 || true
     fi
 
+    migrate_fakeip_pool
+
     # Пересинхронизируем IP-маршруты уже новым экземпляром warper
     if is_warper_active && [ "$(count_ip_ranges)" -gt 0 ]; then
         echo -e "${CYAN}Синхронизация IP-маршрутов...${NC}"
         /usr/local/bin/warper ipsync >/dev/null 2>&1 || true
     fi
-
-    rm -rf "$tmpdir" "$backupdir"
 
     rm -rf "$tmpdir" "$backupdir"
 

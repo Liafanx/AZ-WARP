@@ -9,18 +9,133 @@ warperslave doctor     # WARPERSLAVE
 
 ## Типичные проблемы
 
-### ANTIZAPRET_WARP=y — конфликт
+### Домены перестают открываться через сутки-двое
 
-**Симптом:** WARPER не работает, в меню предупреждение.
+**Симптом:** всё работает, потом конкретные сайты перестают открываться,
+а панель показывает, что всё активно. Помогает выключить и включить WARPER
+или перезагрузить сервер.
 
-**Решение:**
+**Причины и что проверить:**
+
 ```bash
-# В /root/antizapret/setup:
-ANTIZAPRET_WARP=n
-
-/root/antizapret/down.sh
-/root/antizapret/up.sh
+warper doctor        # ёмкость пула fake-IP, маршруты, правила
+warper resync -v     # восстановить состояние вручную
 ```
+
+1. **Мал пул fake-IP.** kresd выдаёт fake-IP каждому ПОДдомену, поэтому `/24`
+   (254 адреса) исчерпывается за сутки-двое: sing-box переиспользует адрес и
+   стирает старый маппинг, а kresd продолжает отдавать клиентам старый.
+   `warper doctor` покажет ёмкость. Лечится сменой подсети:
+   ```bash
+   warper subnet 10.224.0.0/16
+   ```
+   После смены клиентам нужно переподключиться — им пушится маршрут
+   фейковой подсети.
+
+2. **Ночная пересборка правил AntiZapret.** `antizapret-update.timer`
+   пересобирает ipset `antizapret-forward` и правила `FORWARD`. Начиная с
+   1.5.0 состояние восстанавливает `warper resync`: таймер раз в 10 минут
+   плюс хук в `/root/antizapret/custom-doall.sh`. Проверить:
+   ```bash
+   systemctl status warper-resync.timer
+   grep WARPER /root/antizapret/custom-doall.sh
+   ```
+
+### Домены не работают после обновления sing-box до 1.14
+
+**Симптом:** соединения обрываются сразу, в логе:
+`a resolve action is required before routing to outbound/wireguard`.
+
+**Причина:** 1.14 требует явного `action: resolve` перед маршрутизацией
+fake-адреса в wireguard-endpoint.
+
+**Решение:** обновить WARPER до 1.5.0+ и пересобрать конфиг
+(`warper toggle` дважды либо `warper mode warp`). В `route.rules` должно
+появиться правило `{ "inbound": "tun-in", "action": "resolve", "server": "real-dns" }`.
+
+### WARN "listen egress member on docker0 ... address already in use"
+
+**Симптом:** в логе sing-box после старта 2-3 раза подряд:
+
+```
+WARN endpoint/wireguard[warp]: listen egress member on docker0 (172.17.0.1):
+listen udp4 172.17.0.1:43480: bind: address already in use
+```
+
+**Это безвредно.** Начиная с 1.14 sing-box поднимает UDP-сокет на каждом
+интерфейсе, который UP и не point-to-point, — включая `docker0`. Для
+wireguard-endpoint исключается только его собственный интерфейс, отдельной
+настройки для остальных нет. Неудавшийся сокет просто не создаётся, а
+трафик идёт через основной интерфейс.
+
+Предупреждение появляется несколько раз при старте и затихает. Проверить,
+что WARP действительно работает:
+
+```bash
+warper doctor
+curl --interface singbox-tun https://www.cloudflare.com/cdn-cgi/trace | grep warp=
+```
+
+Если `docker0` на сервере не нужен — сообщение исчезнет вместе с ним.
+
+### Системный DNS уходит в туннель, ничего не качается
+
+**Симптом:** после запуска WARPER на самом сервере перестают работать `apt`,
+`curl`, `git`.
+
+**Причина:** sing-box прописал свой DNS на интерфейс `singbox-tun`.
+
+**Решение:** в конфиге у tun-inbound должно стоять `"dns_mode": "disabled"`
+(в 1.14 значение по умолчанию — `hijack`, оно трогает systemd-resolved).
+Проверяется автоматически:
+
+```bash
+warper doctor                      # строка "Системный DNS не перехвачен"
+resolvectl status singbox-tun      # DNS Servers быть не должно
+```
+
+### Встроенный WARP AntiZapret (ANTIZAPRET_WARP / VPN_WARP)
+
+Начиная с 1.5.0 WARPER совместим со всеми режимами (`0`-`4`). В режиме `2`
+AntiZapret добавляет `ip rule` без fwmark, который перехватывает и трафик на
+fake-подсеть, поэтому WARPER прописывает её в таблицы 13335/13336:
+
+```bash
+ip route show table 13335 | grep 10.224
+ip route show table 13336 | grep 10.224
+warper resync        # если маршрута нет
+```
+
+### Веб-панель недоступна, nginx не стартует
+
+**Симптом:** `Job for nginx.service failed`, при этом `nginx -t` проходит.
+
+**Причина:** `nginx -t` проверяет только синтаксис. Порт из `listen`
+какого-то vhost занят другим процессом.
+
+```bash
+systemctl status nginx --no-pager -l     # покажет bind() ... Address already in use
+ss -ltnp | grep ':80 '                   # кто держит порт
+```
+
+Чаще всего виноват оставшийся `/etc/nginx/sites-enabled/default` с
+`listen 80`, когда 80-й занят сторонним сервисом:
+
+```bash
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl start nginx
+```
+
+Если освободить порт нельзя, панель можно поставить **без nginx** — gunicorn
+будет слушать внешний порт сам (вопрос задаётся при установке).
+
+### ProtonVPN и другие WG-конфиги не импортируются
+
+**Симптом:** `В файле отсутствуют обязательные параметры: PresharedKey`.
+
+**Решение:** обновить WARPER до 1.5.0+ — `PresharedKey` стал опциональным,
+как и должно быть по спецификации WireGuard. Заодно `MTU` и `DNS` теперь
+берутся из импортируемого файла.
 
 ### Предупреждение "Требуется перезапуск правил AntiZapret"
 
@@ -52,10 +167,41 @@ sing-box check -c /etc/sing-box/config.json
 
 ```bash
 # На донор-сервере:
-ss -tlnp | grep 8444
+ss -tulnp | grep 8444
 iptables -L INPUT -n | grep 8444
 warperslave doctor
 ```
+
+- Hysteria2 работает по **UDP** — порт должен быть открыт для UDP и у
+  хостера (облачный firewall).
+- После `warperslave key`, `port`, `proto` или `host` ссылка меняется —
+  выполните на master новую команду из `warperslave link`.
+- VLESS+Reality: сайт из SNI должен отвечать по TLS 1.3 с донора
+  (`warperslave doctor` это проверяет). Если нет — `warperslave proto vless другой.сайт`.
+
+### VLESS / Hysteria2: режим не включается
+
+Ссылка проверяется до применения, текст ошибки указывает на поле. Частые причины:
+- неполная ссылка при копировании (обрезан `pbk=` или `sid=`); ссылку берите
+  в одинарные кавычки: `warper mode vless '…'`;
+- `sid` длиннее 16 hex-символов или нечётной длины;
+- `flow=xtls-rprx-vision` вместе с транспортом, отличным от tcp.
+
+Предупреждение `insecure=1 без пиннинга` означает, что сертификат Hysteria2 не
+проверяется. Для своего донора пиннинг добавляется автоматически.
+
+### OpenVPN: конфиг не принимается
+
+sing-box реализует OpenVPN сам, поэтому поддерживается не всё:
+- только `dev tun` — `dev tap` не поддерживается;
+- только TLS-режим — `secret` (статический ключ), `pkcs12`, `http-proxy`,
+  `socks-proxy` и `static-challenge` не поддерживаются;
+- `auth-user-pass` — логин и пароль передаются отдельно:
+  `warper mode openvpn /root/server.ovpn ЛОГИН ПАРОЛЬ`;
+- имена шифров и `tls-auth`/`tls-crypt`/`tls-crypt-v2`, сертификаты в
+  `<ca>…</ca>` или файлами рядом — разбираются автоматически.
+
+Если соединение не поднимается: `journalctl -u sing-box -n 50`.
 
 ### Cloudflare заблокировал регистрацию WARP
 

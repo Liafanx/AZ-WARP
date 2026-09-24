@@ -1,0 +1,7 @@
+[Unit]
+Description=WARPER Domain Resolve
+After=sing-box.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/warper resolvesync

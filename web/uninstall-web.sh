@@ -27,6 +27,7 @@ echo -e "Будут удалены:"
 echo -e "  • Сервис warper-web (systemd unit)"
 echo -e "  • Конфиг nginx /etc/nginx/sites-{available,enabled}/warper-web"
 echo -e "  • Самоподписанные SSL-сертификаты /etc/nginx/ssl/warper-web.* (если есть)"
+echo -e "  • Сертификаты режима без nginx /etc/warper-web/ssl/ (если есть)"
 echo -e "  • Папка /root/warper/web/ (включая БД пользователей, секреты, логи)"
 echo ""
 echo -e "${CYAN}НЕ будут затронуты:${NC}"
@@ -81,6 +82,9 @@ rm -f /etc/nginx/sites-available/warper-web
 rm -f /etc/nginx/ssl/warper-web.crt
 rm -f /etc/nginx/ssl/warper-web.key
 
+# Сертификаты режима без nginx
+rm -rf /etc/warper-web
+
 if systemctl is-active --quiet nginx 2>/dev/null; then
     nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
 fi
@@ -88,6 +92,7 @@ fi
 # Удаляем hooks автопродления сертификата если создавались
 rm -f /etc/letsencrypt/renewal-hooks/pre/warper-stop-openvpn80.sh
 rm -f /etc/letsencrypt/renewal-hooks/post/warper-start-openvpn80.sh
+rm -f /etc/letsencrypt/renewal-hooks/deploy/warper-web.sh
 
 echo -e "${CYAN}Удаляю файлы веб-панели...${NC}"
 rm -rf /root/warper/web

@@ -194,7 +194,7 @@ insert_user_domain() {
     # Проверка дубликата (без учёта регистра, среди валидных доменов)
     local existing
     existing=$(extract_user_domains "$MASTER_FILE")
-    if echo "$existing" | grep -qxF "$domain"; then
+    if grep -qxF "$domain" <<< "$existing"; then
         return 0
     fi
 
@@ -256,18 +256,20 @@ EOF
 
 # Фильтрует файл доменов: оставляет только валидные домены (без комментариев и дубликатов)
 # Используется для генерации warper-domains.txt
+# Правила — как в validate_domain, но одним awk вместо вызова на строку.
 filter_valid_domains_file() {
     local input="$1" output="$2"
-    : > "$output"
-    while IFS= read -r line; do
-        local trimmed clean
-        trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        [ -z "$trimmed" ] && continue
-        [[ "$trimmed" =~ ^# ]] && continue
-        clean=$(validate_domain "$trimmed" 2>/dev/null || true)
-        [ -n "$clean" ] && echo "$clean" >> "$output"
-    done < "$input"
-    sort -u -o "$output" "$output"
+    awk '
+    {
+        d = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", d)
+        if (d == "" || d ~ /^#/) next
+        sub(/\.$/, "", d); d = tolower(d)
+        if (d !~ /\./ || d ~ /\.\./ || d !~ /^[a-z0-9._-]+$/) next
+        n = split(d, l, ".")
+        for (i = 1; i <= n; i++)
+            if (l[i] == "" || length(l[i]) > 63 || l[i] ~ /^-|-$/) next
+        print d
+    }' "$input" | sort -u > "$output"
 }
 
 # Синхронизирует domains.txt → warper-domains.txt (активный список для kresd)
@@ -393,7 +395,7 @@ cli_add_domain() {
         echo -e "${RED}Некорректный домен: $raw${NC}" >&2; return 1
     }
     # Проверяем не существует ли уже (среди валидных)
-    if extract_user_domains "$MASTER_FILE" | grep -qxF "$domain"; then
+    if grep -qxF "$domain" <<< "$(extract_user_domains "$MASTER_FILE")"; then
         echo -e "${YELLOW}Домен уже есть: $domain${NC}"; return 0
     fi
     insert_user_domain "$domain"
@@ -415,7 +417,7 @@ cli_remove_domain() {
         echo -e "${RED}Некорректный домен: $raw${NC}" >&2; return 1
     }
 
-    if ! extract_user_domains "$MASTER_FILE" | grep -qxF "$domain"; then
+    if ! grep -qxF "$domain" <<< "$(extract_user_domains "$MASTER_FILE")"; then
         echo -e "${YELLOW}Домен не найден: $domain${NC}"
         return 0
     fi

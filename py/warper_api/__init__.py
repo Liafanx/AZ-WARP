@@ -22,10 +22,10 @@ WARPER API — Python-интерфейс для управления WARPER (AZ-
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from ._result import WarperResult
+from ._runner import read_version
 from . import domains
 from . import ip_ranges
 from . import catalog
@@ -34,17 +34,9 @@ from . import settings
 from . import traffic
 from . import status
 from . import updates
+from . import web
 
-__version__: str = "0.0.0"
-
-# Читаем версию из файла WARPER
-_VERSION_FILE = "/root/warper/version"
-if os.path.exists(_VERSION_FILE):
-    try:
-        with open(_VERSION_FILE, "r") as _f:
-            __version__ = _f.read().strip()
-    except OSError:
-        pass
+__version__: str = read_version()
 
 
 class WarperAPI:
@@ -103,6 +95,18 @@ class WarperAPI:
         """
         return status.doctor()
 
+    def resync(self) -> WarperResult:
+        """
+        Идемпотентно восстановить состояние WARPER.
+
+        Переприменяет правила FORWARD, ipset, маршруты и патч kresd.
+        Ничего не меняет, если всё на месте.
+
+        Returns:
+            WarperResult.
+        """
+        return status.resync()
+
     # ==================== WARPER toggle ====================
 
     def toggle(self) -> WarperResult:
@@ -144,6 +148,10 @@ class WarperAPI:
             WarperResult с data=list[dict] с полями name, type, enabled.
         """
         return domains.list_domains()
+
+    def update_lists(self) -> WarperResult:
+        """Обновить встроенные списки доменов (gemini/chatgpt)."""
+        return domains.update_lists()
 
     def sync_domains(self) -> WarperResult:
         """Синхронизировать домены и применить патч DNS."""
@@ -202,6 +210,36 @@ class WarperAPI:
     def sync_ip_ranges(self) -> WarperResult:
         """Синхронизировать IP-маршруты (файл → ядро)."""
         return ip_ranges.sync_ip_ranges()
+
+    def clear_ip_routes(self) -> WarperResult:
+        """Удалить все применённые IP-маршруты (файл не трогается)."""
+        return ip_ranges.clear_ip_routes()
+
+    def resolve_sync(self, force: bool = False) -> WarperResult:
+        """
+        Резолвить домены в IP и обновить накопительный блок RESOLVED.
+
+        Args:
+            force: Синхронизировать маршруты даже без изменений.
+        """
+        return ip_ranges.resolve_sync(force)
+
+    def resolve_clean(self, domain: str | None = None) -> WarperResult:
+        """
+        Очистить блок RESOLVED целиком или записи одного домена.
+
+        Args:
+            domain: Домен-источник. Без него удаляется весь блок.
+        """
+        return ip_ranges.resolve_clean(domain)
+
+    def set_auto_resolve(self, enabled: bool) -> WarperResult:
+        """Включить или выключить почасовой авто-резолв."""
+        return ip_ranges.set_auto_resolve(enabled)
+
+    def get_auto_resolve(self) -> WarperResult:
+        """Состояние авто-резолва: "enabled" или "disabled"."""
+        return ip_ranges.get_auto_resolve()
 
     def list_ip_ranges(self) -> WarperResult:
         """
@@ -381,6 +419,80 @@ class WarperAPI:
         """Выключить автозагрузку sing-box."""
         return singbox.disable()
 
+    def singbox_status(self) -> WarperResult:
+        """Состояние службы sing-box: active, enabled, version, log_level, mtu."""
+        return singbox.status()
+
+    def singbox_version(self) -> WarperResult:
+        """Установленная версия sing-box."""
+        return singbox.version()
+
+    def singbox_upgrade(self, target: str | None = None) -> WarperResult:
+        """
+        Обновить бинарь sing-box.
+
+        Бинарь общий с sing-box-slave — перезапускаются обе службы.
+
+        Args:
+            target: Версия. По умолчанию — версия из установщика.
+        """
+        return singbox.upgrade(target)
+
+    # ==================== Веб-панель ====================
+
+    def web_status(self) -> WarperResult:
+        """Состояние панели: installed, active, enabled, mode, external_port."""
+        return web.status()
+
+    def web_install(self) -> WarperResult:
+        """Установить панель (установщик интерактивный)."""
+        return web.install()
+
+    def web_uninstall(self) -> WarperResult:
+        """Удалить панель."""
+        return web.uninstall()
+
+    def web_start(self) -> WarperResult:
+        """Запустить службу панели."""
+        return web.start()
+
+    def web_stop(self) -> WarperResult:
+        """Остановить службу панели."""
+        return web.stop()
+
+    def web_restart(self) -> WarperResult:
+        """Перезапустить службу панели."""
+        return web.restart()
+
+    def web_set_autostart(self, enabled: bool) -> WarperResult:
+        """Включить или выключить автозагрузку панели."""
+        return web.set_autostart(enabled)
+
+    def web_get_port(self) -> WarperResult:
+        """Внешний порт панели."""
+        return web.get_port()
+
+    def web_set_port(self, port: int) -> WarperResult:
+        """
+        Сменить внешний порт панели.
+
+        Args:
+            port: Новый порт 1-65535.
+        """
+        return web.set_port(port)
+
+    def web_get_logs(self, lines: int = 50) -> WarperResult:
+        """Логи службы панели."""
+        return web.get_logs(lines)
+
+    def web_get_auth_log(self, lines: int = 30) -> WarperResult:
+        """Журнал авторизаций панели."""
+        return web.get_auth_log(lines)
+
+    def web_update(self) -> WarperResult:
+        """Обновить файлы панели из репозитория."""
+        return web.update()
+
     def get_logs(self, lines: int = 100) -> WarperResult:
         """
         Получить логи sing-box.
@@ -405,13 +517,14 @@ class WarperAPI:
         return settings.set_mode_warp(key_source)
 
     def set_mode_slave(
-        self, server: str, port: str | int, password: str
+        self, server: str, port: str | int = "", password: str = ""
     ) -> WarperResult:
         """
         Переключить на режим Slave.
 
         Args:
-            server: IP или домен донор-сервера.
+            server: IP или домен донор-сервера, либо ссылка ss:// из
+                `warperslave link` — тогда port и password не нужны.
             port: Порт Shadowsocks.
             password: Ключ Shadowsocks.
         """
@@ -427,7 +540,7 @@ class WarperAPI:
         return settings.set_mode_wg(conf_path)
 
     def get_mode(self) -> str:
-        """Текущий режим маршрутизации: 'warp' | 'slave' | 'wg'."""
+        """Текущий режим маршрутизации: 'warp' | 'slave' | 'wg' | 'vless' | 'hy2' | 'openvpn'."""
         return settings.get_mode()
 
     def set_subnet(self, subnet: str) -> WarperResult:
@@ -435,7 +548,7 @@ class WarperAPI:
         Изменить fake-подсеть.
 
         Args:
-            subnet: Подсеть формата X.X.X.0/M (например '198.20.0.0/24').
+            subnet: Подсеть формата X.X.X.0/M (например '10.224.0.0/16').
         """
         return settings.set_subnet(subnet)
 
@@ -447,6 +560,63 @@ class WarperAPI:
             mtu: Значение MTU.
         """
         return settings.set_mtu(mtu)
+
+    def set_mode_vless(self, link: str) -> WarperResult:
+        """VLESS / VLESS+Reality по ссылке vless://."""
+        return settings.set_mode_vless(link)
+
+    def set_mode_hy2(self, link: str) -> WarperResult:
+        """Hysteria2 по ссылке hy2:// или hysteria2://."""
+        return settings.set_mode_hy2(link)
+
+    def set_mode_openvpn(self, conf_path: str, username: str | None = None,
+                         password: str | None = None) -> WarperResult:
+        """OpenVPN по .ovpn на сервере (логин/пароль — если auth-user-pass)."""
+        return settings.set_mode_openvpn(conf_path, username, password)
+
+    def list_ovpn_configs(self) -> WarperResult:
+        """Файлы .ovpn в /root/ и /root/warper/."""
+        return settings.list_ovpn_configs()
+
+    def forget_ovpn_credentials(self, conf_path: str) -> WarperResult:
+        """Удалить сохранённые логин и пароль для файла .ovpn."""
+        return settings.forget_ovpn_credentials(conf_path)
+
+    def get_outbound(self) -> WarperResult:
+        """Текущий режим и сервер без секретов."""
+        return settings.get_outbound()
+
+    def get_subnets(self) -> WarperResult:
+        """Подсети VPN-клиентов и режим маршрутизации."""
+        return settings.get_subnets()
+
+    def config_get(self, key: str) -> WarperResult:
+        """
+        Прочитать параметр конфигурации.
+
+        Args:
+            key: Имя параметра.
+        """
+        return settings.config_get(key)
+
+    def config_set(self, key: str, value: str) -> WarperResult:
+        """
+        Изменить параметр конфигурации.
+
+        Args:
+            key: SUBNET | IP_ROUTE_MODE | IP_EXPORT_TO_ANTIZAPRET |
+                 FULLVPN_WARP_RESOLVE | LOG_LEVEL | MTU | WARP_KEY_SOURCE.
+            value: Новое значение.
+        """
+        return settings.config_set(key, value)
+
+    def get_mtu(self) -> WarperResult:
+        """Текущий MTU sing-box."""
+        return settings.get_mtu()
+
+    def get_log_level(self) -> WarperResult:
+        """Текущий log level sing-box."""
+        return settings.get_log_level()
 
     def set_log_level(self, level: str) -> WarperResult:
         """

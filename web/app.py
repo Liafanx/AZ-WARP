@@ -37,9 +37,12 @@ app = Flask(
     static_url_path="/static",
 )
 
-# Доверяем заголовкам от nginx (X-Forwarded-Proto, X-Real-IP).
-# Это нужно чтобы Flask понимал что мы за реверс-прокси.
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+# Доверяем заголовкам X-Forwarded-* только когда перед нами реально
+# стоит nginx. Без прокси клиент подделал бы X-Forwarded-For и обошёл
+# бан по IP в auth._get_client_ip().
+WEB_MODE = os.environ.get("WEB_MODE", "nginx")
+if WEB_MODE != "standalone":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config["SECRET_KEY"] = get_or_create_secret_key()
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
@@ -354,6 +357,8 @@ def settings_page():
         status=status,
         warp_keys=warp_keys,
         wg_configs=wg_configs,
+        auto_resolve=api.get_auto_resolve(),
+        ovpn_configs=api.list_ovpn_configs(),
     )
 
 @app.route("/web-settings")
@@ -665,6 +670,28 @@ def htmx_settings_fullvpn():
     return _result_partial(ok, msg, "refreshAll")
 
 
+@app.route("/htmx/settings/auto-resolve", methods=["POST"])
+@login_required
+def htmx_settings_auto_resolve():
+    enable = request.form.get("enable", "0") == "1"
+    ok, msg = api.set_auto_resolve(enable)
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/resolve-sync", methods=["POST"])
+@login_required
+def htmx_settings_resolve_sync():
+    ok, msg = api.resolve_sync(request.form.get("force", "0") == "1")
+    return _result_partial(ok, msg, "refreshIpRanges")
+
+
+@app.route("/htmx/settings/resolve-clean", methods=["POST"])
+@login_required
+def htmx_settings_resolve_clean():
+    ok, msg = api.resolve_clean(request.form.get("domain", "").strip())
+    return _result_partial(ok, msg, "refreshIpRanges")
+
+
 @app.route("/htmx/settings/log-level", methods=["POST"])
 @login_required
 def htmx_settings_log_level():
@@ -736,6 +763,56 @@ def htmx_wg_upload():
         return _result_partial(False, msg)
 
     ok2, msg2 = api.switch_to_wg(path)
+    if ok2:
+        return _result_partial(True, "%s; %s" % (msg, msg2), "refreshAll")
+    return _result_partial(False, "Загружено, но не применено: %s" % msg2)
+
+
+@app.route("/htmx/settings/mode/proxy", methods=["POST"])
+@login_required
+def htmx_mode_proxy():
+    mode = request.form.get("mode", "")
+    link = request.form.get("link", "").strip()
+    if not link:
+        return _result_partial(False, "Вставьте ссылку")
+    ok, msg = api.switch_to_proxy(mode, link)
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/mode/openvpn", methods=["POST"])
+@login_required
+def htmx_mode_openvpn():
+    conf_path = request.form.get("conf_path", "").strip()
+    if not conf_path:
+        return _result_partial(False, "Выберите файл .ovpn")
+    ok, msg = api.switch_to_openvpn(
+        conf_path,
+        request.form.get("username", "").strip(),
+        request.form.get("password", ""),
+    )
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/ovpn-upload", methods=["POST"])
+@login_required
+def htmx_ovpn_upload():
+    file = request.files.get("ovpn_file")
+    if not file or not file.filename:
+        return _result_partial(False, "Файл не выбран")
+    try:
+        content = file.read().decode("utf-8")
+    except UnicodeDecodeError:
+        return _result_partial(False, "Файл не текстовый")
+
+    ok, msg, path = api.upload_ovpn_config(file.filename, content)
+    if not ok:
+        return _result_partial(False, msg)
+
+    ok2, msg2 = api.switch_to_openvpn(
+        path,
+        request.form.get("username", "").strip(),
+        request.form.get("password", ""),
+    )
     if ok2:
         return _result_partial(True, "%s; %s" % (msg, msg2), "refreshAll")
     return _result_partial(False, "Загружено, но не применено: %s" % msg2)

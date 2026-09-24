@@ -6,12 +6,25 @@ Subprocess-обёртка для вызова CLI утилиты warper.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from typing import Any
 
 from ._result import WarperResult, _make_result, _strip_ansi
 
-WARPER_BIN = "/usr/local/bin/warper"
+WARPER_BIN = os.environ.get("WARPER_BIN", "/usr/local/bin/warper")
+
+# Процесс не от root (бот, веб-приложение): WARPER_SUDO=1 — вызывать через
+# `sudo -n`, для этого нужно правило в sudoers (см. docs/python-api.md).
+WARPER_SUDO = os.environ.get("WARPER_SUDO", "").lower() in ("1", "true", "yes")
+
+
+def warper_command(*args: str) -> list[str]:
+    """Командная строка вызова warper с учётом WARPER_SUDO."""
+    base = [WARPER_BIN, *args]
+    if WARPER_SUDO and os.geteuid() != 0:
+        return ["sudo", "-n", *base]
+    return base
 
 
 def run_warper(
@@ -37,7 +50,7 @@ def run_warper(
         >>> result.message
         'Домен добавлен: example.com'
     """
-    cmd = [WARPER_BIN, *args]
+    cmd = warper_command(*args)
 
     try:
         proc = subprocess.run(
@@ -61,12 +74,35 @@ def run_warper(
             message=f"warper не найден: {WARPER_BIN}",
             return_code=127,
         )
+    except PermissionError:
+        return WarperResult(
+            ok=False,
+            message="Нет прав на запуск warper: нужен root или WARPER_SUDO=1 и правило sudoers",
+            return_code=126,
+        )
     except Exception as e:
         return WarperResult(
             ok=False,
             message=f"Ошибка выполнения: {e}",
             return_code=1,
         )
+
+
+def read_version() -> str:
+    """
+    Версия WARPER: из /root/warper/version, а без прав на /root
+    (запуск не от root) — через `warper version`.
+    """
+    try:
+        with open("/root/warper/version", "r") as f:
+            v = f.read().strip()
+            if v:
+                return v
+    except OSError:
+        pass
+    result = run_warper("version", timeout=10)
+    v = result.raw_stdout.strip()
+    return v if result.ok and v else "0.0.0"
 
 
 def run_warper_json(

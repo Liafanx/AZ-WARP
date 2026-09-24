@@ -148,6 +148,28 @@ def save_user_domains_block(text: str) -> tuple[bool, str]:
     result = _api.save_user_domains_text(text)
     return result.ok, result.message
 
+
+def update_lists() -> tuple[bool, str]:
+    """Обновляет встроенные списки доменов из репозитория."""
+    return _to_tuple(_api.update_lists())
+
+
+def clear_ip_routes() -> tuple[bool, str]:
+    """Удаляет применённые IP-маршруты, файл не трогает."""
+    return _to_tuple(_api.clear_ip_routes())
+
+
+def get_subnets() -> dict:
+    """Подсети VPN-клиентов и режим маршрутизации."""
+    result = _api.get_subnets()
+    return result.data if result.ok and result.data else {}
+
+
+def get_singbox_status() -> dict:
+    """Состояние службы sing-box."""
+    result = _api.singbox_status()
+    return result.data if result.ok and result.data else {}
+
 # =====================================================================
 #  IP-подсети
 # =====================================================================
@@ -280,6 +302,24 @@ def set_fullvpn(enable: bool) -> tuple[bool, str]:
     return _to_tuple(_api.set_fullvpn(enable))
 
 
+def set_auto_resolve(enable: bool) -> tuple[bool, str]:
+    return _to_tuple(_api.set_auto_resolve(enable))
+
+
+def get_auto_resolve() -> bool:
+    """Включён ли почасовой авто-резолв доменов в IP-маршруты."""
+    result = _api.get_auto_resolve()
+    return result.ok and result.message.strip() == "enabled"
+
+
+def resolve_sync(force: bool = False) -> tuple[bool, str]:
+    return _to_tuple(_api.resolve_sync(force))
+
+
+def resolve_clean(domain: str = "") -> tuple[bool, str]:
+    return _to_tuple(_api.resolve_clean(domain or None))
+
+
 def switch_to_warp(key_source: str = "") -> tuple[bool, str]:
     return _to_tuple(_api.set_mode_warp(key_source))
 
@@ -314,6 +354,54 @@ def upload_wg_config(filename: str, content: str) -> tuple[bool, str, str]:
               "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="]:
         if m in content:
             return False, "Это Cloudflare WARP конфиг, не подходит для режима WG", ""
+
+    target_path = os.path.join("/root/warper", safe_name)
+    try:
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(target_path, 0o600)
+    except OSError as e:
+        return False, f"Ошибка сохранения: {e}", ""
+
+    return True, f"Конфиг сохранён: {target_path}", target_path
+
+
+def switch_to_proxy(mode: str, link: str) -> tuple[bool, str]:
+    """VLESS или Hysteria2 по share-ссылке."""
+    if mode == "vless":
+        return _to_tuple(_api.set_mode_vless(link))
+    if mode == "hy2":
+        return _to_tuple(_api.set_mode_hy2(link))
+    return False, f"Неизвестный режим: {mode}"
+
+
+def switch_to_openvpn(conf_path: str, username: str = "", password: str = "") -> tuple[bool, str]:
+    return _to_tuple(_api.set_mode_openvpn(conf_path, username or None, password or None))
+
+
+def list_ovpn_configs() -> list[dict[str, str]]:
+    result = _api.list_ovpn_configs()
+    configs = result.data if result.ok and result.data else []
+    for cfg in configs:
+        cfg["name"] = os.path.basename(cfg["path"])
+    return configs
+
+
+def ovpn_needs_auth(conf_path: str) -> bool:
+    try:
+        with open(conf_path, encoding="utf-8", errors="replace") as f:
+            return any(line.strip().lower().startswith("auth-user-pass") for line in f)
+    except OSError:
+        return False
+
+
+def upload_ovpn_config(filename: str, content: str) -> tuple[bool, str, str]:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(filename))
+    if not safe_name.endswith(".ovpn"):
+        safe_name += ".ovpn"
+
+    if not re.search(r"^\s*remote\s", content, re.M):
+        return False, "Файл не похож на OpenVPN-конфиг (нет директивы remote)", ""
 
     target_path = os.path.join("/root/warper", safe_name)
     try:
@@ -565,7 +653,17 @@ def unblock_all_ips() -> tuple[bool, str]:
         return False, f"Ошибка: {e}"
 
 
+def is_standalone() -> bool:
+    """Панель работает без nginx: gunicorn слушает внешний порт сам."""
+    return os.environ.get("WEB_MODE", "nginx") == "standalone"
+
+
 def get_nginx_external_port() -> int | None:
+    if is_standalone():
+        try:
+            return int(os.environ.get("EXTERNAL_PORT", 0)) or None
+        except ValueError:
+            return None
     nginx_conf = "/etc/nginx/sites-available/warper-web"
     if not os.path.exists(nginx_conf):
         return None
@@ -587,6 +685,8 @@ def change_external_port(new_port: int) -> tuple[bool, str]:
     import shutil, socket
     if not 1 <= new_port <= 65535:
         return False, "Порт 1-65535"
+    if is_standalone():
+        return False, "Режим без nginx: порт задаётся при установке панели"
     nginx_conf = "/etc/nginx/sites-available/warper-web"
     if not os.path.exists(nginx_conf):
         return False, "nginx конфиг не найден"
@@ -650,6 +750,7 @@ def get_service_info() -> dict[str, Any]:
         "service_active": False, "uptime": "?", "memory_mb": 0, "main_pid": None,
         "external_port": get_nginx_external_port(),
         "internal_port": int(os.environ.get("PORT", 16060)),
+        "standalone": is_standalone(),
     }
     try:
         import flask; info["flask_version"] = flask.__version__
@@ -727,7 +828,11 @@ def healthcheck() -> dict:
         if st == "error": result["overall"] = "error"
         elif st == "warn" and result["overall"] != "error": result["overall"] = "warn"
 
-    port = int(os.environ.get("PORT", 16060))
+    # Без nginx gunicorn слушает внешний порт, внутреннего нет
+    if is_standalone():
+        port = int(os.environ.get("EXTERNAL_PORT", 6060))
+    else:
+        port = int(os.environ.get("PORT", 16060))
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2)
         _add("Gunicorn порт", "ok" if s.connect_ex(("127.0.0.1", port)) == 0 else "error", f"127.0.0.1:{port}")
@@ -736,7 +841,7 @@ def healthcheck() -> dict:
         _add("Gunicorn порт", "error", str(e))
 
     ext_port = get_nginx_external_port()
-    if ext_port:
+    if ext_port and not is_standalone():
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2)
             _add(f"nginx порт {ext_port}", "ok" if s.connect_ex(("127.0.0.1", ext_port)) == 0 else "error", "")
@@ -744,7 +849,8 @@ def healthcheck() -> dict:
         except Exception as e:
             _add(f"nginx порт {ext_port}", "error", str(e))
 
-    for svc in ("warper-web", "nginx"):
+    services = ("warper-web",) if is_standalone() else ("warper-web", "nginx")
+    for svc in services:
         rc, out, _ = _run(["systemctl", "is-active", svc], timeout=3)
         _add(f"Сервис {svc}", "ok" if rc == 0 else "error", out.strip())
 

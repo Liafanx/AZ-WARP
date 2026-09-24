@@ -10,7 +10,7 @@ apt-get install -y curl wget jq iptables nano
 ## Шаг 2. Установка sing-box
 
 ```bash
-curl -fsSL https://sing-box.app/install.sh | bash -s -- --version 1.13.11
+curl -fsSL https://sing-box.app/install.sh | bash -s -- --version 1.14.1
 ```
 
 ## Шаг 3. Получение ключей WARP
@@ -68,7 +68,7 @@ systemctl start sing-box
 ## Шаг 6. Добавление fake-подсети в AntiZapret
 
 ```bash
-echo "198.20.0.0/24" >> /root/antizapret/config/include-ips.txt
+echo "10.224.0.0/16" >> /root/antizapret/config/include-ips.txt
 /root/antizapret/doall.sh
 ```
 
@@ -77,8 +77,8 @@ echo "198.20.0.0/24" >> /root/antizapret/config/include-ips.txt
 ```bash
 mkdir -p /root/warper
 cat > /root/warper/warper.conf <<EOF
-SUBNET=198.20.0.0/24
-TUN_IP=198.20.0.1/24
+SUBNET=10.224.0.0/16
+TUN_IP=10.224.0.1/16
 EOF
 chmod 600 /root/warper/warper.conf
 
@@ -97,9 +97,13 @@ chmod 600 /root/warper/slave_mode.conf
 Скопируйте их в соответствующие директории, либо используйте автоматический установщик.
 
 ```bash
-chmod +x /root/warper/warper.sh
+chmod +x /root/warper/warper.sh /root/warper/lib/outbound-parse.py
 ln -sf /root/warper/warper.sh /usr/local/bin/warper
 ```
+
+Модуль `lib/outbound-parse.py` нужен режимам VLESS, Hysteria2 и OpenVPN и
+требует `python3`. Переключиться на них можно после установки:
+`warper mode vless|hy2 'ссылка'` или `warper mode openvpn файл.ovpn`.
 
 Создайте warper-autopatch.service:
 

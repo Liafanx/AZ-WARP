@@ -17,15 +17,27 @@ SINGBOX_CONF="/etc/sing-box/config.json"
 SINGBOX_TEMPLATE="$WARPER_DIR/config.json.template"
 SLAVE_TEMPLATE="$WARPER_DIR/config-slave-master.json.template"
 SLAVE_MODE_FILE="$WARPER_DIR/slave_mode.conf"
-REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/main"
+REPO_URL="https://raw.githubusercontent.com/Liafanx/AZ-WARP/dev"
+SB_VERSION="1.14.1"
 LOCAL_VER=$(cat "$WARPER_DIR/version" 2>/dev/null | tr -d '\r\n' || echo "0.0.0")
 CONF_FILE="$WARPER_DIR/warper.conf"
+# Системный WARP-конфиг AntiZapret. Актуальные версии поднимают
+# warp-vpn/warp-antizapret, старые — единый warp. Порядок = приоритет.
+WARP_SYSTEM_CANDIDATES="/etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf"
 WARP_SYSTEM_CONF="/etc/wireguard/warp.conf"
 LOCK_FILE="/var/run/warper.lock"
 WG_TEMPLATE="$WARPER_DIR/config-wg.json.template"
 WG_MODE_FILE="$WARPER_DIR/wg_mode.conf"
+# Режимы vless / hy2 / openvpn: результат разбора ссылки или .ovpn —
+# готовый объект sing-box плюс сервер, имя и источник. Отдельно от
+# slave_mode.conf, который save_slave_config перезаписывает целиком.
+OUTBOUND_JSON="$WARPER_DIR/outbound.json"
+OVPN_AUTH_JSON="$WARPER_DIR/ovpn-auth.json"
+PROXY_TEMPLATE="$WARPER_DIR/config-proxy.json.template"
 IP_RANGES_FILE="$WARPER_DIR/ip-ranges.txt"
 AZ_WARPER_INCLUDE_IPS="/root/antizapret/config/warper-include-ips.txt"
+WEB_DIR="$WARPER_DIR/web"
+WEB_SERVICE="warper-web"
 IP_ROUTE_TABLE=100
 IP_ROUTE_PRIO=500
 
@@ -37,9 +49,19 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ===== Глобальные переменные состояния =====
-SUBNET="198.20.0.0/24"
-TUN_IP="198.20.0.1/24"
+# Fake-подсеть по умолчанию. Занятые диапазоны, которые брать нельзя:
+#   198.18.0.0/15  — AntiZapret пушит его клиентам целиком как fake-IP
+#   198.20.0.0/16  — реальное публичное пространство ARIN
+#   172.17.0.0/12  — пул Docker (172.17 — дефолтный bridge docker0)
+#   172.16.0.0/16  — адреса интерфейсов Cloudflare WARP
+#   172.28-172.29, 10.28-10.30 — подсети клиентов AntiZapret
+DEFAULT_SUBNET="10.224.0.0/16"
+SUBNET="$DEFAULT_SUBNET"
+TUN_IP="10.224.0.1/16"
 FULLVPN_WARP_RESOLVE="n"
+# Источник WARP-ключей: system | local. Только при system warper
+# следует за ключами AntiZapret и пересобирает конфиг при их смене.
+WARP_KEY_SOURCE="local"
 CURRENT_OUTBOUND_MODE="warp"
 SLAVE_SERVER=""
 SLAVE_PORT="8444"
@@ -52,6 +74,8 @@ WG_PRESHARED_KEY=""
 WG_ENDPOINT_HOST=""
 WG_ENDPOINT_PORT=""
 WG_KEEPALIVE="15"
+WG_MTU=""
+WG_DNS=""
 IP_ROUTE_MODE="antizapret"
 IP_EXPORT_TO_ANTIZAPRET="y"
 AZ_CLIENT_NET=""
@@ -63,34 +87,48 @@ MENU_UPDATE_AVAILABLE=false
 MENU_REMOTE_VER="$LOCAL_VER"
 
 # ===== Lock-файл =====
-# Lock берётся ТОЛЬКО для тяжёлых команд (toggle, sync, ipsync, mode, subnet, patch, update).
-# Все остальные команды (включая TUI-меню без аргументов) работают БЕЗ блокировки,
-# чтобы веб-панель могла параллельно вызывать warper.
+# Lock берётся для команд, которые меняют состояние. Чтение (status, list,
+# TUI-меню) идёт без него, чтобы веб-панель могла параллельно вызывать warper.
+# WARPER_LOCK_HELD наследуют дочерние вызовы warper (update → ipsync,
+# sync → doall.sh → resync) — иначе они ждали бы сами себя.
+# Файл блокировки не удаляется: процесс, ждущий на старом файле, и новый на
+# свежем получили бы блокировку одновременно.
 
 acquire_lock() {
+    [ -n "${WARPER_LOCK_HELD:-}" ] && return 0
     exec 9>"$LOCK_FILE"
     if ! flock -w 30 9; then
         echo -e "${RED}Не удалось получить блокировку (другая операция > 30 сек)${NC}" >&2
         exit 1
     fi
+    export WARPER_LOCK_HELD=$$
 }
 
 release_lock() {
-    flock -u 9 2>/dev/null || true
-    rm -f "$LOCK_FILE" 2>/dev/null || true
+    [ "${WARPER_LOCK_HELD:-}" = "$$" ] && flock -u 9 2>/dev/null
+    return 0
 }
 
 trap 'release_lock' EXIT
 
-# Lock берём ТОЛЬКО для тяжёлых команд по первому аргументу
-case "${1:-}" in
-    toggle|sync|ipsync|patch|mode|subnet|update)
-        acquire_lock
-        ;;
-    *)
-        :  # без lock - TUI и быстрые команды
-        ;;
-esac
+_needs_lock() {
+    case "${1:-}" in
+        toggle|sync|ipsync|patch|mode|subnet|update|resync|resolvesync|resolveclean) return 0 ;;
+        add|remove|enable|disable|ipadd|ipremove) return 0 ;;
+        domains)  [[ "${2:-}" =~ ^(save|edit)$ ]] ;;
+        ipranges) [ "${2:-}" = "save" ] ;;
+        catalog)  [[ "${2:-}" =~ ^(add|remove|update|updateall)$ ]] ;;
+        config)   [ "${2:-}" = "set" ] ;;
+        resolve)  [[ "${2:-}" =~ ^(on|off|enable|disable)$ ]] ;;
+        iproutes) [ "${2:-}" = "clear" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+# Вызов из custom-doall.sh идёт внутри уже запущенного warper
+if _needs_lock "$@" && [ "${WARPER_FROM_DOALL:-}" != "1" ]; then
+    acquire_lock
+fi
 
 # ===== Подключение модулей =====
 WARPER_LIB="$WARPER_DIR/lib"
@@ -112,11 +150,11 @@ if [ ! -d "$WARPER_LIB" ] || [ ! -f "$WARPER_LIB/utils.sh" ]; then
         return 1
     }
 
-    for _libfile in utils config domains singbox kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
+    for _libfile in utils config domains domains-resolve singbox outbound kresd warp-keys wg ip-routes diagnostics update cli traffic catalog; do
         _fetch_module "$REPO_URL/lib/${_libfile}.sh" "$WARPER_LIB/${_libfile}.sh" "lib/${_libfile}.sh" || exit 1
     done
 
-    for _menufile in main settings singbox-menu ip-menu web-menu; do
+    for _menufile in main settings singbox-menu ip-menu catalog-menu web-menu; do
         _fetch_module "$REPO_URL/menus/${_menufile}.sh" "$WARPER_MENUS/${_menufile}.sh" "menus/${_menufile}.sh" || exit 1
     done
 
@@ -130,7 +168,9 @@ for _lib in \
     "$WARPER_LIB/utils.sh" \
     "$WARPER_LIB/config.sh" \
     "$WARPER_LIB/domains.sh" \
+    "$WARPER_LIB/domains-resolve.sh" \
     "$WARPER_LIB/singbox.sh" \
+    "$WARPER_LIB/outbound.sh" \
     "$WARPER_LIB/kresd.sh" \
     "$WARPER_LIB/warp-keys.sh" \
     "$WARPER_LIB/wg.sh" \
@@ -143,6 +183,7 @@ for _lib in \
     "$WARPER_MENUS/settings.sh" \
     "$WARPER_MENUS/singbox-menu.sh" \
     "$WARPER_MENUS/ip-menu.sh" \
+    "$WARPER_MENUS/catalog-menu.sh" \
     "$WARPER_MENUS/main.sh"
 do
     if [ ! -f "$_lib" ]; then
@@ -166,21 +207,23 @@ done
 unset _lib _rel_path
 
 # Опциональные модули
-for _opt_module in "$WARPER_MENUS/web-menu.sh"; do
-    if [ ! -f "$_opt_module" ]; then
-        local_name=$(basename "$_opt_module" .sh)
-        if curl -fsSL --connect-timeout 5 \
-            "$REPO_URL/menus/${local_name}.sh?t=$(date +%s)" \
-            -o "$_opt_module" 2>/dev/null; then
-            chmod 644 "$_opt_module"
-        fi
+_opt_module="$WARPER_MENUS/web-menu.sh"
+if [ ! -f "$_opt_module" ]; then
+    if curl -fsSL --connect-timeout 5 \
+        "$REPO_URL/menus/web-menu.sh?t=$(date +%s)" \
+        -o "$_opt_module" 2>/dev/null; then
+        chmod 644 "$_opt_module"
     fi
-    if [ -f "$_opt_module" ]; then
-        # shellcheck disable=SC1090
-        source "$_opt_module"
-    fi
-done
+fi
+if [ -f "$_opt_module" ]; then
+    # shellcheck disable=SC1090
+    source "$_opt_module"
+fi
 unset _opt_module
+
+# Системный WARP-конфиг определяем после загрузки модулей
+# shellcheck disable=SC2034  # используется в lib/*.sh
+WARP_SYSTEM_CONF=$(resolve_warp_system_conf)
 
 # ===== Инициализация файлов =====
 if [ ! -f "$MASTER_FILE" ]; then
@@ -209,11 +252,17 @@ fi
 
 # ===== Загрузка настроек =====
 load_config
+load_slave_config
 load_wg_config
 
 # ===== CLI-обработка =====
 case "${1:-}" in
     patch)    patch_kresd >/dev/null 2>&1; exit $? ;;
+    resync)   cli_resync "${2:-}"; exit $? ;;
+    singbox)  cli_singbox "${2:-}" "${3:-}"; exit $? ;;
+    resolvesync)  cli_resolve_sync "${2:-}"; exit $? ;;
+    resolveclean) cli_resolve_clean "${2:-}"; exit $? ;;
+    resolve)      cli_resolve "${2:-}"; exit $? ;;
     doctor)   doctor; exit $? ;;
     status)
         if [ "${2:-}" = "json" ]; then
@@ -225,7 +274,10 @@ case "${1:-}" in
     sync)
         rebuild_master_file
         if is_warper_active; then
-            patch_kresd
+            patch_kresd "${2:-}" || exit 1
+            [ "${KRESD_RESTART_SKIPPED:-0}" = 1 ] \
+                && echo "Список доменов не изменился, kresd не перезапускался (--force — перезапустить)"
+            exit 0
         else
             sync_domains
             echo -e "${GREEN}Домены синхронизированы.${NC}"
@@ -249,8 +301,14 @@ case "${1:-}" in
               if is_warper_active; then sync_ip_ranges; fi
               exit $? ;;
     ipsync)   sync_ip_ranges; exit $? ;;
-    iplist)   extract_ip_ranges; exit $? ;;
-    iproutes) get_current_tun_routes; exit $? ;;
+    iplist)   extract_ip_ranges; exit 0 ;;
+    iproutes)
+        case "${2:-}" in
+            "")    get_current_tun_routes; exit 0 ;;
+            clear) remove_all_ip_routes; exit $? ;;
+            *)     echo "Использование: warper iproutes [clear]" >&2; exit 1 ;;
+        esac
+        ;;
     warpkeysync)
         auto_sync_warp_keys_on_boot
         exit $?
@@ -272,10 +330,15 @@ case "${1:-}" in
             warp)  cli_mode_warp "${3:-}"; exit $? ;;
             slave) cli_mode_slave "${3:-}" "${4:-}" "${5:-}"; exit $? ;;
             wg)    cli_mode_wg "${3:-}"; exit $? ;;
+            vless|hy2|openvpn)
+                cli_mode_proxy "$2" "${3:-}" "${4:-}" "${5:-}"; exit $? ;;
             *)
-                echo "Использование: warper mode warp [system|wgcf|root|generate]"
-                echo "               warper mode slave SERVER PORT PASSWORD"
-                echo "               warper mode wg /path/to.conf"
+                echo "Использование: warper mode warp [system|wgcf|root|generate]" >&2
+                echo "               warper mode slave СЕРВЕР ПОРТ ПАРОЛЬ | 'ss://...'" >&2
+                echo "               warper mode wg /path/to.conf" >&2
+                echo "               warper mode vless 'vless://...'" >&2
+                echo "               warper mode hy2 'hy2://...'" >&2
+                echo "               warper mode openvpn /path/file.ovpn [ЛОГИН ПАРОЛЬ]" >&2
                 exit 1
                 ;;
         esac
@@ -288,7 +351,8 @@ case "${1:-}" in
     config)
         case "${2:-}" in
             get) cli_config_get "${3:-}"; exit $? ;;
-            *)   echo "Использование: warper config get KEY"; exit 1 ;;
+            set) cli_config_set "${3:-}" "${4:-}"; exit $? ;;
+            *)   echo "Использование: warper config get КЛЮЧ | set КЛЮЧ ЗНАЧЕНИЕ" >&2; exit 1 ;;
         esac
         ;;
     subnet)      cli_subnet "${2:-}"; exit $? ;;
@@ -315,10 +379,44 @@ case "${1:-}" in
             *)    echo "Использование: warper wgconfig list"; exit 1 ;;
         esac
         ;;
-    domainslist) cli_domains_list; exit $? ;;
+    domainslist) cli_domains_list; exit 0 ;;
+    domains)
+        case "${2:-}" in
+            list) cli_domains_text; exit 0 ;;
+            save) cli_domains_save; exit $? ;;
+            edit)
+                is_interactive || { echo "ERROR: edit requires a terminal" >&2; exit 1; }
+                "${EDITOR:-nano}" "$MASTER_FILE"
+                rebuild_master_file
+                if is_warper_active; then patch_kresd >/dev/null 2>&1 || true
+                else sync_domains; fi
+                echo "Domains updated"
+                exit $?
+                ;;
+            *) echo "Использование: warper domains list|save|edit" >&2; exit 1 ;;
+        esac
+        ;;
+    subnets)     cli_subnets; exit $? ;;
+    outbound)    cli_outbound; exit $? ;;
+    ovpnconfig)
+        case "${2:-}" in
+            list)   cli_ovpn_list; exit 0 ;;
+            forget) cli_ovpn_forget "${3:-}"; exit $? ;;
+            *)      echo "Использование: warper ovpnconfig list | forget ФАЙЛ" >&2; exit 1 ;;
+        esac
+        ;;
+    listupdate)  cli_list_update; exit $? ;;
+    uninstall)   cli_uninstall "${2:-}"; exit $? ;;
+    web)
+        shift
+        cli_web "$@"
+        exit $?
+        ;;
+    help|--help|-h)     cli_help; exit 0 ;;
+    version|--version|-v) echo "$LOCAL_VER"; exit 0 ;;
     ipranges)
         case "${2:-}" in
-            list) cli_ip_ranges_content; exit $? ;;
+            list) cli_ip_ranges_content; exit 0 ;;
             save) cli_ip_ranges_save; exit $? ;;
             *)    echo "Использование: warper ipranges list|save"; exit 1 ;;
         esac
@@ -336,7 +434,15 @@ case "${1:-}" in
         shift
         cli_web_https "$@"
         exit $?
-        ;;        
+        ;;
+    "")
+        : # без аргументов — ниже откроется интерактивное меню
+        ;;
+    *)
+        echo "Неизвестная команда: $1" >&2
+        echo "Список команд: warper help" >&2
+        exit 1
+        ;;
 esac
 
 # ===== Главное меню =====

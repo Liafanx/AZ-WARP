@@ -259,10 +259,19 @@ def _ensure_default_user() -> None:
                 }
             }
             if _save_users(users):
+                # Пароль не логируем: stdout сервиса уходит в journald,
+                # который читается без прав root. Пишем в файл 0600.
+                pass_file = DATA_DIR / "initial-password"
+                try:
+                    pass_file.write_text(generated_pass + "\n", encoding="utf-8")
+                    pass_file.chmod(0o600)
+                    where = str(pass_file)
+                except OSError as e:
+                    logger.error("Не удалось сохранить пароль: %s", e)
+                    where = "не сохранён"
                 logger.warning("=" * 60)
-                logger.warning("БД пуста — создан администратор:")
-                logger.warning("  Логин:  %s", DEFAULT_USER)
-                logger.warning("  Пароль: %s", generated_pass)
+                logger.warning("БД пуста — создан администратор: %s", DEFAULT_USER)
+                logger.warning("Пароль записан в %s", where)
                 logger.warning("Смените: warper webpass")
                 logger.warning("=" * 60)
     except OSError as e:

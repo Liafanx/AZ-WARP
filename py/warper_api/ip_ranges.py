@@ -251,9 +251,9 @@ def save_ip_ranges_text(text: str) -> WarperResult:
     content = text if text.endswith("\n") else text + "\n"
 
     try:
-        from ._runner import WARPER_BIN
+        from ._runner import warper_command
         proc = subprocess.run(
-            [WARPER_BIN, "ipranges", "save"],
+            warper_command("ipranges", "save"),
             input=content,
             capture_output=True,
             text=True,
@@ -307,3 +307,88 @@ def _is_valid_cidr_format(cidr: str) -> bool:
         return False
 
     return True
+
+
+def resolve_sync(force: bool = False, timeout: int = 300) -> WarperResult:
+    """
+    Резолвить домены из domains.txt в IP и обновить блок RESOLVED.
+
+    Список накопительный: адреса из прошлых прогонов не удаляются, так как
+    CDN отдаёт разные IP в разные моменты. Маршруты синхронизируются только
+    если блок реально изменился.
+
+    Args:
+        force: Синхронизировать даже без изменений.
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+
+    Example:
+        >>> resolve_sync()
+        WarperResult(OK, 'Resolved block updated (67 addresses)')
+    """
+    args = ["resolvesync"]
+    if force:
+        args.append("--force")
+    return run_warper(*args, timeout=timeout)
+
+
+def resolve_clean(domain: str | None = None, timeout: int = 120) -> WarperResult:
+    """
+    Очистить блок RESOLVED целиком или записи одного домена.
+
+    Args:
+        domain: Домен-источник. Если не задан — удаляется весь блок.
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+    """
+    args = ["resolveclean"]
+    if domain:
+        args.append(domain)
+    return run_warper(*args, timeout=timeout)
+
+
+def set_auto_resolve(enabled: bool) -> WarperResult:
+    """
+    Включить или выключить почасовой авто-резолв (warper-resolve.timer).
+
+    Args:
+        enabled: True — включить, False — выключить.
+
+    Returns:
+        WarperResult.
+    """
+    return run_warper("resolve", "on" if enabled else "off")
+
+
+def get_auto_resolve() -> WarperResult:
+    """
+    Состояние авто-резолва.
+
+    Returns:
+        WarperResult, где message — "enabled" или "disabled",
+        data — True / False.
+    """
+    result = run_warper("resolve", "status")
+    if result.ok:
+        result.data = result.message.strip() == "enabled"
+    return result
+
+
+def clear_ip_routes(timeout: int = 120) -> WarperResult:
+    """
+    Удалить все применённые WARPER IP-маршруты из ядра.
+
+    Файл ip-ranges.txt не трогается: маршруты возвращаются
+    следующим sync_ip_ranges().
+
+    Args:
+        timeout: Таймаут в секундах.
+
+    Returns:
+        WarperResult.
+    """
+    return run_warper("iproutes", "clear", timeout=timeout)

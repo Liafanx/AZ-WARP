@@ -3,7 +3,7 @@
 ## Общая схема для доменов
 
 ```
-AntiZapret-клиенты → kresd@1 → WARPER-домены → sing-box → WARP / Slave / WG
+AntiZapret-клиенты → kresd@1 → WARPER-домены → sing-box → WARP / WG / Slave / VLESS / Hysteria2 / OpenVPN
                              → остальное → обычная маршрутизация
 
 FullVPN-клиенты → kresd@2 → всё → встроенный WARP автора (при VPN_WARP=y)
@@ -14,13 +14,14 @@ FullVPN-клиенты → kresd@2 → всё → встроенный WARP ав
 | Компонент | Расположение | Назначение |
 |---|---|---|
 | warper.sh | /root/warper/ | Основной скрипт управления |
-| sing-box | /usr/bin/sing-box | Прокси-ядро (tun + DNS + WireGuard/SS) |
+| sing-box | /usr/bin/sing-box | Прокси-ядро (tun + DNS + исходящее подключение) |
 | kresd | /etc/knot-resolver/ | DNS-резолвер AntiZapret |
 | config.json | /etc/sing-box/ | Конфиг sing-box |
 | warper-domains.txt | /etc/knot-resolver/ | Активный список доменов |
 | domains.txt | /root/warper/ | Мастер-файл доменов |
 | warper.conf | /root/warper/ | Настройки (подсеть, TUN IP) |
-| slave_mode.conf | /root/warper/ | Настройки режима (WARP/Slave/WG) |
+| slave_mode.conf | /root/warper/ | Текущий режим и параметры Slave |
+| outbound.json | /root/warper/ | Подключение режимов VLESS / Hysteria2 / OpenVPN (0600) |
 | wg_mode.conf | /root/warper/ | Параметры WG-соединения |
 | ip-ranges.txt | /root/warper/ | Желаемые CIDR (редактируется пользователем) |
 | ip-ranges.applied | /root/warper/ |Последнее применённое состояние |
@@ -40,6 +41,8 @@ FullVPN-клиенты → kresd@2 → всё → встроенный WARP ав
 - `lib/kresd.sh` – патчинг kresd
 - `lib/warp-keys.sh` – работа с WARP-ключами
 - `lib/wg.sh` – WireGuard
+- `lib/outbound.sh` – режимы VLESS / Hysteria2 / OpenVPN
+- `lib/outbound-parse.py` – разбор ссылок `vless://`, `hy2://`, `ss://` и `.ovpn` в объект sing-box
 - `lib/ip-routes.sh` – маршрутизация IP-подсетей (CIDR)
 - `lib/diagnostics.sh` – проверки, `doctor`, `status`
 - `lib/update.sh` – безопасное обновление
@@ -78,7 +81,7 @@ ip-ranges.txt → extract_ip_ranges()
 ## Режим WARP
 
 ```
-kresd@1/ip route → fake-ip (198.20.0.0/24) → singbox-tun → WireGuard endpoint → Cloudflare WARP
+kresd@1/ip route → fake-ip (10.224.0.0/16) → singbox-tun → WireGuard endpoint → Cloudflare WARP
 ```
 
 ## Режим Slave
@@ -86,6 +89,23 @@ kresd@1/ip route → fake-ip (198.20.0.0/24) → singbox-tun → WireGuard endpo
 ```
 kresd@1/ip route → fake-ip → singbox-tun → Shadowsocks outbound → slave-сервер:8444
 ```
+
+## Режимы VLESS, Hysteria2, OpenVPN
+
+```
+kresd@1/ip route → fake-ip → singbox-tun → VLESS+Reality / Hysteria2 outbound → сервер
+kresd@1/ip route → fake-ip → singbox-tun → resolve → OpenVPN endpoint → сервер
+```
+
+Ссылка или `.ovpn` разбирается `lib/outbound-parse.py` в готовый объект sing-box
+с тегом `proxy` и сохраняется в `outbound.json`. Конфиг собирается из
+`config-proxy.json.template`: VLESS и Hysteria2 добавляются в `outbounds` и
+получают домен как есть, OpenVPN — L3-endpoint, поэтому перед ним стоит
+правило `resolve`, как у WireGuard.
+
+Переключение любого режима атомарное: конфиг собирается во временный файл,
+проверяется `sing-box check` и только потом заменяет рабочий. При ошибке
+возвращаются прежние режим и конфиг.
 
 ## Режим WG
 
@@ -110,7 +130,16 @@ kresd@1/ip route → fake-ip → singbox-tun → WireGuard endpoint → WG-се�
 | warperslave.sh | /root/warperslave/ |
 | slave.conf | /root/warperslave/ |
 | config.json | /etc/sing-box-slave/ |
+| hy2.crt, hy2.key | /etc/sing-box-slave/ (самоподписанный сертификат Hysteria2) |
 | sing-box-slave.service | /etc/systemd/system/ |
+
+Донор настраивается по двум осям: протокол входа `SLAVE_PROTO`
+(`ss`, `vless`, `hy2`) и выход `SLAVE_MODE` (`direct`, `warp`). Конфиг
+собирает `warperslave` через `jq` из `slave.conf` — и при установке, и при
+смене протокола или выхода. `warperslave link` печатает стандартную ссылку,
+которую master принимает той же командой, что и ссылку стороннего сервера.
+Для Hysteria2 в ссылке передаётся `spki` — хэш публичного ключа сертификата,
+master пиннит его вместо проверки CA.
 
 ## Шаблоны конфигураций
 
@@ -119,15 +148,16 @@ kresd@1/ip route → fake-ip → singbox-tun → WireGuard endpoint → WG-се�
 | templates/config.json.template | WARPER в режиме WARP |
 | templates/config-slave-master.json.template | WARPER в режиме Slave |
 | templates/config-wg.json.template | WARPER в режиме WG |
-| templates/config-slave-direct.json.template | WARPERSLAVE в режиме Direct |
-| templates/config-slave-warp.json.template | WARPERSLAVE в режиме WARP |
+| templates/config-proxy.json.template | WARPER в режимах VLESS / Hysteria2 / OpenVPN |
 
 ## Управление WARP-ключами
 
-Источники ключей проверяются в порядке приоритета:
-1. `/etc/wireguard/warp.conf` — системный файл AntiZapret (только с ключом Cloudflare)
-2. `/root/warper/wgcf/wgcf-profile.conf` — локальный профиль WARPER
-3. `/root/wgcf-profile.conf` — профиль в корне
+Источник выбирается при установке или командой
+`warper mode warp system|wgcf|root|generate` и хранится в `WARP_KEY_SOURCE`:
+- `local` (по умолчанию) — ключи из текущего config.json, `/root/warper/wgcf/wgcf-profile.conf`
+  или `/root/wgcf-profile.conf`;
+- `system` — системный конфиг AntiZapret: `/etc/wireguard/warp-vpn.conf`,
+  `warp-antizapret.conf` или `warp.conf` (только с ключом Cloudflare).
 
 Файлы WireGuard-соединений (не от Cloudflare) автоматически исключаются из поиска WARP-ключей.
 
@@ -174,12 +204,13 @@ Crash sing-box → теряется <= 5 минут (между snapshot'ами)
 
 ```
 Загрузка системы → warper-autopatch → warpkeysync
-  ├── /etc/wireguard/warp.conf существует?
-  │   ├── Да → ключи отличаются от config.json?
-  │   │   ├── Да → пересборка config.json + restart sing-box
-  │   │   └── Нет → ничего
-  │   └── Нет → ничего (пользователь не использует VPN_WARP)
-  └── Режим != warp → пропуск
+  ├── Режим != warp → пропуск
+  ├── WARP_KEY_SOURCE != system → пропуск
+  └── Системный WARP-конфиг AntiZapret существует?
+      ├── Да → ключи отличаются от config.json?
+      │   ├── Да → пересборка config.json + restart sing-box
+      │   └── Нет → ничего
+      └── Нет → ничего
 ```
 
 ## Каталог готовых доменных списков

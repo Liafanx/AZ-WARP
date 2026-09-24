@@ -1,6 +1,6 @@
 # 🚀 WARPER для AntiZapret VPN
 
-Точечная маршрутизация сервисов вроде **Gemini**, **ChatGPT** и других доменов и IPv4-подсетей (CIDR) через **Cloudflare WARP**, **внешний донор-сервер** или **собственное WireGuard-соединение** на сервере с **AntiZapret VPN**.
+Точечная маршрутизация сервисов вроде **Gemini**, **ChatGPT** и других доменов и IPv4-подсетей (CIDR) через **Cloudflare WARP**, **внешний донор-сервер**, **собственное WireGuard-соединение** или сторонний сервер **VLESS+Reality / Hysteria2 / OpenVPN** на сервере с **AntiZapret VPN**.
 
 Основной проект AntiZapret VPN: https://github.com/GubernievS/AntiZapret-VPN
 
@@ -54,9 +54,9 @@ WARPER позволяет **точечно направлять только н�
 ### Когда вы добавляете домен в WARPER:
 
 1. Домен попадает в список маршрутизации
-2. `kresd` (только для AntiZapret-клиентов) отдаёт для него **fake-ip** из подсети `198.20.0.0/24 (по умолчанию)`
+2. `kresd` (только для AntiZapret-клиентов) отдаёт для него **fake-ip** из подсети `10.224.0.0/16 (по умолчанию)`
 3. Трафик к fake-ip перехватывает `sing-box`
-4. `sing-box` отправляет его в **WARP-туннель**, на **донор-сервер** или через **WG-соединение**
+4. `sing-box` отправляет его в **WARP-туннель**, на **донор-сервер**, через **WG-соединение** или на сторонний сервер (**VLESS / Hysteria2 / OpenVPN**)
 5. Сайт видит IP Cloudflare/донора/WG-сервера, а не IP вашего VPS
 
 ### Маршрутизация по IP-подсетям
@@ -88,11 +88,18 @@ WARPER позволяет **точечно направлять только н�
 
 ```
 Сервер 1 (WARPER)                    Сервер 2 (WARPERSLAVE)
-Клиент → AntiZapret → kresd/ip route →        → sing-box (ss-in) →
-  fake-ip → sing-box (ss-out) ──────→   direct / WARP → Интернет
+Клиент → AntiZapret → kresd/ip route →        → sing-box (вход) →
+  fake-ip → sing-box ───────────────→   direct / WARP → Интернет
+          SS 2022 / VLESS+Reality / Hysteria2
 ```
 
-Трафик идёт через второй сервер (донор) по зашифрованному Shadowsocks-каналу. На доноре трафик может выходить напрямую (Direct) или через WARP.
+Трафик идёт через второй сервер (донор). Канал master → донор — Shadowsocks 2022,
+VLESS+Reality (рекомендуется: выглядит как обычный TLS к выбранному сайту) или
+Hysteria2 (QUIC). На доноре трафик может выходить напрямую (Direct) или через WARP.
+
+Донор выдаёт готовую команду для master: `warperslave link`. Для VLESS и
+Hysteria2 master переключается в режим `vless` / `hy2` — так же, как на
+сторонний сервер.
 
 **Когда нужен Slave:**
 - IP основного сервера заблокирован сервисом
@@ -112,22 +119,52 @@ WARPER позволяет **точечно направлять только н�
 - Нужен выход через конкретный IP без Cloudflare
 - WARP не подходит, донор-сервер не нужен
 
-### Совместимость с VPN_WARP при работе с доменами
+### Режимы VLESS, Hysteria2, OpenVPN
 
-| Параметр | Поведение |
+```
+Клиент → AntiZapret → kresd/ip route → fake-ip → sing-box → VLESS / Hysteria2 / OpenVPN → Интернет
+```
+
+Выход через любой сторонний сервер или свой донор:
+- **VLESS** (в том числе Reality, транспорты ws/grpc/httpupgrade/http) — по
+  ссылке `vless://…`;
+- **Hysteria2** — по ссылке `hy2://…` или `hysteria2://…` (obfs salamander,
+  диапазоны портов, пиннинг сертификата `pinSHA256`);
+- **OpenVPN** — по файлу `.ovpn` (`dev tun`, инлайн-сертификаты, `tls-auth`,
+  `tls-crypt`, логин/пароль для `auth-user-pass`). Логин и пароль
+  запоминаются для каждого файла — между профилями (например, серверами
+  ProtonVPN) можно переключаться без повторного ввода.
+
+VLESS Encryption из Xray (`encryption=mlkem768x25519plus…`) sing-box не
+поддерживает — нужна ссылка с `encryption=none`.
+
+Ссылка или файл проверяются до применения: при ошибке режим и конфиг остаются
+прежними.
+
+### Совместимость со встроенным WARP AntiZapret
+
+Актуальный AntiZapret хранит в `ANTIZAPRET_WARP` и `VPN_WARP` **число**, а не
+`y`/`n`:
+
+| Значение | Что делает AntiZapret |
 |---|---|
-| `ANTIZAPRET_WARP=n` + `VPN_WARP=n` | WARPER работает для AntiZapret-клиентов + есть возможность включить для FullVPN |
-| `ANTIZAPRET_WARP=n` + `VPN_WARP=y` | ✅ WARPER для AntiZapret, FullVPN через встроенный WARP |
-| `ANTIZAPRET_WARP=y` | ❌ Конфликт — WARPER не работает |
+| `0`, `1` | встроенный WARP выключен |
+| `2` | весь трафик подсети идёт через `warp-antizapret` / `warp-vpn` |
+| `3`, `4` | выборочно, по `fwmark 0x2` |
+
+WARPER совместим со **всеми** режимами. В режиме `2` AntiZapret добавляет
+`ip rule ... lookup 13335` (или `13336`) без fwmark, который перехватывал бы и
+трафик на fake-подсеть — поэтому WARPER прописывает fake-подсеть и свои CIDR
+прямо в эти таблицы. Наличие маршрута проверяет `warper doctor`.
 
 ### FullVPN WARP-резолвинг доменов
 
 WARPER умеет применять патч для `kresd@2` (FullVPN-клиенты), чтобы заданные домены также маршрутизировались через WARP/Slave/WG, как и для AntiZapret.
 
 - По умолчанию **выключен**.
-- Требует `VPN_WARP=n` в `/root/antizapret/setup`.
-- При включении `VPN_WARP=y` опция автоматически отключается.
-- Управляется в меню: `Настройки → FullVPN WARP-резолвинг`.
+- Совместим с любым значением `VPN_WARP` (см. таблицу выше).
+- Управляется в меню: `Настройки → FullVPN WARP-резолвинг` или
+  `warper fullvpn on|off`.
 - Статус отображается в главном меню, `warper status` и `warper doctor`.
 
 ### Совместимость ANTIZAPRET_WARP=y/n + VPN_WARP=y/n c IPv4-подсетями (CIDR)
@@ -155,7 +192,7 @@ WARPER умеет применять патч для `kresd@2` (FullVPN-клие
 | **ОС** | Ubuntu 20.04+, Debian 10+ |
 | **Архитектура** | x86_64, aarch64, armv7l |
 | **Права** | root |
-| **Обязательно** | Открытый порт (по умолчанию 8444) |
+| **Обязательно** | Открытый порт (по умолчанию 8444): TCP для SS и VLESS, UDP для Hysteria2 |
 
 ---
 
@@ -198,8 +235,8 @@ WARPER включает опциональную **веб-панель** — б�
 
 - Управление доменами и IP-подсетями (с поддержкой комментариев)
 - Включение/отключение WARPER, sing-box
-- Переключение режимов WARP / Slave / WG прямо из браузера
-- Загрузка WG-конфигов через drag & drop
+- Переключение режимов WARP / Slave / WG / VLESS / Hysteria2 / OpenVPN прямо из браузера
+- Загрузка WG- и OpenVPN-конфигов через drag & drop, вставка ссылок vless:// hy2:// ss://
 - Управление WARP-ключами (выбор источника, генерация)
 - Все настройки: log level, MTU, fake-подсеть, FullVPN-резолвинг, режим IP-маршрутов
 - Просмотр логов sing-box в реальном времени с фильтром
@@ -270,14 +307,28 @@ warper webhttps enable-selfsigned # включить самоподписанн�
 warper webhttps enable-letsencrypt DOMAIN  # Let's Encrypt
 warper webhttps disable           # переключить на HTTP
 warper webhttps renew             # обновить сертификат
+
+warper web status                 # установлена, активна, режим, внешний порт
+warper web start|stop|restart     # управление службой
+warper web enable|disable         # автозагрузка
+warper web port                   # показать внешний порт
+warper web port 8443              # изменить внешний порт
+warper web logs 100               # логи службы
+warper web authlog 50             # журнал авторизаций
+warper web install|uninstall      # установка и удаление
+warper webupdate                  # обновить файлы панели
 ```
+
+Полный список — `warper help`.
 
 ### Безопасность
 
 - Пароли в виде **bcrypt-хеша** в `/root/warper/web/data/users.json` (chmod 600)
 - `SECRET_KEY` Flask в `/root/warper/web/data/secret.key`, ротируется при смене пароля
 - Защита от brute-force: **10 попыток / 10 минут → блокировка IP на 15 минут**
-- CSRF-защита, X-Real-IP только от nginx (невозможно подделать)
+- CSRF-защита. `X-Real-IP` принимается только когда панель стоит за nginx;
+  в режиме без nginx `ProxyFix` отключается, иначе заголовок можно подделать
+  и обойти блокировку по IP
 - Аудит-лог в `/root/warper/web/data/auth.log`
 - Cookie: HttpOnly, SameSite=Lax, Secure при HTTPS
 - Настраиваемые параметры brute-force (попытки, окно, длительность блокировки)
@@ -290,12 +341,17 @@ warper webhttps renew             # обновить сертификат
 ### Удаление веб-панели
 
 ```bash
+warper web uninstall
+```
+
+Или через меню: `warper` → `W` → `10`, или напрямую:
+
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/web/uninstall-web.sh)
 ```
 
-Или через меню: `warper` → `W` → `9`.
-
-> При полном удалении WARPER (`warper` → `U`) веб-панель удаляется автоматически.
+> При полном удалении WARPER (`warper uninstall --yes`) веб-панель
+> удаляется автоматически.
 
 ---
 
@@ -310,28 +366,31 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install-slave.
 
 Установщик спросит:
 - **Режим**: Direct (трафик через IP донора) или WARP (через Cloudflare)
+- **Протокол**: Shadowsocks 2022, VLESS+Reality (рекомендуется) или Hysteria2
+- **SNI** для Reality: сайт с TLS 1.3, под который маскируется канал (по умолчанию `www.microsoft.com`)
 - **Порт**: по умолчанию 8444
-- **Ключ Shadowsocks**: сгенерировать новый или ввести существующий
+- **Ключ Shadowsocks** (только для SS): сгенерировать новый или ввести существующий
 
-После установки будут показаны данные для настройки основного сервера:
-
-```
-IP:    <IPv4 донор-сервера>
-Порт:  8444
-Ключ:  <ключ Shadowsocks>
-```
+Ключи VLESS/Reality и Hysteria2 генерируются автоматически. В конце установщик
+печатает команду для основного сервера.
 
 ### Подключение WARPER к донору
 
-На основном сервере:
+На доноре:
 
 ```bash
-warper
+warperslave link
 ```
 
-→ `Настройки (9)` → `Режим маршрутизации (7)` → `Slave (2)`
+Выполните напечатанную команду на основном сервере, например:
 
-Введите IP, порт и ключ донор-сервера.
+```bash
+warper mode vless 'vless://…@203.0.113.10:8444?security=reality&…#warperslave'
+```
+
+То же можно сделать в меню `warper` → `Настройки (9)` → `Режим маршрутизации (7)`
+или в веб-панели — вставив ссылку. Для Shadowsocks по-прежнему можно ввести
+IP, порт и ключ вручную.
 
 ### Управление донором
 
@@ -339,6 +398,8 @@ warper
 warperslave          # интерактивное меню
 warperslave status   # статус
 warperslave switch   # переключить Direct ↔ WARP
+warperslave proto vless  # сменить протокол: ss | vless | hy2
+warperslave link     # ссылка и команда для master
 warperslave doctor   # диагностика
 warperslave update   # обновление
 ```
@@ -367,34 +428,170 @@ warperslave status
 <a id="commands"></a>
 ## 🧰 Команды управления
 
-### WARPER
+Полный список: `warper help`. Неизвестная команда возвращает код 1,
+а не открывает меню.
+
+### Домены
 
 ```bash
-warper                      # главное меню
-warper add openai.com       # добавить домен
-warper remove openai.com    # удалить домен
-warper enable gemini        # включить список Gemini
-warper enable chatgpt       # включить список ChatGPT
-warper disable gemini       # выключить список
-warper sync                 # синхронизировать и применить
-warper patch                # переприменить патч DNS
-warper doctor               # диагностика
-warper status               # краткий статус
-warper traffic              # статистика трафика (сегодня)
-warper traffic week         # за неделю
-warper traffic month        # за месяц
-warper traffic all          # за всё время
+warper                          # главное меню
+warper add openai.com           # добавить домен
+warper remove openai.com        # удалить домен
+warper domains list             # пользовательский блок как текст
+warper domains save < file.txt  # заменить блок текстом из stdin
+warper domains edit             # открыть domains.txt в редакторе
+warper domainslist              # машинный вид: домен|источник|включён
+warper enable gemini            # включить встроенный список
+warper disable gemini           # выключить встроенный список
+warper listupdate               # обновить встроенные списки из репозитория
+warper sync                     # применить список к DNS
+warper sync --force             # то же, с обязательным перезапуском kresd
+warper patch                    # переприменить патч kresd
+```
+
+### Состояние и обслуживание
+
+```bash
+warper status                   # краткий статус
+warper status json              # то же в JSON (для скриптов и API)
+warper doctor                   # диагностика
+warper toggle                   # включить или выключить WARPER
+warper resync                   # восстановить правила, ipset, маршруты, патч DNS
+warper resync -v                # то же с отчётом, что было починено
+warper subnets                  # подсети VPN-клиентов и режим маршрутизации
+warper traffic                  # трафик за сегодня
+warper traffic week|month|all   # за период
+warper traffic all json         # в JSON
+warper update                   # обновить WARPER
+warper uninstall --yes          # полное удаление
+```
+
+`warper resync` вызывается автоматически: таймером `warper-resync.timer`
+раз в 10 минут и из `/root/antizapret/custom-doall.sh` сразу после ночной
+пересборки правил AntiZapret. Вручную нужен редко.
+
+### Настройки
+
+```bash
+warper config get SUBNET        # прочитать параметр
+warper config set MTU 1380      # изменить параметр
+warper subnet 10.224.0.0/16     # сменить fake-подсеть
+warper loglevel debug           # уровень логов sing-box
+warper mtu 1420                 # MTU
+warper autopatch on|off         # автопатч DNS при загрузке
+warper fullvpn on|off           # WARP-резолвинг для FullVPN-клиентов
+warper iproutemode antizapret   # antizapret | all_vpn | all
+warper ipexport on|off          # экспорт CIDR в AntiZapret
+```
+
+Записываемые через `config set` ключи: `SUBNET`, `IP_ROUTE_MODE`,
+`IP_EXPORT_TO_ANTIZAPRET`, `FULLVPN_WARP_RESOLVE`, `LOG_LEVEL`, `MTU`,
+`WARP_KEY_SOURCE`. Остальные доступны только на чтение.
+
+### Режим работы и ключи
+
+```bash
+warper mode warp                # WARP с текущими ключами
+warper mode warp system         # взять ключи AntiZapret
+warper mode warp generate       # зарегистрировать новый WARP-ключ
+warper mode slave СЕРВЕР ПОРТ ПАРОЛЬ
+warper mode slave 'ss://…'      # Shadowsocks-ссылка донора
+warper mode wg /root/proton.conf
+warper mode vless 'vless://…'
+warper mode hy2 'hy2://…'
+warper mode openvpn /root/server.ovpn [ЛОГИН ПАРОЛЬ]
+warper outbound                 # текущий режим и сервер без секретов
+warper ovpnconfig list          # найденные .ovpn
+warper ovpnconfig forget ФАЙЛ   # забыть сохранённые логин и пароль
+warper warpkey list             # доступные источники ключей
+warper warpkey generate         # сгенерировать новый ключ
+warper wgconfig list            # найденные WG-конфиги
+```
+
+`WARP_KEY_SOURCE=system` означает, что WARPER следует за ключами
+AntiZapret и пересобирает конфиг, когда `up.sh` их перегенерирует.
+При `local` (по умолчанию) ключи не трогаются.
+
+### Служба sing-box
+
+```bash
+warper singbox status           # состояние, версия, log level, MTU
+warper singbox start|stop|restart
+warper singbox enable|disable   # автозагрузка
+warper singbox version          # установленная версия
+warper singbox upgrade          # обновить до версии из установщика
+warper singbox upgrade 1.14.1   # до конкретной версии
+warper logs                     # последние 100 строк лога
+warper logs 500                 # последние 500
+```
+
+Бинарь sing-box общий со службой `sing-box-slave`, поэтому `upgrade`
+перезапускает обе. Конфиг проверяется до рестарта: при ошибке службы
+не трогаются.
+
+### Веб-панель
+
+```bash
+warper web status               # установлена, активна, порт, режим
+warper web install              # установить
+warper web uninstall            # удалить
+warper web start|stop|restart   # управление службой
+warper web enable|disable       # автозагрузка
+warper web port                 # показать внешний порт
+warper web port 8443            # изменить внешний порт
+warper web logs 100             # логи службы
+warper web authlog 50           # журнал авторизаций
+warper webpass                  # сменить логин/пароль интерактивно
+warper webpass admin ПАРОЛЬ     # задать пароль напрямую
+warper webpass --reset          # сгенерировать новый пароль
+warper webpass --unblock        # снять блокировки по IP
+warper webhttps status          # состояние HTTPS
+warper webupdate                # обновить файлы панели
+```
+
+В режиме без nginx порт задаётся при установке, и `web port ПОРТ`
+возвращает ошибку — менять его нужно переустановкой панели.
+
+### Авто-резолв доменов в IP-маршруты
+
+Резолвит домены из `domains.txt` и складывает адреса в блок `RESOLVED`
+внутри `ip-ranges.txt`. По умолчанию **выключен**. В меню: `warper` →
+`Настройки (9)` → `A`; в веб-панели — «Настройки» → «Дополнительные опции».
+
+```bash
+warper resolve on                  # включить (раз в час)
+warper resolve off                 # выключить
+warper resolve status              # состояние
+warper resolvesync                 # резолвить сейчас
+warper resolvesync --force         # даже если список не изменился
+warper resolveclean                # очистить блок целиком
+warper resolveclean gemini.google  # убрать записи одного домена
+```
+
+Список **накопительный**: CDN отдаёт разные адреса в разные моменты, и
+удаление прошлого адреса рвало бы уже установленные соединения. Каждая
+строка аннотирована источником, чтобы было видно, откуда адрес:
 
 ```
+142.251.13.100/32 #ai.google.dev,aistudio.google.com
+```
+
+Аннотации видны только в файле — в маршруты и в экспорт AntiZapret уходят
+чистые CIDR.
 
 ### IP-подсети
 
 ```bash
 warper ipadd 91.108.4.0/22     # добавить подсеть
 warper ipremove 91.108.4.0/22  # удалить подсеть
-warper ipsync                   # синхронизировать маршруты
-warper iplist                   # показать подсети из файла
-warper iproutes                 # показать применённые маршруты
+warper ipsync                  # синхронизировать маршруты
+warper iplist                  # показать подсети из файла
+warper ipranges list           # файл ip-ranges.txt как текст
+warper ipranges save < f.txt   # заменить файл текстом из stdin
+warper iproutes                # показать применённые маршруты
+warper iproutes clear          # удалить применённые маршруты (файл не трогает)
+warper iproutemode all_vpn     # antizapret | all_vpn | all
+warper ipexport on|off         # экспорт CIDR в AntiZapret
 ```
 Или в главном меню: I → Управление IP-подсетями.
 
@@ -409,18 +606,34 @@ warper catalog update tiktok   # обновить конкретный ката�
 warper catalog list            # показать установленные каталоги
 warper catalog refresh         # обновить локальный кэш каталога
 ```
+Или в главном меню: C → Каталог доменов.
 
 ### WARPERSLAVE
 
 ```bash
-warperslave                 # главное меню
-warperslave status          # статус
-warperslave switch          # переключить режим
-warperslave port            # изменить порт
-warperslave key             # изменить ключ
-warperslave doctor          # диагностика
-warperslave update          # обновление
-warperslave uninstall       # удаление
+warperslave                    # главное меню
+warperslave status             # статус
+warperslave switch             # переключить режим Direct ↔ WARP
+warperslave proto ss|vless|hy2 [SNI]  # протокол подключения master
+warperslave link               # ссылка и команда для master
+warperslave link --command     # только команда для master
+warperslave host example.com   # адрес донора в ссылке (auto — IP)
+warperslave rebuild            # пересобрать конфиг из slave.conf
+warperslave port [ПОРТ]        # изменить порт
+warperslave key                # перевыпустить ключи текущего протокола
+warperslave showkey            # показать полный SS-ключ
+warperslave restart            # перезапустить службу
+warperslave logs 100           # логи службы
+warperslave loglevel           # показать log level
+warperslave loglevel debug     # изменить log level
+warperslave mtu                # показать MTU
+warperslave mtu 1380           # изменить MTU (только режим WARP)
+warperslave singbox version    # версия sing-box
+warperslave singbox upgrade    # обновить sing-box
+warperslave doctor             # диагностика
+warperslave update             # обновление
+warperslave uninstall          # удаление
+warperslave help               # справка
 ```
 
 ---
@@ -431,11 +644,10 @@ warperslave uninstall       # удаление
 ### WARPER
 
 ```bash
-warper
-# Затем: U
+warper uninstall --yes
 ```
 
-Или:
+Или через меню (`warper` → `U`), или напрямую:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/uninstaller.sh | bash
@@ -464,13 +676,16 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/uninstall-slav
 
 WARPER — менеджер доменной маршрутизации. Когда вы добавляете домен, система возвращает для него fake-ip, перенаправляет трафик в sing-box и отправляет его в WARP, на донор-сервер или через WG-туннель. Остальной трафик работает через AntiZapret как обычно.
 
-Примечание: WARPER не работает для типа подключения FullVPN, так как патч kresd не затрагивает `kresd@2`. Этот режим пока в разработке.
+Для FullVPN-клиентов доменная маршрутизация тоже доступна — включается
+отдельно: `warper fullvpn on` (патч для `kresd@2`).
 </details>
 
 <details>
 <summary><b>Можно ли использовать WARPER вместе с VPN_WARP=y?</b></summary>
 
-Да. AntiZapret-клиенты используют WARPER, FullVPN-клиенты — встроенный WARP. WARPER патчит только `kresd@1`, не затрагивая `kresd@2`.
+Да, с любым значением `VPN_WARP`. По умолчанию WARPER патчит только
+`kresd@1` (AntiZapret-клиенты), а FullVPN-клиенты идут через встроенный WARP.
+Если нужна доменная маршрутизация и для них — `warper fullvpn on`.
 </details>
 
 <details>
@@ -609,12 +824,12 @@ w.add_domain("example.com")
 
 - Работает только с **IPv4**
 - Ожидается стандартная структура AntiZapret в `/root/antizapret`
-- **Не работает** при `ANTIZAPRET_WARP=y`
-- **Совместим** с `VPN_WARP=y`
+- Совместим со всеми значениями `ANTIZAPRET_WARP` и `VPN_WARP` (см. [совместимость](#modes))
 - При переключении `VPN_WARP` нужен перезапуск: `down.sh && up.sh` (или reboot сервера)
 - Используются `iptables`; nft-only конфигурации могут требовать адаптации
 - `sing-box` работает в userspace — при высокой нагрузке CPU может быть заметным
 - Для режима WG: PresharedKey обязателен — конфиги без него не принимаются
+- OpenVPN: поддерживаются только `dev tun` и TLS-режим; `dev tap`, статический ключ (`secret`), `pkcs12` и прокси в `.ovpn` не поддерживаются sing-box
 - IP-маршруты не переживают перезагрузку `sing-box` автоматически — WARPER пересинхронизирует их при каждом restart через `resync_ip_routes_if_needed`
 - При `RESTRICT_FORWARD=y` WARPER автоматически добавляет CIDR в ipset `antizapret-forward`, но эти записи будут перезаписаны при следующем `doall.sh` — используйте экспорт в AntiZapret для постоянного эффекта
 - Режим "Весь трафик сервера" помечен как Beta — поведение зависит от конфигурации `VPN_WARP` и наличия table 13335, в теории туда могут упасть также запросы от других сервисов на сервере. (Например telemt при добавлении CIDR Telegram в warper)
@@ -657,7 +872,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.3.8"
+print(w.version)           # "1.5.0"
 print(w.is_active())       # True
 
 w.add_domain("example.com")

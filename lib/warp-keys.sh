@@ -1,20 +1,39 @@
 #!/bin/bash
 # warper lib: warp-keys.sh
 # Получение, синхронизация и управление WARP-ключами.
-# Источники: /etc/wireguard/warp.conf, локальный wgcf-profile, конфиг sing-box.
+# Источники: системный WARP-конфиг AntiZapret, локальный wgcf-profile, конфиг sing-box.
 # Подключается через source из warper.sh
 
 # ===== Получение ключей =====
 
 # Возвращает адрес и приватный ключ WARP из первого доступного источника.
 # Порядок приоритета:
-#   1. /etc/wireguard/warp.conf (системный, от AntiZapret VPN_WARP)
+#   1. системный конфиг AntiZapret (warp-vpn/warp-antizapret/warp)
 #   2. текущий config.json sing-box
 #   3. /root/warper/wgcf/wgcf-profile.conf
 get_warp_credentials() {
-    local address="" private_key=""
+    # Ключ, явно выбранный командой смены режима (warper mode warp ИСТОЧНИК)
+    if [ -n "${WARP_OVERRIDE_KEY:-}" ] && [ -n "${WARP_OVERRIDE_ADDRESS:-}" ]; then
+        echo "$WARP_OVERRIDE_ADDRESS"
+        echo "$WARP_OVERRIDE_KEY"
+        return 0
+    fi
 
-    # Приоритет 1: системный warp.conf
+    # Системный конфиг AntiZapret — первым только при явном выборе system.
+    # Иначе любая пересборка (смена подсети, обновление) молча меняла ключ
+    # пользователя на ключ AntiZapret, который тот ещё и перевыпускает.
+    if [ "$WARP_KEY_SOURCE" = "system" ] && _warp_system_credentials; then
+        return 0
+    fi
+
+    _warp_local_credentials && return 0
+
+    # Последний шанс — ключей нет вовсе (например, свежая установка)
+    _warp_system_credentials
+}
+
+_warp_system_credentials() {
+    local address="" private_key=""
     if [ -f "$WARP_SYSTEM_CONF" ] && \
        grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$WARP_SYSTEM_CONF" 2>/dev/null; then
         private_key=$(grep -m 1 '^PrivateKey' "$WARP_SYSTEM_CONF" | awk -F'= ' '{print $2}' | tr -d ' \r\n')
@@ -27,8 +46,13 @@ get_warp_credentials() {
             return 0
         fi
     fi
+    return 1
+}
 
-    # Приоритет 2: текущий config.json (через jq)
+_warp_local_credentials() {
+    local address="" private_key=""
+
+    # Приоритет 1: текущий config.json (через jq)
     if command -v jq >/dev/null 2>&1 && [ -f "$SINGBOX_CONF" ]; then
         address=$(jq -r '.endpoints[] | select(.tag=="warp") | .address[0] // empty' \
             "$SINGBOX_CONF" 2>/dev/null || true)
@@ -42,7 +66,7 @@ get_warp_credentials() {
         fi
     fi
 
-    # Приоритет 2b: текущий config.json (fallback через grep)
+    # Приоритет 1b: текущий config.json (fallback через grep)
     if [ -f "$SINGBOX_CONF" ] && grep -q '"tag": "warp"' "$SINGBOX_CONF" 2>/dev/null; then
         address=$(grep -o '"address": \[ "[^"]*"' "$SINGBOX_CONF" | head -1 \
             | sed 's/.*"\([^"]*\)".*/\1/' || true)
@@ -56,7 +80,7 @@ get_warp_credentials() {
         fi
     fi
 
-    # Приоритет 3: локальный wgcf-profile.conf
+    # Приоритет 2: локальный wgcf-profile.conf
     local wgcf_profile="$WGCF_DIR/wgcf-profile.conf"
     if [ -f "$wgcf_profile" ] && \
        grep -q 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=' "$wgcf_profile" 2>/dev/null; then
@@ -143,10 +167,11 @@ check_and_sync_warp_keys() {
     fi
 
     load_slave_config
-    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ] || [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-        return 0
-    fi
+    [ "$CURRENT_OUTBOUND_MODE" = "warp" ] || return 0
 
+    [ "$WARP_KEY_SOURCE" = "system" ] || return 0
+
+    WARP_SYSTEM_CONF=$(resolve_warp_system_conf)
     if [ ! -f "$WARP_SYSTEM_CONF" ]; then
         return 0
     fi
@@ -378,6 +403,14 @@ manage_warp_keys() {
             ;;
     esac
 
+    # Следовать за ключами AntiZapret только при явном выборе system
+    if [ "$selected" = "system" ]; then
+        WARP_KEY_SOURCE="system"
+    else
+        WARP_KEY_SOURCE="local"
+    fi
+    save_main_config
+
     if [ -z "$new_private_key" ] || [ -z "$new_address" ]; then
         echo -e "${RED}Не удалось получить ключи.${NC}"
         sleep 2
@@ -424,7 +457,11 @@ auto_sync_warp_keys_on_boot() {
         return 0
     fi
 
+    # Следуем за ключами AntiZapret только при выбранном системном источнике
+    [ "$WARP_KEY_SOURCE" = "system" ] || return 0
+
     # Нет системного файла — нечего синхронизировать
+    WARP_SYSTEM_CONF=$(resolve_warp_system_conf)
     if [ ! -f "$WARP_SYSTEM_CONF" ]; then
         return 0
     fi

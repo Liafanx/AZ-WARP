@@ -18,7 +18,18 @@ strip_warper_blocks_from_kresd() {
     sed \
         -e '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' \
         -e '/-- \[FULLVPN-WARP-START\]/,/-- \[FULLVPN-WARP-END\]/d' \
-        "$src" | awk '
+        "$src" | _squeeze_blank_lines > "$dst"
+}
+
+# Вырезает один блок (WARP-MOD или FULLVPN-WARP) в stdout.
+# Блок вставляется с пустой строкой после себя — без схлопывания каждый
+# повторный патч добавлял бы в kresd.conf ещё одну.
+_kresd_strip_block() {
+    sed "/-- \[${1}-START\]/,/-- \[${1}-END\]/d" "$2" | _squeeze_blank_lines
+}
+
+_squeeze_blank_lines() {
+    awk '
         BEGIN {
             seen_nonblank = 0
             prev_blank = 0
@@ -35,7 +46,7 @@ strip_warper_blocks_from_kresd() {
             seen_nonblank = 1
             prev_blank = 0
         }
-    ' > "$dst"
+    '
 }
 
 # Создаёт или ОБНОВЛЯЕТ резервную копию kresd.conf.
@@ -108,17 +119,18 @@ restore_kresd_backup() {
 # Блок читает warper-domains.txt и направляет DNS-запросы
 # для этих доменов на 127.0.0.1:40000 (sing-box DNS-in).
 # Перед патчингом синхронизирует домены и создаёт/обновляет backup.
+# kresd читает список только при старте, а перезапуск занимает несколько
+# секунд — если ни список, ни kresd.conf не изменились, он пропускается.
+#   patch_kresd [--force]
 patch_kresd() {
-    if check_antizapret_warp; then
-        echo -e "${RED}ANTIZAPRET_WARP=y — патч kresd.conf не может быть применён.${NC}" >&2
-        return 1
-    fi
-
+    local force="${1:-}"
     if needs_down_sh; then
         echo -e "${RED}Активны правила от up.sh — сначала выполните /root/antizapret/down.sh${NC}" >&2
         return 1
     fi
 
+    local domains_before
+    domains_before=$(cksum < "$ACTIVE_FILE" 2>/dev/null)
     sync_domains
 
     if [ ! -f "$KRESD_CONF" ]; then
@@ -136,7 +148,7 @@ patch_kresd() {
     tmpfile=$(mktemp /tmp/kresd.conf.XXXXXX)
 
     # Удаляем старый WARP-блок если был
-    sed '/-- \[WARP-MOD-START\]/,/-- \[WARP-MOD-END\]/d' "$KRESD_CONF" > "$clean_tmp"
+    _kresd_strip_block WARP-MOD "$KRESD_CONF" > "$clean_tmp"
 
     # Вставляем новый блок перед точкой вставки в секции kresd@1
     awk '
@@ -183,6 +195,15 @@ patch_kresd() {
         return 1
     fi
 
+    if [ "$force" != "--force" ] && cmp -s "$tmpfile" "$KRESD_CONF" \
+        && [ "$domains_before" = "$(cksum < "$ACTIVE_FILE")" ] \
+        && systemctl is-active --quiet kresd@1; then
+        rm -f "$tmpfile"
+        KRESD_RESTART_SKIPPED=1
+        return 0
+    fi
+    KRESD_RESTART_SKIPPED=0
+
     if ! mv "$tmpfile" "$KRESD_CONF"; then
         rm -f "$tmpfile"
         echo -e "${RED}Не удалось записать $KRESD_CONF.${NC}" >&2
@@ -220,11 +241,6 @@ unpatch_kresd() {
 
 # Включает WARP-резолвинг для FullVPN-клиентов (kresd@2)
 patch_kresd_fullvpn() {
-    if check_vpn_warp; then
-        echo -e "${RED}VPN_WARP=y — нельзя включить FullVPN WARP-резолвинг!${NC}" >&2
-        return 1
-    fi
-
     sync_domains
     if [ ! -f "$KRESD_CONF" ]; then
         echo -e "${RED}Файл $KRESD_CONF не найден.${NC}" >&2
@@ -238,7 +254,7 @@ patch_kresd_fullvpn() {
     tmpfile=$(mktemp /tmp/kresd.fullvpn.conf.XXXXXX)
 
     # Удаляем старый блок FULLVPN-WARP, если был
-    sed '/-- \[FULLVPN-WARP-START\]/,/-- \[FULLVPN-WARP-END\]/d' "$KRESD_CONF" > "$clean_tmp"
+    _kresd_strip_block FULLVPN-WARP "$KRESD_CONF" > "$clean_tmp"
 
     awk '
     BEGIN { in_inst2=0; inserted2=0 }
@@ -305,4 +321,16 @@ unpatch_kresd_fullvpn() {
         systemctl restart kresd@2 || return 1
     fi
     return 0
+}
+
+# Сбрасывает кэш обоих инстансов kresd.
+# Нужен после смены fake-подсети: иначе клиенты продолжают получать
+# адреса из старого пула, которые больше никуда не маршрутизируются.
+flush_kresd_cache() {
+    local inst
+    for inst in 1 2; do
+        [ -S "/run/knot-resolver/control/$inst" ] || continue
+        echo 'cache.clear()' \
+            | socat - "/run/knot-resolver/control/$inst" >/dev/null 2>&1 || true
+    done
 }

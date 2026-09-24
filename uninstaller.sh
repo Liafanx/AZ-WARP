@@ -97,7 +97,14 @@ restore_or_clean_kresd() {
     return 0
 }
 
-while true; do
+# --yes для неинтерактивного вызова (warper uninstall --yes, CI, скрипты).
+# Настройки в этом режиме сохраняются — так же, как при ответе по умолчанию.
+ASSUME_YES=false
+for _arg in "$@"; do
+    [ "$_arg" = "--yes" ] && ASSUME_YES=true
+done
+
+while [ "$ASSUME_YES" = false ]; do
     read -r -p "Вы уверены, что хотите полностью удалить warper? (N/y): " conf < /dev/tty
     if [[ -z "$conf" || "$conf" =~ ^[Nn]$ ]]; then
         echo -e "${GREEN}Отмена. Ничего не изменено.${NC}"
@@ -110,6 +117,10 @@ while true; do
 done
 
 while true; do
+    if [ "$ASSUME_YES" = true ]; then
+        KEEP_DOMAINS=true
+        break
+    fi
     read -r -p "Оставить список доменов и настройки в папке /root/warper? (Y/n): " keep_dom < /dev/tty
     if [[ -z "$keep_dom" || "$keep_dom" =~ ^[Yy]$ ]]; then
         KEEP_DOMAINS=true
@@ -123,7 +134,7 @@ while true; do
 done
 
 CONF_FILE="/root/warper/warper.conf"
-SUBNET="198.20.0.0/24"
+SUBNET="10.224.0.0/16"
 if [ -f "$CONF_FILE" ]; then
     loaded_subnet=$(load_config_value "SUBNET" "$CONF_FILE")
     if [ -n "$loaded_subnet" ]; then
@@ -177,6 +188,10 @@ systemctl stop sing-box 2>/dev/null
 systemctl stop warper-autopatch 2>/dev/null
 systemctl stop warper-traffic-snapshot.timer 2>/dev/null
 systemctl disable warper-traffic-snapshot.timer 2>/dev/null
+systemctl stop warper-resync.timer 2>/dev/null
+systemctl disable warper-resync.timer 2>/dev/null
+systemctl stop warper-resolve.timer 2>/dev/null
+systemctl disable warper-resolve.timer 2>/dev/null
 echo -e " - ${CYAN}Удаление из автозагрузки...${NC}"
 systemctl disable sing-box 2>/dev/null
 systemctl disable warper-autopatch 2>/dev/null
@@ -187,7 +202,18 @@ rm -f /usr/lib/systemd/system/sing-box.service
 rm -f /usr/lib/systemd/system/warper-autopatch.service
 rm -f /etc/systemd/system/warper-traffic-snapshot.service
 rm -f /etc/systemd/system/warper-traffic-snapshot.timer
+rm -f /etc/systemd/system/warper-resync.service
+rm -f /etc/systemd/system/warper-resync.timer
+rm -f /etc/systemd/system/warper-resolve.service
+rm -f /etc/systemd/system/warper-resolve.timer
 systemctl daemon-reload
+
+# Убираем хук из точки расширения AntiZapret
+AZ_CUSTOM_DOALL="/root/antizapret/custom-doall.sh"
+if [ -f "$AZ_CUSTOM_DOALL" ] && grep -q "# --- WARPER ---" "$AZ_CUSTOM_DOALL" 2>/dev/null; then
+    echo -e " - ${CYAN}Удаление хука из custom-doall.sh...${NC}"
+    sed -i '/^# --- WARPER ---$/,/^# --- END WARPER ---$/d' "$AZ_CUSTOM_DOALL"
+fi
 
 echo -e "\n${YELLOW}2. Удаление ядра sing-box и конфигов...${NC}"
 echo -e " - ${CYAN}Удаление папки с конфигурацией /etc/sing-box...${NC}"
@@ -290,6 +316,8 @@ if [ "$KEEP_DOMAINS" = true ]; then
         -not -name 'ip-ranges.txt' \
         -not -name 'slave_mode.conf' \
         -not -name 'wg_mode.conf' \
+        -not -name 'outbound.json' \
+        -not -name 'ovpn-auth.json' \
         -not -name 'traffic.json' \
         -not -name 'catalog.json' \
         -not -name 'catalog-cache.json' \

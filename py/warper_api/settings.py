@@ -47,12 +47,13 @@ def set_mode_warp(key_source: str = "") -> WarperResult:
     return run_warper(*args, timeout=timeout)
 
 
-def set_mode_slave(server: str, port: str | int, password: str) -> WarperResult:
+def set_mode_slave(server: str, port: str | int = "", password: str = "") -> WarperResult:
     """
     Переключить на режим Slave (донор-сервер через Shadowsocks).
 
     Args:
-        server: IP или домен донор-сервера.
+        server: IP или домен донор-сервера, либо ссылка ss:// —
+            тогда port и password не нужны.
         port: Порт Shadowsocks (1-65535).
         password: Ключ Shadowsocks.
 
@@ -66,6 +67,10 @@ def set_mode_slave(server: str, port: str | int, password: str) -> WarperResult:
     server = str(server).strip()
     port = str(port).strip()
     password = str(password).strip()
+
+    # Ссылка ss:// из `warperslave link` — порт и ключ уже внутри
+    if server.startswith("ss://"):
+        return run_warper("mode", "slave", server, timeout=120)
 
     if not server:
         return WarperResult(ok=False, message="Адрес сервера не может быть пустым")
@@ -102,7 +107,7 @@ def get_mode() -> str:
     Текущий режим маршрутизации.
 
     Returns:
-        'warp' | 'slave' | 'wg' | 'unknown'.
+        'warp' | 'slave' | 'wg' | 'vless' | 'hy2' | 'openvpn' | 'unknown'.
 
     Example:
         >>> get_mode()
@@ -124,7 +129,7 @@ def set_subnet(subnet: str) -> WarperResult:
     Может занять 30-60 секунд.
 
     Args:
-        subnet: Подсеть формата X.X.X.0/M (например '198.20.0.0/24').
+        subnet: Подсеть формата X.X.X.0/M (например '10.224.0.0/16').
 
     Returns:
         WarperResult.
@@ -337,3 +342,146 @@ def list_wg_configs() -> WarperResult:
         raw_stdout=result.raw_stdout,
         return_code=0,
     )
+
+
+def get_subnets() -> WarperResult:
+    """
+    Подсети VPN-клиентов и режим маршрутизации.
+
+    Returns:
+        WarperResult с data=dict: antizapret, fullvpn, all, route_mode,
+        route_source.
+    """
+    result = run_warper("subnets")
+    if result.ok:
+        data = {}
+        for line in result.raw_stdout.splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                data[key.strip()] = value.strip()
+        result.data = data
+    return result
+
+
+def config_get(key: str) -> WarperResult:
+    """
+    Прочитать параметр конфигурации.
+
+    Args:
+        key: Имя параметра (SUBNET, MTU, LOG_LEVEL, OUTBOUND_MODE, ...).
+    """
+    return run_warper("config", "get", key)
+
+
+def config_set(key: str, value: str, timeout: int = 300) -> WarperResult:
+    """
+    Изменить параметр конфигурации.
+
+    Записываемые ключи: SUBNET, IP_ROUTE_MODE, IP_EXPORT_TO_ANTIZAPRET,
+    FULLVPN_WARP_RESOLVE, LOG_LEVEL, MTU, WARP_KEY_SOURCE.
+
+    Args:
+        key: Имя параметра.
+        value: Новое значение.
+        timeout: Таймаут (смена подсети занимает до нескольких минут).
+    """
+    return run_warper("config", "set", key, value, timeout=timeout)
+
+
+def set_mode_vless(link: str) -> WarperResult:
+    """
+    Переключить на VLESS / VLESS+Reality по share-ссылке.
+
+    Args:
+        link: Ссылка vless://… (свой донор выдаёт её командой
+            `warperslave link`).
+
+    Returns:
+        WarperResult. При ошибке режим и конфиг остаются прежними.
+    """
+    link = str(link).strip()
+    if not link.startswith("vless://"):
+        return WarperResult(ok=False, message="Ожидается ссылка vless://")
+    return run_warper("mode", "vless", link, timeout=120)
+
+
+def set_mode_hy2(link: str) -> WarperResult:
+    """
+    Переключить на Hysteria2 по share-ссылке.
+
+    Args:
+        link: Ссылка hy2://… или hysteria2://…
+
+    Returns:
+        WarperResult. При ошибке режим и конфиг остаются прежними.
+    """
+    link = str(link).strip()
+    if not link.startswith(("hy2://", "hysteria2://")):
+        return WarperResult(ok=False, message="Ожидается ссылка hy2:// или hysteria2://")
+    return run_warper("mode", "hy2", link, timeout=120)
+
+
+def set_mode_openvpn(conf_path: str, username: str | None = None,
+                     password: str | None = None) -> WarperResult:
+    """
+    Переключить на OpenVPN по файлу .ovpn на сервере.
+
+    Args:
+        conf_path: Путь к .ovpn.
+        username: Логин, если в конфиге есть auth-user-pass. Без него
+            берутся сохранённые для этого файла; переданные сохраняются.
+        password: Пароль к нему.
+
+    Returns:
+        WarperResult. При ошибке режим и конфиг остаются прежними.
+    """
+    args = ["mode", "openvpn", str(conf_path).strip()]
+    if username:
+        args += [username, password or ""]
+    return run_warper(*args, timeout=120)
+
+
+def list_ovpn_configs() -> WarperResult:
+    """
+    Файлы .ovpn в /root/ и /root/warper/.
+
+    Returns:
+        WarperResult с data=list[dict]: path, server, needs_auth (bool),
+        saved_user (сохранённый логин или '').
+    """
+    result = run_warper("ovpnconfig", "list", timeout=10)
+    if not result.ok:
+        return result
+    configs = []
+    for line in result.raw_stdout.splitlines():
+        parts = line.strip().split("|")
+        if parts[0]:
+            parts += [""] * (4 - len(parts))
+            configs.append({"path": parts[0], "server": parts[1],
+                            "needs_auth": parts[2] == "1", "saved_user": parts[3]})
+    result.data = configs
+    return result
+
+
+def forget_ovpn_credentials(conf_path: str) -> WarperResult:
+    """Удалить сохранённые логин и пароль для файла .ovpn."""
+    return run_warper("ovpnconfig", "forget", str(conf_path).strip(), timeout=10)
+
+
+def get_outbound() -> WarperResult:
+    """
+    Текущий режим и сервер без секретов.
+
+    Returns:
+        WarperResult с data=dict: mode, label, а для vless/hy2/openvpn —
+        protocol, server, port, ports, name, transport.
+    """
+    result = run_warper("outbound", timeout=10)
+    if result.ok:
+        data = {}
+        for line in result.raw_stdout.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                data[key.strip()] = value.strip()
+        result.data = data
+    return result

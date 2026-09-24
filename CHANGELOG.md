@@ -2,6 +2,187 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.5.0] - 2026-09-24
+
+### Fixed
+- Найдены и устранены две независимые причины отказов «раз в сутки»:
+  - **Исчерпание пула fake-IP.** Подсеть `198.20.0.0/24` вмещает 254 адреса,
+    а kresd выдаёт fake-IP каждому ПОДдомену (`policy.suffix`). Апексы вроде
+    `oaiusercontent.com` плодят уникальные поддомены пачками: пул кончался за
+    сутки-двое, sing-box переиспользовал адрес и стирал старый маппинг, а kresd
+    продолжал отдавать клиентам закэшированный старый fake-IP.
+  - **Ночная пересборка правил AntiZapret.** `antizapret-update.timer`
+    пересобирает ipset `antizapret-forward` и переставляет правила `FORWARD`.
+    При `RESTRICT_FORWARD=y` всё, чего нет в ipset, дропается. WARPER
+    переприменял состояние только на boot — отсюда «помогает перезапуск».
+- Сломанные интеграции с актуальным AntiZapret:
+  - `ANTIZAPRET_WARP`/`VPN_WARP` теперь числа `0-4`, а не `y`/`n` — проверки
+    сравнивали с `"y"` и всегда были ложны. Добавлен `az_warp_mode`
+    (`off` | `all` | `selective`). Веб-панель по той же причине показывала
+    «конфликт» и не давала включить FullVPN-резолвинг.
+  - Системный WARP-конфиг переехал из `/etc/wireguard/warp.conf` в
+    `warp-vpn.conf` / `warp-antizapret.conf`. Путь ищется по списку
+    кандидатов — в `warper`, установщике и `warperslave`. Из-за старого пути
+    при установке не предлагался источник «ключи AntiZapret».
+  - `check_warp_rules_active` искал интерфейс `warp`, которого больше нет.
+- `PresharedKey` больше не обязателен в режиме WG. Он опционален и в
+  WireGuard, и в sing-box, но требовался в пяти местах — из-за чего конфиги
+  ProtonVPN и большинства публичных провайдеров не импортировались, а из
+  цикла ручного ввода не было выхода. `MTU` и `DNS` берутся из файла.
+- Веб-панель не поднималась ни в каком режиме: установщик оставлял включённым
+  `sites-enabled/default`, и nginx падал на `bind :80`. Эвристика считала
+  заглушкой файл короче 30 строк, а стоковый Ubuntu-default занимает 91 строку
+  и содержит закомментированный `fastcgi_pass`.
+- Сгенерированный пароль admin больше не пишется в лог сервиса — уходил в
+  journald открытым текстом. Сохраняется в `web/data/initial-password` (0600).
+- `doctor` и синхронизация маршрутов давали случайные ложные срабатывания.
+  Причина — `set -o pipefail` вместе с `cmd | grep -q`: grep выходит по
+  первому совпадению, писатель получает SIGPIPE, и конвейер возвращает 141,
+  хотя совпадение было. Из-за этого `ip rule` «пропадал» через раз, а
+  `subnet_conflicts` мог выдать несуществующий конфликт.
+- `sync_ip_ranges` снимал и заново ставил свой `ip rule` при каждой
+  синхронизации — окно без маршрутизации. Теперь удаляются только правила
+  от других режимов.
+- Python API: `singbox._action` дёргал `systemctl` напрямую, минуя
+  переприменение правил `FORWARD` и маршрутов; `get/save_user_domains_text`
+  правили `domains.txt` в обход CLI. Оба переведены на CLI.
+- `warper config get OUTBOUND_MODE` всегда возвращал `warp`: при старте не
+  загружался `slave_mode.conf`. Из-за этого врал `get_mode()` в Python API.
+- `rebuild_config` молча собирал WARP-конфиг для любого неизвестного режима.
+- Каждый патч kresd добавлял в `kresd.conf` пустую строку: блок WARPER
+  вставляется с пустой строкой после себя, а при удалении она оставалась.
+  Накопленные строки убираются при первой синхронизации.
+- Блокировка `warper`:
+  - файл блокировки удалялся при выходе — ждущий процесс и новый могли
+    войти одновременно;
+  - вложенный вызов (`update` → `warper ipsync`) ждал сам себя 30 секунд и
+    молча падал — теперь блокировка наследуется дочерними вызовами;
+  - `add`, `remove`, `ipadd`, `ipremove`, `catalog add|remove|update`,
+    `domains save`, `ipranges save`, `config set` шли без блокировки —
+    параллельные вызовы из панели, API и терминала могли потерять изменение.
+- Смена режима писала конфиг сразу в `/etc/sing-box/config.json` и
+  проверяла уже после записи — при ошибке sing-box оставался с битым
+  конфигом, а меню откатывало режим всегда на WARP, а не на предыдущий.
+
+### Changed
+- sing-box обновлён до **1.14.1**.
+  - Убран `independent_cache` (deprecated в 1.14.0).
+  - У tun выставлен `dns_mode: disabled`: в 1.14 дефолтный `hijack` трогает
+    systemd-resolved. Заодно убраны `resolvectl`-костыли из юнита.
+  - **Важно:** 1.14 требует `action: resolve` перед маршрутизацией
+    fake-адреса в wireguard-endpoint. Без него соединения отбрасываются с
+    `a resolve action is required`, и домены молча перестают работать.
+  - `Restart=always` для обеих служб sing-box.
+- Фейковая подсеть по умолчанию: `198.20.0.0/24` → `10.224.0.0/16`.
+  `198.20.0.0/16` — публичное пространство ARIN, `198.18.0.0/15` целиком занят
+  AntiZapret, `172.17.0.0/12` — пул Docker. При обновлении предлагается
+  миграция; клиентам после неё нужно переподключение.
+- Снят запрет на работу при `ANTIZAPRET_WARP`/`VPN_WARP`. Он лечил симптом:
+  реальная помеха — `ip rule` на table 13335/13336 с приоритетом 10000,
+  который в режиме «вся подсеть» идёт без fwmark и перехватывает трафик на
+  fake-подсеть. Теперь fake-подсеть и все CIDR прописываются в обе таблицы.
+- Логика PR #27 вынесена в `ensure_subnet_in_include_ips` и вызывается также
+  из `warper resync`, а не только при включении WARPER.
+- Веб-панель умеет работать **без nginx**: gunicorn слушает внешний порт сам,
+  TLS через `--certfile/--keyfile`. `ProxyFix` при этом отключается — иначе
+  клиент подделает `X-Forwarded-For` и обойдёт бан по IP.
+- Неизвестная команда `warper` и `warperslave` больше не открывает меню
+  молча, а печатает ошибку и возвращает код 1.
+- Ускорена работа из терминала:
+  - меню и `status` открываются за ~0,6 с вместо ~2 с: разбор
+    `ip-ranges.txt` и `domains.txt` делался вызовом функций на каждую
+    строку, теперь — одним `awk`;
+  - `warper sync` не перезапускает kresd, если список доменов и
+    `kresd.conf` не изменились (~0,3 с вместо ~7 с). `sync --force` и пункт
+    меню «Применить изменения» перезапускают всегда;
+  - маршруты в таблицах AntiZapret и ipset обновляются одним
+    `ip -batch` / `ipset restore` вместо вызова на каждый CIDR.
+- Смена любого режима атомарная: конфиг собирается во временный файл,
+  проходит `sing-box check` и только потом заменяет рабочий. При ошибке
+  возвращаются прежние режим и конфиг — в CLI, меню, панели и API.
+- `warperslave` собирает конфиг через `jq` из `slave.conf` вместо двух
+  heredoc'ов. Шаблоны `config-slave-direct/warp.json.template` удалены,
+  `install-slave.sh` вызывает `warperslave rebuild` — логика в одном месте.
+  Установки до 1.1.0 пересобираются один раз при первом запуске.
+- README: раздел команд переписан и разбит по темам. Исправлены удаление
+  панели (`W` → `10`, было `9`) и противоречие про FullVPN.
+
+### Added
+- `warper resync` — идемпотентно восстанавливает правила `FORWARD`, ipset,
+  маршруты и патч kresd. Таймер `warper-resync.timer` раз в 10 минут плюс
+  регистрация в `/root/antizapret/custom-doall.sh` — официальной точке
+  расширения AntiZapret.
+- Авто-резолв доменов в IP-маршруты (по умолчанию выключен):
+  `warper resolve on|off|status`, `warper resolvesync [--force]`,
+  `warper resolveclean [домен]`, таймер раз в час, переключатель в
+  веб-панели. Список накопительный — CDN отдаёт разные адреса в разные
+  моменты, и удаление прошлого адреса рвало бы установленные соединения.
+  Каждая строка аннотирована источником: `1.2.3.4/32 #gemini.google.com`.
+- Почти каждое действие меню доступно из CLI:
+  - `help` / `--help` / `-h`, `version` / `--version` / `-v`
+  - `web install|uninstall|start|stop|restart|enable|disable|status`,
+    `web port [ПОРТ]`, `web logs [N]`, `web authlog [N]`
+  - `singbox start|stop|restart|enable|disable|status|version|upgrade`
+  - `domains list|save|edit` — симметрия с `ipranges list|save`
+  - `iproutes clear`, `subnets`, `listupdate`, `uninstall --yes`
+  - `config set КЛЮЧ ЗНАЧЕНИЕ`
+- Режимы **VLESS**, **Hysteria2** и **OpenVPN** — выход через сторонний
+  сервер:
+  - `warper mode vless 'vless://…'` — Reality, транспорты ws/grpc/
+    httpupgrade/http, `flow=xtls-rprx-vision`;
+  - `warper mode hy2 'hy2://…'` — obfs salamander, диапазоны портов,
+    пиннинг сертификата (`pinSHA256`, `spki`);
+  - `warper mode openvpn файл.ovpn [ЛОГИН ПАРОЛЬ]` — `.ovpn` разбирается в
+    endpoint sing-box: инлайн-сертификаты, `tls-auth`/`tls-crypt`,
+    несколько `remote`. `dev tap` и статический ключ не поддерживаются
+    sing-box — об этом сообщается сразу.
+  - Разбор и проверка ссылок — `lib/outbound-parse.py`: sing-box `check` не
+    ловит пустой UUID или битый ключ Reality, а `short_id` длиннее 16
+    символов роняет его с panic. VLESS Encryption (`mlkem768x25519plus`) и
+    `pqv` — возможности Xray, в sing-box их нет: первое отклоняется с
+    пояснением, второе пропускается с предупреждением.
+  - Логин и пароль OpenVPN запоминаются для каждого `.ovpn` отдельно
+    (`ovpn-auth.json`, 0600) — между профилями можно переключаться без
+    повторного ввода. `warper ovpnconfig forget ФАЙЛ` — забыть.
+  - `warper mode slave 'ss://…'`, `warper outbound`, `warper ovpnconfig list`.
+  - Пункты в меню, карточки и загрузка `.ovpn` в веб-панели, режим в
+    `status`, `doctor` и `status json` (объект `outbound` без секретов).
+- warperslave **1.1.0**: вход по **VLESS+Reality** и **Hysteria2** помимо
+  Shadowsocks. Reality устойчивее к DPI — канал выглядит как TLS к
+  выбранному сайту.
+  - `warperslave proto ss|vless|hy2 [SNI]`, `link [--command]`,
+    `host [АДРЕС|auto]`, `rebuild`; `key` перевыпускает ключи текущего
+    протокола, `port` принимает порт аргументом.
+  - `warperslave link` печатает стандартную ссылку и готовую команду для
+    master — тот подключается к своему донору так же, как к стороннему
+    серверу. Для Hysteria2 в ссылке передаётся хэш ключа сертификата.
+  - Установщик спрашивает протокол и SNI (с проверкой TLS 1.3) и в конце
+    печатает команду для master. `doctor` проверяет порт по TCP/UDP в
+    зависимости от протокола, SNI и сертификат Hysteria2.
+- Новое в `warperslave`: `singbox version|upgrade`, `restart`,
+  `loglevel [УРОВЕНЬ]`, `mtu [ЗНАЧЕНИЕ]`, `showkey`, `logs [N]`, `version`.
+- Каталог доменов был доступен только из CLI и веб-панели — добавлен
+  пункт `C` в главное меню. Авто-резолв — пункт `A` в меню настроек и
+  строка в шапке главного меню.
+- `experimental.cache_file` со `store_fakeip`: маппинги переживают рестарт.
+- `doctor` проверяет ёмкость пула fake-IP, приватность подсети, маршрут
+  fake-подсети в таблицах AntiZapret, авто-резолв и то, что sing-box не
+  прописал свой DNS в систему.
+- В `status json` добавлены `antizapret_warp_mode` и `vpn_warp_mode`.
+- Python API: модуль `web`, `resync`, `resolve_sync`, `resolve_clean`,
+  `set/get_auto_resolve`, `singbox_status`, `singbox_version`,
+  `singbox_upgrade`, `clear_ip_routes`, `get_subnets`, `config_get`,
+  `config_set`, `update_lists`, `set_mode_vless`, `set_mode_hy2`,
+  `set_mode_openvpn`, `list_ovpn_configs`, `get_outbound`;
+  `set_mode_slave` принимает ссылку `ss://`.
+- Python API для сторонних проектов: `WARPER_SUDO=1` — вызов через
+  `sudo -n` из процесса не от root, `WARPER_BIN` — путь к CLI. Версия
+  определяется и без доступа к `/root`. `get_auto_resolve`,
+  `singbox_version` и `web_get_port` кладут значение и в `data`. В
+  документации — раздел об интеграции: права, блокировки, async, поля
+  `get_status()`. Добавлены `get_mtu` и `get_log_level` —
+  они были задокументированы, но в фасаде отсутствовали (`AttributeError`).
+
 ## [1.4.7-1.4.8] - 2026-08-28
 - Kresd обновлен, вставка warp блока заменена:
 - было: in_inst1 && /Resolve blocked domains using Proxy Resolver/ && inserted1==0

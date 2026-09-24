@@ -39,6 +39,11 @@ load_config() {
     if [ -n "$value" ]; then
         FULLVPN_WARP_RESOLVE="$value"
     fi
+
+    value=$(grep -E '^WARP_KEY_SOURCE=' "$CONF_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '"'\''[:space:]')
+    if [ -n "$value" ]; then
+        WARP_KEY_SOURCE="$value"
+    fi
 }
 
 # Сохраняет основную конфигурацию в warper.conf
@@ -49,6 +54,7 @@ save_main_config() {
         echo "IP_ROUTE_MODE=$IP_ROUTE_MODE"
         echo "IP_EXPORT_TO_ANTIZAPRET=$IP_EXPORT_TO_ANTIZAPRET"
         echo "FULLVPN_WARP_RESOLVE=$FULLVPN_WARP_RESOLVE"
+        echo "WARP_KEY_SOURCE=$WARP_KEY_SOURCE"
     } > "$CONF_FILE"
     chmod 600 "$CONF_FILE"
 }
@@ -98,6 +104,8 @@ load_wg_config() {
     WG_ENDPOINT_HOST=""
     WG_ENDPOINT_PORT=""
     WG_KEEPALIVE="15"
+    WG_MTU=""
+    WG_DNS=""
     if [ -f "$WG_MODE_FILE" ]; then
         local val
         val=$(grep -E '^WG_CONF_FILE=' "$WG_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2-)
@@ -116,6 +124,10 @@ load_wg_config() {
         [ -n "$val" ] && WG_ENDPOINT_PORT="$val"
         val=$(grep -E '^WG_KEEPALIVE=' "$WG_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]')
         [ -n "$val" ] && WG_KEEPALIVE="$val"
+        val=$(grep -E '^WG_MTU=' "$WG_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]')
+        [ -n "$val" ] && WG_MTU="$val"
+        val=$(grep -E '^WG_DNS=' "$WG_MODE_FILE" 2>/dev/null | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]')
+        [ -n "$val" ] && WG_DNS="$val"
     fi
 }
 
@@ -130,6 +142,8 @@ save_wg_config() {
         echo "WG_ENDPOINT_HOST=$WG_ENDPOINT_HOST"
         echo "WG_ENDPOINT_PORT=$WG_ENDPOINT_PORT"
         echo "WG_KEEPALIVE=$WG_KEEPALIVE"
+        echo "WG_MTU=$WG_MTU"
+        echo "WG_DNS=$WG_DNS"
     } > "$WG_MODE_FILE"
     chmod 600 "$WG_MODE_FILE"
 }

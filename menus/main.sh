@@ -28,12 +28,12 @@ show_main_menu() {
         VER_STR="${GREEN}$LOCAL_VER${NC} (✅ актуальная)"
     fi
 
-    # ANTIZAPRET_WARP
-    if check_antizapret_warp; then
-        AZ_WARP_STAT="${RED}⚠️  ANTIZAPRET_WARP=y (КОНФЛИКТ!)${NC}"
-    else
-        AZ_WARP_STAT="${GREEN}✅ OK${NC}"
-    fi
+    # WARP AntiZapret
+    case "$(az_warp_mode ANTIZAPRET_WARP)" in
+        all)       AZ_WARP_STAT="${YELLOW}вся подсеть через WARP${NC}" ;;
+        selective) AZ_WARP_STAT="${GREEN}выборочно${NC}" ;;
+        *)         AZ_WARP_STAT="${GREEN}✅ OK${NC}" ;;
+    esac
 
     # Sing-box
     if systemctl is-active --quiet sing-box; then
@@ -78,17 +78,17 @@ show_main_menu() {
 
     # Режим маршрутизации
     load_wg_config
-    if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
-        MODE_DISPLAY="${CYAN}Slave ($SLAVE_SERVER:$SLAVE_PORT)${NC}"
-    elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
-        MODE_DISPLAY="${CYAN}WG ($WG_ENDPOINT_HOST:$WG_ENDPOINT_PORT)${NC}"
+    if [ "$CURRENT_OUTBOUND_MODE" = "warp" ]; then
+        MODE_DISPLAY="${GREEN}$(outbound_mode_label)${NC}"
     else
-        MODE_DISPLAY="${GREEN}WARP (локальный)${NC}"
+        MODE_DISPLAY="${CYAN}$(outbound_mode_label)${NC}"
     fi
 
     # Источник WARP-ключей
     if [ "$CURRENT_OUTBOUND_MODE" = "slave" ]; then
         WARP_KEYS_SRC="${CYAN}не используются (Slave)${NC}"
+    elif [[ "$CURRENT_OUTBOUND_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
+        WARP_KEYS_SRC="${CYAN}не используются ($(outbound_protocol_label))${NC}"
     elif [ "$CURRENT_OUTBOUND_MODE" = "wg" ]; then
         if [ "$WG_CONF_FILE" = "manual" ] || [ -z "$WG_CONF_FILE" ]; then
             WARP_KEYS_SRC="${CYAN}WG: ручной ввод${NC}"
@@ -169,15 +169,16 @@ show_main_menu() {
 
     local fullvpn_resolve_display
     if [ "$FULLVPN_WARP_RESOLVE" = "y" ]; then
-        if check_vpn_warp; then
-            fullvpn_resolve_display="${RED}ВКЛ (конфликт VPN_WARP=y)${NC}"
-        else
-            fullvpn_resolve_display="${GREEN}ВКЛ${NC}"
-        fi
+        fullvpn_resolve_display="${GREEN}ВКЛ${NC}"
     else
         fullvpn_resolve_display="${RED}ВЫКЛ${NC}"
     fi
-    echo -e " 🌐 ${CYAN}FullVPN WARP доменов:${NC}  $fullvpn_resolve_display"    
+    echo -e " 🌐 ${CYAN}FullVPN WARP доменов:${NC}  $fullvpn_resolve_display"
+    if [ "$(cli_resolve status)" = "enabled" ]; then
+        echo -e " 🔁 ${CYAN}Авто-резолв в IP:${NC}  ${GREEN}ВКЛ${NC}"
+    else
+        echo -e " 🔁 ${CYAN}Авто-резолв в IP:${NC}  ${RED}ВЫКЛ${NC}"
+    fi
 
     # Предупреждение о правилах up.sh
     if needs_down_sh; then
@@ -228,6 +229,7 @@ show_main_menu() {
         echo -e " ${CYAN}I.${NC} 🌐 Управление IP-подсетями"
     fi
 
+    echo -e " ${CYAN}C.${NC} 📚 Каталог доменов"
     echo -e " ${CYAN}9.${NC} 🛠️  Настройки (Автопатч, Подсеть, Списки, Loglevel, MTU, Режим и т.д...)"
 
     if [ "$UPDATE_AVAILABLE" = true ]; then
@@ -352,7 +354,7 @@ run_main_menu() {
                 echo -e "\n${YELLOW}Запуск синхронизации...${NC}"
                 rebuild_master_file
                 if is_warper_active; then
-                    if patch_kresd; then
+                    if patch_kresd --force; then
                         echo -e "${GREEN}Готово!${NC}"
                     else
                         echo -e "${RED}Ошибка синхронизации.${NC}"
@@ -418,6 +420,7 @@ run_main_menu() {
 
             # ── IP-подсети ────────────────────────────────────────────────
             i|I) ip_ranges_menu ;;
+            c|C) catalog_menu ;;
 
             # ── Doctor ────────────────────────────────────────────────────
             d|D)
