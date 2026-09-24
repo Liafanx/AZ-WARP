@@ -13,48 +13,44 @@ apt-get install -y curl wget jq iptables openssl
 curl -fsSL https://sing-box.app/install.sh | bash -s -- --version 1.14.1
 ```
 
-## Шаг 3. Генерация ключа Shadowsocks
+## Шаг 3. Утилита warperslave
 
 ```bash
-openssl rand -base64 16
+mkdir -p /root/warperslave /etc/sing-box-slave
+cd /root/warperslave
+REPO=https://raw.githubusercontent.com/Liafanx/AZ-WARP/main
+curl -fsSLO $REPO/warperslave.sh
+curl -fsSLO $REPO/uninstall-slave.sh
+curl -fsSLO $REPO/versionslave
+chmod +x warperslave.sh uninstall-slave.sh
+ln -sf /root/warperslave/warperslave.sh /usr/local/bin/warperslave
 ```
 
-Сохраните ключ — он понадобится на обоих серверах.
-
-## Шаг 4. Конфигурация sing-box
-
-### Режим Direct
+## Шаг 4. Настройки и конфиг sing-box
 
 ```bash
-mkdir -p /etc/sing-box-slave
-cat > /etc/sing-box-slave/config.json << 'EOF'
-{
-  "log": { "level": "info" },
-  "dns": {
-    "servers": [{ "tag": "direct-dns", "type": "udp", "server": "1.1.1.1" }],
-    "strategy": "ipv4_only",
-    "independent_cache": true
-  },
-  "inbounds": [{
-    "type": "shadowsocks", "tag": "ss-in",
-    "listen": "0.0.0.0", "listen_port": 8444,
-    "method": "2022-blake3-aes-128-gcm",
-    "password": "ВАШ_КЛЮЧ"
-  }],
-  "outbounds": [{ "type": "direct", "tag": "direct" }],
-  "route": {
-    "rules": [{ "inbound": "ss-in", "outbound": "direct" }],
-    "default_domain_resolver": "direct-dns",
-    "final": "direct"
-  }
-}
+cat > /root/warperslave/slave.conf << 'EOF'
+SLAVE_MODE=direct
+SLAVE_PROTO=vless
+SLAVE_PORT=8444
+SLAVE_SNI=www.microsoft.com
 EOF
-chmod 600 /etc/sing-box-slave/config.json
+chmod 600 /root/warperslave/slave.conf
+
+warperslave rebuild
 ```
 
-### Режим WARP
+- `SLAVE_PROTO` — протокол подключения master: `ss` (Shadowsocks 2022),
+  `vless` (VLESS+Reality) или `hy2` (Hysteria2).
+- `SLAVE_MODE` — выход: `direct` (IP донора) или `warp` (через Cloudflare WARP).
+  Для `warp` положите `wgcf-profile.conf` в `/root/warperslave/wgcf/`.
+- `SLAVE_SNI` — сайт для маскировки Reality, должен отвечать по TLS 1.3:
+  `openssl s_client -connect www.microsoft.com:443 -tls1_3 </dev/null`.
 
-Используйте шаблон `templates/config-slave-warp.json.template`, подставив WARP-ключи и ключ Shadowsocks.
+`warperslave rebuild` генерирует недостающие ключи (UUID и ключи Reality,
+пароли Hysteria2 и сертификат, ключ Shadowsocks), записывает их в
+`slave.conf`, собирает `/etc/sing-box-slave/config.json` и проверяет его
+`sing-box check`.
 
 ## Шаг 5. Systemd-служба
 
@@ -91,5 +87,14 @@ iptables -I INPUT -p udp --dport 8444 -j ACCEPT
 
 ```bash
 systemctl status sing-box-slave
-ss -tlnp | grep 8444
+ss -tulnp | grep 8444
+warperslave doctor
 ```
+
+## Шаг 8. Подключение master
+
+```bash
+warperslave link
+```
+
+Выполните напечатанную команду `warper mode … '…'` на основном сервере.

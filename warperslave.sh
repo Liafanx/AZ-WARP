@@ -41,9 +41,23 @@ load_config_value() {
     grep -E "^${key}=" "$SLAVE_CONF" 2>/dev/null | tail -n1 | cut -d'=' -f2-
 }
 
+# Выход донора: direct | warp. Протокол входа: ss | vless | hy2.
 SLAVE_MODE=""
+SLAVE_PROTO=""
 SLAVE_PORT=""
+SLAVE_HOST=""
+SLAVE_SNI=""
 SS_PASSWORD=""
+VLESS_UUID=""
+REALITY_PRIVATE_KEY=""
+REALITY_PUBLIC_KEY=""
+REALITY_SHORT_ID=""
+HY2_PASSWORD=""
+HY2_OBFS_PASSWORD=""
+
+HY2_CERT="/etc/sing-box-slave/hy2.crt"
+HY2_KEY="/etc/sing-box-slave/hy2.key"
+DEFAULT_SNI="www.microsoft.com"
 
 load_config() {
     if [ ! -f "$SLAVE_CONF" ]; then
@@ -53,15 +67,36 @@ load_config() {
         exit 1
     fi
     SLAVE_MODE=$(load_config_value "SLAVE_MODE" | tr -d '[:space:]')
+    SLAVE_PROTO=$(load_config_value "SLAVE_PROTO" | tr -d '[:space:]')
     SLAVE_PORT=$(load_config_value "SLAVE_PORT" | tr -d '[:space:]')
+    SLAVE_HOST=$(load_config_value "SLAVE_HOST" | tr -d '[:space:]')
+    SLAVE_SNI=$(load_config_value "SLAVE_SNI" | tr -d '[:space:]')
     SS_PASSWORD=$(load_config_value "SS_PASSWORD")
+    VLESS_UUID=$(load_config_value "VLESS_UUID" | tr -d '[:space:]')
+    REALITY_PRIVATE_KEY=$(load_config_value "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
+    REALITY_PUBLIC_KEY=$(load_config_value "REALITY_PUBLIC_KEY" | tr -d '[:space:]')
+    REALITY_SHORT_ID=$(load_config_value "REALITY_SHORT_ID" | tr -d '[:space:]')
+    HY2_PASSWORD=$(load_config_value "HY2_PASSWORD" | tr -d '[:space:]')
+    HY2_OBFS_PASSWORD=$(load_config_value "HY2_OBFS_PASSWORD" | tr -d '[:space:]')
+    # Установки до 1.1.0 знали только Shadowsocks
+    SLAVE_PROTO="${SLAVE_PROTO:-ss}"
+    SLAVE_SNI="${SLAVE_SNI:-$DEFAULT_SNI}"
 }
 
 save_config() {
     {
         echo "SLAVE_MODE=$SLAVE_MODE"
+        echo "SLAVE_PROTO=$SLAVE_PROTO"
         echo "SLAVE_PORT=$SLAVE_PORT"
+        echo "SLAVE_HOST=$SLAVE_HOST"
+        echo "SLAVE_SNI=$SLAVE_SNI"
         echo "SS_PASSWORD=$SS_PASSWORD"
+        echo "VLESS_UUID=$VLESS_UUID"
+        echo "REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY"
+        echo "REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY"
+        echo "REALITY_SHORT_ID=$REALITY_SHORT_ID"
+        echo "HY2_PASSWORD=$HY2_PASSWORD"
+        echo "HY2_OBFS_PASSWORD=$HY2_OBFS_PASSWORD"
     } > "$SLAVE_CONF"
     chmod 600 "$SLAVE_CONF"
 }
@@ -71,20 +106,18 @@ validate_port() {
     [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
 }
 
+# Свободен ли порт по TCP и UDP (Hysteria2 слушает UDP). Собственный
+# процесс службы занятостью не считается. Вывод ss читается целиком:
+# под pipefail "ss | grep -q" возвращает 141 при найденном совпадении.
 check_port_available() {
-    local port="$1"
-    local current_pid
+    local port="$1" current_pid listeners
     current_pid=$(systemctl show -p MainPID "$SERVICE_NAME" 2>/dev/null | cut -d= -f2)
+    listeners=$(ss -tulnp 2>/dev/null || true)
+    listeners=$(grep ":${port} " <<< "$listeners" || true)
     if [ -n "$current_pid" ] && [ "$current_pid" != "0" ]; then
-        if ss -tlnp 2>/dev/null | grep ":${port} " | grep -v "pid=${current_pid}" | grep -q .; then
-            return 1
-        fi
-        return 0
+        listeners=$(grep -v "pid=${current_pid}," <<< "$listeners" || true)
     fi
-    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
-        return 1
-    fi
-    return 0
+    [ -z "$listeners" ]
 }
 
 ensure_port_open() {
@@ -255,6 +288,258 @@ singbox_cmd() {
 validate_singbox_config() {
     if ! command -v sing-box >/dev/null 2>&1; then return 1; fi
     sing-box check -c "$SINGBOX_SLAVE_CONF" >/dev/null 2>&1
+}
+
+# ===== Сборка конфига =====
+#
+# Конфиг собирается через jq из slave.conf: вход (протокол) × выход
+# (direct/warp). Раньше это были два heredoc'а под Shadowsocks, которые
+# дублировали шаблоны и расходились с ними.
+
+# Генерирует недостающие учётные данные для протокола.
+ensure_proto_credentials() {
+    case "$SLAVE_PROTO" in
+        ss)
+            [ -n "$SS_PASSWORD" ] || SS_PASSWORD=$(openssl rand -base64 16)
+            ;;
+        vless)
+            [ -n "$VLESS_UUID" ] || VLESS_UUID=$(sing-box generate uuid)
+            if [ -z "$REALITY_PRIVATE_KEY" ] || [ -z "$REALITY_PUBLIC_KEY" ]; then
+                local kp
+                kp=$(sing-box generate reality-keypair) || return 1
+                REALITY_PRIVATE_KEY=$(awk '/PrivateKey/{print $2}' <<< "$kp")
+                REALITY_PUBLIC_KEY=$(awk '/PublicKey/{print $2}' <<< "$kp")
+            fi
+            [ -n "$REALITY_SHORT_ID" ] || REALITY_SHORT_ID=$(sing-box generate rand --hex 8)
+            ;;
+        hy2)
+            [ -n "$HY2_PASSWORD" ] || HY2_PASSWORD=$(sing-box generate rand --hex 16)
+            [ -n "$HY2_OBFS_PASSWORD" ] || HY2_OBFS_PASSWORD=$(sing-box generate rand --hex 16)
+            ensure_hy2_certificate || return 1
+            ;;
+        *)
+            echo -e "${RED}Неизвестный протокол: $SLAVE_PROTO${NC}" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Самоподписанный сертификат для Hysteria2. Master пиннит его публичный
+# ключ (spki в ссылке), поэтому CA не нужен.
+ensure_hy2_certificate() {
+    [ -s "$HY2_CERT" ] && [ -s "$HY2_KEY" ] && return 0
+    mkdir -p "$(dirname "$HY2_CERT")"
+    local out
+    out=$(sing-box generate tls-keypair "$SLAVE_SNI") || return 1
+    awk '/BEGIN PRIVATE KEY/,/END PRIVATE KEY/' <<< "$out" > "$HY2_KEY"
+    awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' <<< "$out" > "$HY2_CERT"
+    chmod 600 "$HY2_KEY"
+    [ -s "$HY2_CERT" ] && [ -s "$HY2_KEY" ]
+}
+
+# Проверяет, что сайт для Reality отвечает по TLS 1.3 — иначе маскировка
+# не заработает.
+check_reality_sni() {
+    local sni="$1"
+    local out
+    out=$(timeout 10 openssl s_client -connect "${sni}:443" -servername "$sni" -tls1_3 \
+        </dev/null 2>/dev/null || true)
+    grep -q "TLSv1.3" <<< "$out"
+}
+
+# Печатает inbound для текущего протокола.
+_slave_inbound_json() {
+    case "$SLAVE_PROTO" in
+        ss)
+            jq -n --argjson port "$SLAVE_PORT" --arg pw "$SS_PASSWORD" \
+                '{type:"shadowsocks", tag:"in", listen:"0.0.0.0", listen_port:$port,
+                  method:"2022-blake3-aes-128-gcm", password:$pw}'
+            ;;
+        vless)
+            jq -n --argjson port "$SLAVE_PORT" --arg uuid "$VLESS_UUID" --arg sni "$SLAVE_SNI" \
+                  --arg priv "$REALITY_PRIVATE_KEY" --arg sid "$REALITY_SHORT_ID" \
+                '{type:"vless", tag:"in", listen:"0.0.0.0", listen_port:$port,
+                  users:[{uuid:$uuid, flow:"xtls-rprx-vision"}],
+                  tls:{enabled:true, server_name:$sni,
+                       reality:{enabled:true, handshake:{server:$sni, server_port:443},
+                                private_key:$priv, short_id:[$sid]}}}'
+            ;;
+        hy2)
+            jq -n --argjson port "$SLAVE_PORT" --arg pw "$HY2_PASSWORD" --arg obfs "$HY2_OBFS_PASSWORD" \
+                  --arg cert "$HY2_CERT" --arg key "$HY2_KEY" \
+                '{type:"hysteria2", tag:"in", listen:"0.0.0.0", listen_port:$port,
+                  users:[{password:$pw}], obfs:{type:"salamander", password:$obfs},
+                  tls:{enabled:true, alpn:["h3"], certificate_path:$cert, key_path:$key}}'
+            ;;
+    esac
+}
+
+# Собирает конфиг в файл OUT. Уровень логов и MTU берутся из текущего
+# конфига, чтобы пересборка не сбрасывала настройки пользователя.
+_slave_render() {
+    local out="$1" inbound level mtu
+    inbound=$(_slave_inbound_json) || return 1
+    level=$(jq -r '.log.level // "info"' "$SINGBOX_SLAVE_CONF" 2>/dev/null || echo info)
+    mtu=$(jq -r '.endpoints[0].mtu // 1420' "$SINGBOX_SLAVE_CONF" 2>/dev/null || echo 1420)
+
+    if [ "$SLAVE_MODE" = "warp" ]; then
+        local keys address private_key
+        keys=$(find_warp_keys) || {
+            echo -e "${RED}WARP-ключи не найдены!${NC}" >&2
+            echo -e "${YELLOW}Положите wgcf-profile.conf в $SLAVE_DIR/wgcf/ и попробуйте снова.${NC}" >&2
+            return 1
+        }
+        address=$(sed -n '1p' <<< "$keys")
+        private_key=$(sed -n '2p' <<< "$keys")
+        jq -n --argjson in "$inbound" --arg level "$level" --argjson mtu "${mtu:-1420}" \
+              --arg addr "$address" --arg pk "$private_key" '
+            {log:{level:$level},
+             dns:{servers:[{tag:"warp-dns", type:"udp", server:"1.1.1.1", detour:"warp"},
+                           {tag:"local", type:"udp", server:"8.8.8.8"}],
+                  strategy:"ipv4_only"},
+             inbounds:[$in],
+             endpoints:[{type:"wireguard", tag:"warp", name:"warp-tun", system:false, mtu:$mtu,
+                         address:[$addr], private_key:$pk,
+                         peers:[{address:"162.159.192.1", port:2408,
+                                 public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+                                 allowed_ips:["0.0.0.0/0"], reserved:[0,0,0]}]}],
+             outbounds:[{type:"direct", tag:"direct"}],
+             route:{rules:[{inbound:"in", outbound:"warp"}],
+                    default_domain_resolver:"local", final:"direct"}}' > "$out"
+    else
+        jq -n --argjson in "$inbound" --arg level "$level" '
+            {log:{level:$level},
+             dns:{servers:[{tag:"direct-dns", type:"udp", server:"1.1.1.1"}],
+                  strategy:"ipv4_only"},
+             inbounds:[$in],
+             outbounds:[{type:"direct", tag:"direct"}],
+             route:{rules:[{inbound:"in", outbound:"direct"}],
+                    default_domain_resolver:"direct-dns", final:"direct"}}' > "$out"
+    fi
+}
+
+# Собирает конфиг из slave.conf, проверяет и перезапускает службу.
+# При любой ошибке возвращает прежние slave.conf и config.json.
+# Вызывающий меняет переменные и передаёт копию прежнего slave.conf.
+#   apply_slave_config [ПРЕЖНИЙ_SLAVE_CONF]
+apply_slave_config() {
+    local prev_conf="${1:-}" tmp backup
+    tmp=$(mktemp)
+    backup=$(mktemp)
+    cp -a "$SINGBOX_SLAVE_CONF" "$backup" 2>/dev/null || true
+
+    _slave_rollback() {
+        [ -n "$prev_conf" ] && [ -f "$prev_conf" ] && cp -a "$prev_conf" "$SLAVE_CONF"
+        [ -s "$backup" ] && cp -a "$backup" "$SINGBOX_SLAVE_CONF"
+        rm -f "$tmp" "$backup"
+        load_config
+    }
+
+    if ! ensure_proto_credentials || ! _slave_render "$tmp"; then
+        _slave_rollback; return 1
+    fi
+    if ! sing-box check -c "$tmp" >/dev/null 2>&1; then
+        echo -e "${RED}Собранный конфиг не прошёл проверку sing-box:${NC}" >&2
+        sing-box check -c "$tmp" 2>&1 | tail -n 3 >&2 || true
+        _slave_rollback; return 1
+    fi
+
+    save_config
+    mkdir -p "$(dirname "$SINGBOX_SLAVE_CONF")"
+    mv -f "$tmp" "$SINGBOX_SLAVE_CONF"
+    chmod 600 "$SINGBOX_SLAVE_CONF"
+
+    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null || \
+       systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        systemctl restart "$SERVICE_NAME"
+        sleep 2
+        if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo -e "${RED}Служба не запустилась с новым конфигом, откат.${NC}" >&2
+            _slave_rollback
+            systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+            return 1
+        fi
+    fi
+    rm -f "$backup"
+    return 0
+}
+
+# Копия текущего slave.conf для отката.
+snapshot_slave_conf() {
+    local snap
+    snap=$(mktemp)
+    cp -a "$SLAVE_CONF" "$snap" 2>/dev/null || true
+    echo "$snap"
+}
+
+# ===== Ссылка для master =====
+
+# Внешний адрес донора: SLAVE_HOST из slave.conf, публичный IP интерфейса,
+# а за NAT — адрес, который видят внешние сервисы.
+slave_public_host() {
+    if [ -n "$SLAVE_HOST" ]; then
+        echo "$SLAVE_HOST"
+        return 0
+    fi
+    get_local_public_ipv4 && return 0
+    local ip url
+    for url in https://api.ipify.org https://ifconfig.me https://icanhazip.com; do
+        ip=$(curl -4 -s --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]')
+        [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { echo "$ip"; return 0; }
+    done
+    hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+_uri() {
+    jq -rn --arg v "$1" '$v | @uri'
+}
+
+# Share-ссылка для подключения master: warper mode … '<ссылка>'.
+slave_link() {
+    local host
+    host=$(slave_public_host)
+    case "$SLAVE_PROTO" in
+        ss)
+            local userinfo
+            userinfo=$(printf '2022-blake3-aes-128-gcm:%s' "$SS_PASSWORD" \
+                | base64 -w0 | tr '+/' '-_' | tr -d '=')
+            echo "ss://${userinfo}@${host}:${SLAVE_PORT}#warperslave"
+            ;;
+        vless)
+            echo "vless://${VLESS_UUID}@${host}:${SLAVE_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(_uri "$SLAVE_SNI")&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${REALITY_SHORT_ID}&type=tcp#warperslave"
+            ;;
+        hy2)
+            # pinSHA256 — отпечаток сертификата для сторонних клиентов,
+            # spki — хэш публичного ключа для sing-box на master
+            local cert_hex spki
+            cert_hex=$(openssl x509 -in "$HY2_CERT" -noout -fingerprint -sha256 2>/dev/null \
+                | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')
+            spki=$(openssl x509 -in "$HY2_CERT" -pubkey -noout 2>/dev/null \
+                | openssl pkey -pubin -outform der 2>/dev/null \
+                | openssl dgst -sha256 -binary | base64)
+            echo "hy2://$(_uri "$HY2_PASSWORD")@${host}:${SLAVE_PORT}?sni=$(_uri "$SLAVE_SNI")&obfs=salamander&obfs-password=$(_uri "$HY2_OBFS_PASSWORD")&insecure=1&pinSHA256=${cert_hex}&spki=$(_uri "$spki")#warperslave"
+            ;;
+    esac
+}
+
+# Команда, которую нужно выполнить на master.
+slave_master_command() {
+    local mode
+    case "$SLAVE_PROTO" in
+        ss)    mode=slave ;;
+        vless) mode=vless ;;
+        hy2)   mode=hy2 ;;
+    esac
+    echo "warper mode $mode '$(slave_link)'"
+}
+
+proto_label() {
+    case "$SLAVE_PROTO" in
+        ss)    echo "Shadowsocks" ;;
+        vless) echo "VLESS+Reality" ;;
+        hy2)   echo "Hysteria2" ;;
+        *)     echo "$SLAVE_PROTO" ;;
+    esac
 }
 
 is_public_ipv4() {
@@ -473,8 +758,6 @@ rollback_warperslave_update() {
     slave_restore_if_exists "$backupdir/versionslave" "$SLAVE_DIR/versionslave"
 
     slave_restore_if_exists "$backupdir/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service"
-    slave_restore_if_exists "$backupdir/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template"
-    slave_restore_if_exists "$backupdir/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template"
 
     chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh" 2>/dev/null || true
     ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
@@ -516,14 +799,6 @@ update_warperslave() {
         rm -rf "$tmpdir" "$backupdir"
         return 1
     }
-    download_file_safe "$REPO_URL/templates/config-slave-direct.json.template" "$tmpdir/config-slave-direct.json.template" "шаблон direct" || {
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
-    download_file_safe "$REPO_URL/templates/config-slave-warp.json.template" "$tmpdir/config-slave-warp.json.template" "шаблон warp" || {
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
 
     # ===== Проверяем синтаксис bash-скриптов =====
     syntax_check_bash_file "$tmpdir/warperslave.sh" "warperslave.sh" || {
@@ -535,23 +810,6 @@ update_warperslave() {
         return 1
     }
 
-    # ===== Проверяем шаблоны =====
-    validate_template_marker "$tmpdir/config-slave-direct.json.template" "__SLAVE_PORT__" "config-slave-direct.json.template" || {
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
-    validate_template_marker "$tmpdir/config-slave-direct.json.template" "__SLAVE_PASSWORD__" "config-slave-direct.json.template" || {
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
-    validate_template_marker "$tmpdir/config-slave-warp.json.template" "__WARP_ADDRESS__" "config-slave-warp.json.template" || {
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
-    validate_template_marker "$tmpdir/config-slave-warp.json.template" "__SLAVE_PASSWORD__" "config-slave-warp.json.template" || {
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
 
     # Проверяем unit-файл, если есть systemd-analyze
     if command -v systemd-analyze >/dev/null 2>&1; then
@@ -568,8 +826,6 @@ update_warperslave() {
     slave_backup_if_exists "$SLAVE_DIR/versionslave" "$backupdir/versionslave"
 
     slave_backup_if_exists "/etc/systemd/system/${SERVICE_NAME}.service" "$backupdir/sing-box-slave.service"
-    slave_backup_if_exists "$SLAVE_DIR/config-slave-direct.json.template" "$backupdir/config-slave-direct.json.template"
-    slave_backup_if_exists "$SLAVE_DIR/config-slave-warp.json.template" "$backupdir/config-slave-warp.json.template"
 
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         had_service=true
@@ -604,19 +860,6 @@ update_warperslave() {
         return 1
     }
 
-    install -m 644 "$tmpdir/config-slave-direct.json.template" "$SLAVE_DIR/config-slave-direct.json.template" || {
-        echo -e "${RED}Ошибка установки шаблона direct, откат.${NC}"
-        rollback_warperslave_update "$backupdir"
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
-
-    install -m 644 "$tmpdir/config-slave-warp.json.template" "$SLAVE_DIR/config-slave-warp.json.template" || {
-        echo -e "${RED}Ошибка установки шаблона warp, откат.${NC}"
-        rollback_warperslave_update "$backupdir"
-        rm -rf "$tmpdir" "$backupdir"
-        return 1
-    }
 
     chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
     ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
@@ -666,10 +909,12 @@ status_cmd() {
     echo "=== WARPERSLAVE STATUS ==="
     echo "Version:     $LOCAL_VER"
     echo "Mode:        $SLAVE_MODE"
+    echo "Protocol:    $(proto_label)"
     echo "Port:        $SLAVE_PORT"
+    [ "$SLAVE_PROTO" != "ss" ] && echo "SNI:         $SLAVE_SNI"
     echo "Service:     $sb_run"
     echo "Autostart:   $sb_en"
-    echo "SS key:      ${SS_PASSWORD:0:8}..."
+    [ "$SLAVE_PROTO" = "ss" ] && echo "SS key:      ${SS_PASSWORD:0:8}..."
     echo "Public IPv4: $ext_ip"
     echo "Log level:   $(get_log_level)"
     local mtu_val
@@ -680,334 +925,167 @@ status_cmd() {
     fi
 }
 
+# Переключает выход донора: direct ↔ warp.
 switch_mode() {
     load_config
-    local new_mode backup
-    backup=$(mktemp /tmp/slave_config_backup.XXXXXX)
-    cp -a "$SINGBOX_SLAVE_CONF" "$backup"
-
+    local snap
+    snap=$(snapshot_slave_conf)
     if [ "$SLAVE_MODE" = "direct" ]; then
-        new_mode="warp"
+        SLAVE_MODE="warp"
         echo -e "${YELLOW}Переключение на режим WARP...${NC}"
-
-        local warp_address="" warp_private_key=""
-        if existing_keys=$(find_warp_keys); then
-            warp_address=$(echo "$existing_keys" | sed -n '1p')
-            warp_private_key=$(echo "$existing_keys" | sed -n '2p')
-        else
-            echo -e "${RED}WARP-ключи не найдены!${NC}"
-            echo -e "${YELLOW}Положите wgcf-profile.conf в $SLAVE_DIR/wgcf/ и попробуйте снова.${NC}"
-            rm -f "$backup"
-            return 1
-        fi
-        
-        local warp_src
-        warp_src=$(get_warp_source)
-        echo -e " - ${GREEN}Источник WARP-ключей: ${warp_src}${NC}"
-        
-        cat > "$SINGBOX_SLAVE_CONF" << WARPEOF
-{
-  "log": {
-    "level": "info"
-  },
-  "dns": {
-    "servers": [
-      {
-        "tag": "warp-dns",
-        "type": "udp",
-        "server": "1.1.1.1",
-        "detour": "warp"
-      },
-      {
-        "tag": "local",
-        "type": "udp",
-        "server": "8.8.8.8"
-      }
-    ],
-    "strategy": "ipv4_only"
-  },
-  "inbounds": [
-    {
-      "type": "shadowsocks",
-      "tag": "ss-in",
-      "listen": "0.0.0.0",
-      "listen_port": $SLAVE_PORT,
-      "method": "2022-blake3-aes-128-gcm",
-      "password": "$SS_PASSWORD"
-    }
-  ],
-  "endpoints": [
-    {
-      "type": "wireguard",
-      "tag": "warp",
-      "name": "warp-tun",
-      "system": false,
-      "mtu": 1420,
-      "address": [ "$warp_address" ],
-      "private_key": "$warp_private_key",
-      "peers": [
-        {
-          "address": "162.159.192.1",
-          "port": 2408,
-          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-          "allowed_ips": ["0.0.0.0/0"],
-          "reserved": [0, 0, 0]
-        }
-      ]
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "inbound": "ss-in",
-        "outbound": "warp"
-      }
-    ],
-    "default_domain_resolver": "local",
-    "final": "direct"
-  }
-}
-WARPEOF
+        echo -e " - ${GREEN}Источник WARP-ключей: $(get_warp_source)${NC}"
     else
-        new_mode="direct"
+        SLAVE_MODE="direct"
         echo -e "${YELLOW}Переключение на режим Direct...${NC}"
-
-        cat > "$SINGBOX_SLAVE_CONF" << DIRECTEOF
-{
-  "log": {
-    "level": "info"
-  },
-  "dns": {
-    "servers": [
-      {
-        "tag": "direct-dns",
-        "type": "udp",
-        "server": "1.1.1.1"
-      }
-    ],
-    "strategy": "ipv4_only"
-  },
-  "inbounds": [
-    {
-      "type": "shadowsocks",
-      "tag": "ss-in",
-      "listen": "0.0.0.0",
-      "listen_port": $SLAVE_PORT,
-      "method": "2022-blake3-aes-128-gcm",
-      "password": "$SS_PASSWORD"
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "inbound": "ss-in",
-        "outbound": "direct"
-      }
-    ],
-    "default_domain_resolver": "direct-dns",
-    "final": "direct"
-  }
-}
-DIRECTEOF
     fi
 
-    chmod 600 "$SINGBOX_SLAVE_CONF"
-
-    if ! validate_singbox_config; then
-        echo -e "${RED}Ошибка валидации конфига! Откат...${NC}"
-        cp -a "$backup" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-        rm -f "$backup"
-        return 1
+    if apply_slave_config "$snap"; then
+        echo -e "${GREEN}Режим переключён: $SLAVE_MODE${NC}"
+        rm -f "$snap"
+        return 0
     fi
-
-    SLAVE_MODE="$new_mode"
-    save_config
-
-    systemctl restart "$SERVICE_NAME"
-    sleep 2
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo -e "${GREEN}Режим переключен на: $new_mode${NC}"
-        rm -f "$backup"
-    else
-        echo -e "${RED}Ошибка перезапуска! Откат...${NC}"
-        cp -a "$backup" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-        SLAVE_MODE=$([ "$new_mode" = "warp" ] && echo "direct" || echo "warp")
-        save_config
-        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1
-        rm -f "$backup"
-        return 1
-    fi
+    rm -f "$snap"
+    echo -e "${RED}Не удалось переключить, режим остаётся: $SLAVE_MODE${NC}"
+    return 1
 }
 
 change_port() {
     load_config
-    local old_port="$SLAVE_PORT"
-
-    echo -e "${CYAN}Текущий порт: $old_port${NC}"
-    read -r -p "Новый порт (или Enter для отмены): " new_port
+    local old_port="$SLAVE_PORT" new_port="${1:-}"
 
     if [ -z "$new_port" ]; then
-        echo -e "${YELLOW}Отмена.${NC}"
-        return 0
+        echo -e "${CYAN}Текущий порт: $old_port${NC}"
+        read -r -p "Новый порт (или Enter для отмены): " new_port
+        [ -z "$new_port" ] && { echo -e "${YELLOW}Отмена.${NC}"; return 0; }
     fi
 
     if ! validate_port "$new_port"; then
         echo -e "${RED}Некорректный порт! Допустимо: 1-65535.${NC}"
         return 1
     fi
-
     if [ "$new_port" = "$old_port" ]; then
         echo -e "${YELLOW}Порт не изменился.${NC}"
         return 0
     fi
-
     if ! check_port_available "$new_port"; then
         echo -e "${RED}Порт $new_port уже занят!${NC}"
-        ss -tlnp 2>/dev/null | grep ":${new_port} " || true
         return 1
     fi
 
-    local backup
-    backup=$(mktemp /tmp/slave_config_backup.XXXXXX)
-    cp -a "$SINGBOX_SLAVE_CONF" "$backup"
-
-    if command -v jq >/dev/null 2>&1; then
-        local tmp
-        tmp=$(mktemp)
-        if ! jq --argjson port "$new_port" '.inbounds[0].listen_port = $port' "$SINGBOX_SLAVE_CONF" > "$tmp"; then
-            rm -f "$backup" "$tmp"
-            echo -e "${RED}Ошибка обработки JSON!${NC}"
-            return 1
-        fi
-        mv "$tmp" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-    else
-        sed -i "s|\"listen_port\": $old_port|\"listen_port\": $new_port|g" "$SINGBOX_SLAVE_CONF"
-    fi
-
-    if ! validate_singbox_config; then
-        echo -e "${RED}Ошибка валидации! Откат...${NC}"
-        cp -a "$backup" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-        rm -f "$backup"
-        return 1
-    fi
-
-    remove_port_rules "$old_port" 2>/dev/null || true
-    ensure_port_open "$new_port"
-
+    local snap
+    snap=$(snapshot_slave_conf)
     SLAVE_PORT="$new_port"
-    save_config
-
-    systemctl restart "$SERVICE_NAME"
-    sleep 2
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo -e "${GREEN}Порт изменён: $old_port → $new_port${NC}"
-        rm -f "$backup"
-    else
-        echo -e "${RED}Ошибка перезапуска! Откат...${NC}"
-        cp -a "$backup" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
+    ensure_port_open "$new_port"
+    if ! apply_slave_config "$snap"; then
+        rm -f "$snap"
         remove_port_rules "$new_port" 2>/dev/null || true
-        ensure_port_open "$old_port"
-        SLAVE_PORT="$old_port"
-        save_config
-        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1
-        rm -f "$backup"
+        return 1
     fi
+    rm -f "$snap"
+    remove_port_rules "$old_port" 2>/dev/null || true
+    echo -e "${GREEN}Порт изменён: $old_port → $new_port${NC}"
+    echo -e "${YELLOW}Обновите подключение на master:${NC}"
+    echo -e "  ${CYAN}$(slave_master_command)${NC}"
 }
 
+# Перевыпускает учётные данные текущего протокола.
 change_key() {
     load_config
-    echo -e "${CYAN}Текущий ключ: ${SS_PASSWORD:0:8}...${NC}"
-    echo -e ""
-    echo -e " ${GREEN}1.${NC} Сгенерировать новый"
-    echo -e " ${GREEN}2.${NC} Ввести вручную"
-    echo -e " ${CYAN}0.${NC} Отмена"
+    local manual_key="${1:-}"
+    echo -e "${CYAN}Протокол: $(proto_label)${NC}"
 
-    read -r -p "Выбор: " key_action
+    if [ -z "$manual_key" ] && is_interactive_slave; then
+        echo -e " ${GREEN}1.${NC} Сгенерировать новые учётные данные"
+        [ "$SLAVE_PROTO" = "ss" ] && echo -e " ${GREEN}2.${NC} Ввести ключ Shadowsocks вручную"
+        echo -e " ${CYAN}0.${NC} Отмена"
+        local key_action
+        read -r -p "Выбор: " key_action
+        case "${key_action:-}" in
+            1) ;;
+            2)
+                [ "$SLAVE_PROTO" = "ss" ] || { echo -e "${RED}Неверный выбор.${NC}"; return 1; }
+                read -r -p "Введите ключ: " manual_key
+                [ -z "$manual_key" ] && { echo -e "${YELLOW}Отмена.${NC}"; return 0; }
+                ;;
+            *) echo -e "${YELLOW}Отмена.${NC}"; return 0 ;;
+        esac
+    fi
 
-    local new_key=""
-    case "${key_action:-}" in
-        1) new_key=$(openssl rand -base64 16) ;;
-        2)
-            read -r -p "Введите ключ: " new_key
-            if [ -z "$new_key" ]; then
-                echo -e "${YELLOW}Отмена.${NC}"
-                return 0
-            fi
-            ;;
-        0) return 0 ;;
-        *) echo -e "${RED}Неверный выбор.${NC}"; return 1 ;;
+    local snap
+    snap=$(snapshot_slave_conf)
+    case "$SLAVE_PROTO" in
+        ss)    SS_PASSWORD="$manual_key" ;;
+        vless) VLESS_UUID=""; REALITY_PRIVATE_KEY=""; REALITY_PUBLIC_KEY=""; REALITY_SHORT_ID="" ;;
+        hy2)   HY2_PASSWORD=""; HY2_OBFS_PASSWORD=""; rm -f "$HY2_CERT" "$HY2_KEY" ;;
     esac
 
-    local backup
-    backup=$(mktemp /tmp/slave_config_backup.XXXXXX)
-    cp -a "$SINGBOX_SLAVE_CONF" "$backup"
-
-    if command -v jq >/dev/null 2>&1; then
-        local tmp
-        tmp=$(mktemp)
-        if ! jq --arg pwd "$new_key" '.inbounds[0].password = $pwd' "$SINGBOX_SLAVE_CONF" > "$tmp"; then
-            rm -f "$backup" "$tmp"
-            echo -e "${RED}Ошибка обработки JSON!${NC}"
-            return 1
-        fi
-        mv "$tmp" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-    else
-        local old_escaped new_escaped
-        old_escaped=$(printf '%s\n' "$SS_PASSWORD" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
-        new_escaped=$(printf '%s\n' "$new_key" | sed 's/[&/\]/\\&/g')
-        sed -i "s|\"password\": \"$old_escaped\"|\"password\": \"$new_escaped\"|g" "$SINGBOX_SLAVE_CONF"
-    fi
-
-    if ! validate_singbox_config; then
-        echo -e "${RED}Ошибка валидации! Откат...${NC}"
-        cp -a "$backup" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-        rm -f "$backup"
+    if ! apply_slave_config "$snap"; then
+        rm -f "$snap"
         return 1
     fi
+    rm -f "$snap"
+    echo -e "${GREEN}Учётные данные обновлены.${NC}"
+    echo -e "${YELLOW}Старая ссылка больше не работает. Выполните на master:${NC}"
+    echo -e "  ${CYAN}$(slave_master_command)${NC}"
+}
 
-    SS_PASSWORD="$new_key"
-    save_config
+# Меняет протокол входа донора. SNI нужен VLESS+Reality (маскировка)
+# и Hysteria2 (имя в сертификате).
+#   change_proto ss|vless|hy2 [SNI]
+change_proto() {
+    load_config
+    local new_proto="${1:-}" new_sni="${2:-}"
 
-    systemctl restart "$SERVICE_NAME"
-    sleep 2
-
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo -e "${GREEN}Ключ обновлён!${NC}"
-        echo -e "${YELLOW}Новый ключ: ${new_key}${NC}"
-        echo -e ""
-        echo -e "${RED}================================================${NC}"
-        echo -e "${RED}⚠️  Не забудьте обновить ключ на основном${NC}"
-        echo -e "${RED}   WARPER-сервере! (warper → Настройки →${NC}"
-        echo -e "${RED}   Режим маршрутизации → Slave)${NC}"
-        echo -e "${RED}================================================${NC}"
-        rm -f "$backup"
-    else
-        echo -e "${RED}Ошибка перезапуска! Откат...${NC}"
-        cp -a "$backup" "$SINGBOX_SLAVE_CONF"
-        chmod 600 "$SINGBOX_SLAVE_CONF"
-        SS_PASSWORD=$(load_config_value "SS_PASSWORD")
-        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1
-        rm -f "$backup"
+    if [ -z "$new_proto" ]; then
+        echo -e "${CYAN}Текущий протокол: $(proto_label)${NC}"
+        echo -e " ${GREEN}1.${NC} Shadowsocks"
+        echo -e " ${GREEN}2.${NC} VLESS+Reality — рекомендуется, устойчив к DPI"
+        echo -e " ${GREEN}3.${NC} Hysteria2 — QUIC, хорош на плохих каналах"
+        echo -e " ${CYAN}0.${NC} Отмена"
+        local c
+        read -r -p "Выбор: " c
+        case "${c:-}" in
+            1) new_proto=ss ;;
+            2) new_proto=vless ;;
+            3) new_proto=hy2 ;;
+            *) echo -e "${YELLOW}Отмена.${NC}"; return 0 ;;
+        esac
+        if [ "$new_proto" != "ss" ]; then
+            read -r -p "SNI [${SLAVE_SNI}]: " new_sni
+        fi
     fi
+
+    case "$new_proto" in
+        ss|vless|hy2) ;;
+        *) echo -e "${RED}Протокол: ss | vless | hy2${NC}"; return 1 ;;
+    esac
+
+    local snap
+    snap=$(snapshot_slave_conf)
+    if [ -n "$new_sni" ] && [ "$new_sni" != "$SLAVE_SNI" ]; then
+        SLAVE_SNI="$new_sni"
+        # Сертификат Hysteria2 выпускается на SNI
+        rm -f "$HY2_CERT" "$HY2_KEY"
+    fi
+    if [ "$new_proto" = "vless" ] && ! check_reality_sni "$SLAVE_SNI"; then
+        echo -e "${RED}$SLAVE_SNI не отвечает по TLS 1.3 — для Reality нужен такой сайт.${NC}"
+        rm -f "$snap"
+        return 1
+    fi
+    SLAVE_PROTO="$new_proto"
+
+    if ! apply_slave_config "$snap"; then
+        rm -f "$snap"
+        return 1
+    fi
+    rm -f "$snap"
+    echo -e "${GREEN}Протокол: $(proto_label)${NC}"
+    echo -e "${YELLOW}Выполните на master:${NC}"
+    echo -e "  ${CYAN}$(slave_master_command)${NC}"
+}
+
+is_interactive_slave() {
+    [ -t 0 ] && [ -t 1 ]
 }
 
 uninstall_cmd() {
@@ -1046,6 +1124,7 @@ doctor_cmd() {
     }
 
     echo -e " ${CYAN}!${NC} Версия: $LOCAL_VER"
+    echo -e " ${CYAN}!${NC} Протокол: $(proto_label), выход: $SLAVE_MODE"
     echo -e " ${CYAN}!${NC} Log level: $(get_log_level)"
     if [ "$SLAVE_MODE" = "warp" ]; then
         local doc_mtu
@@ -1058,7 +1137,29 @@ doctor_cmd() {
     check_item "Конфиг sing-box-slave валиден" "validate_singbox_config"
     check_item "Служба $SERVICE_NAME активна" "systemctl is-active --quiet '$SERVICE_NAME'"
     check_item "Автозагрузка $SERVICE_NAME включена" "systemctl is-enabled --quiet '$SERVICE_NAME'"
-    check_item "Порт $SLAVE_PORT слушается" "ss -tlnp 2>/dev/null | grep -q ':${SLAVE_PORT} '"
+    local listen_flags="-tln" listen_proto="TCP"
+    [ "$SLAVE_PROTO" = "hy2" ] && { listen_flags="-uln"; listen_proto="UDP"; }
+    local listening
+    listening=$(ss $listen_flags 2>/dev/null || true)
+    if grep -q ":${SLAVE_PORT} " <<< "$listening"; then
+        echo -e " ${GREEN}✔${NC} Порт $SLAVE_PORT/$listen_proto слушается"
+    else
+        echo -e " ${RED}✘${NC} Порт $SLAVE_PORT/$listen_proto не слушается"
+        failed=1
+    fi
+    case "$SLAVE_PROTO" in
+        vless)
+            if check_reality_sni "$SLAVE_SNI"; then
+                echo -e " ${GREEN}✔${NC} SNI $SLAVE_SNI отвечает по TLS 1.3"
+            else
+                echo -e " ${RED}✘${NC} SNI $SLAVE_SNI не отвечает по TLS 1.3 — Reality не замаскируется"
+                failed=1
+            fi
+            ;;
+        hy2)
+            check_item "Сертификат Hysteria2" "[ -s '$HY2_CERT' ] && [ -s '$HY2_KEY' ]"
+            ;;
+    esac
     check_item "Права $SLAVE_CONF (600)" "[ \"\$(stat -c %a '$SLAVE_CONF' 2>/dev/null)\" = '600' ]"
     check_item "Права $SINGBOX_SLAVE_CONF (600)" "[ \"\$(stat -c %a '$SINGBOX_SLAVE_CONF' 2>/dev/null)\" = '600' ]"
 
@@ -1129,7 +1230,7 @@ show_menu() {
     echo -e " 📡 ${CYAN}Статус:${NC}   $sb_status"
     echo -e " 🔀 ${CYAN}Режим:${NC}    $mode_display"
     echo -e " 🔌 ${CYAN}Порт:${NC}     ${YELLOW}${SLAVE_PORT}${NC}"
-    echo -e " 🔑 ${CYAN}Ключ:${NC}     ${YELLOW}${SS_PASSWORD:0:8}...${NC}"
+    echo -e " 🔐 ${CYAN}Протокол:${NC} ${YELLOW}$(proto_label)${NC}"
     local log_level mtu_display
     log_level=$(get_log_level)
     mtu_display=$(get_mtu)
@@ -1145,8 +1246,9 @@ show_menu() {
     echo -e "${CYAN}------------------------------------------------${NC}"
     echo -e " ${GREEN}1.${NC} 🔀 Переключить режим (Direct ↔ WARP)"
     echo -e " ${CYAN}2.${NC} 🔌 Изменить порт"
-    echo -e " ${CYAN}3.${NC} 🔑 Изменить ключ Shadowsocks"
-    echo -e " ${CYAN}4.${NC} 👁️  Показать полный ключ"
+    echo -e " ${CYAN}P.${NC} 🔐 Протокол подключения (сейчас: $(proto_label))"
+    echo -e " ${CYAN}3.${NC} 🔑 Перевыпустить ключи"
+    echo -e " ${CYAN}4.${NC} 🔗 Ссылка для master"
     echo -e " ${CYAN}5.${NC} 🔄 Перезапустить службу"
     echo -e " ${CYAN}6.${NC} 📄 Показать логи"
     echo -e " ${CYAN}7.${NC} ⚙️  Изменить log level"
@@ -1167,11 +1269,61 @@ show_menu() {
     echo -e "${CYAN}================================================${NC}"
 }
 
+# Одноразовая миграция установок до 1.1.0: в slave.conf нет SLAVE_PROTO,
+# а конфиг собран старыми heredoc'ами (tag ss-in, устаревший
+# independent_cache). Старый update_warperslave исполняется кодом прежней
+# версии и пересобрать не может — делаем это при первом запуске новой.
+migrate_legacy_config() {
+    [ -f "$SLAVE_CONF" ] || return 0
+    grep -q '^SLAVE_PROTO=' "$SLAVE_CONF" 2>/dev/null && return 0
+    case "${1:-}" in help|--help|-h|version|--version|-v|uninstall) return 0 ;; esac
+
+    load_config
+    local snap
+    snap=$(snapshot_slave_conf)
+    if apply_slave_config "$snap"; then
+        echo -e "${CYAN}Конфиг донора пересобран в формате 1.1.0.${NC}" >&2
+    else
+        echo -e "${YELLOW}Не удалось пересобрать конфиг донора, оставлен прежний.${NC}" >&2
+    fi
+    rm -f "$snap"
+}
+migrate_legacy_config "${1:-}"
+
 case "${1:-}" in
     status) load_config; status_cmd; exit $? ;;
     switch) switch_mode; exit $? ;;
-    port) change_port; exit $? ;;
-    key) change_key; exit $? ;;
+    port) change_port "${2:-}"; exit $? ;;
+    key) change_key "${2:-}"; exit $? ;;
+    proto) change_proto "${2:-}" "${3:-}"; exit $? ;;
+    link)
+        load_config
+        [ "${2:-}" = "--command" ] && { slave_master_command; exit 0; }
+        echo "$(proto_label): $(slave_link)"
+        echo ""
+        echo "На master:"
+        echo "  $(slave_master_command)"
+        exit 0
+        ;;
+    rebuild)
+        load_config
+        _snap=$(snapshot_slave_conf)
+        apply_slave_config "$_snap"; _rc=$?
+        rm -f "$_snap"
+        [ $_rc -eq 0 ] && echo -e "${GREEN}Конфигурация пересобрана (${SLAVE_PROTO}, ${SLAVE_MODE}).${NC}"
+        exit $_rc
+        ;;
+    host)
+        load_config
+        if [ -z "${2:-}" ]; then slave_public_host; exit 0; fi
+        _snap=$(snapshot_slave_conf)
+        SLAVE_HOST="$2"
+        [ "$2" = "auto" ] && SLAVE_HOST=""
+        save_config
+        rm -f "$_snap"
+        echo "Адрес в ссылке: $(slave_public_host)"
+        exit 0
+        ;;
     doctor) doctor_cmd; exit $? ;;
     update) update_warperslave; exit $? ;;
     uninstall) uninstall_cmd; exit $? ;;
@@ -1222,8 +1374,8 @@ case "${1:-}" in
         echo "Команды:"
         echo "  status     Показать статус"
         echo "  switch     Переключить режим (Direct ↔ WARP)"
-        echo "  port       Изменить порт"
-        echo "  key        Изменить ключ Shadowsocks"
+        echo "  port [ПОРТ]  Изменить порт"
+        echo "  key [КЛЮЧ]   Перевыпустить учётные данные текущего протокола"
         echo "  doctor     Диагностика"
         echo "  update     Обновить warperslave"
         echo "  uninstall  Удалить warperslave"
@@ -1232,6 +1384,10 @@ case "${1:-}" in
         echo "  loglevel [УРОВЕНЬ]  Показать или изменить log level"
         echo "  mtu [ЗНАЧЕНИЕ]      Показать или изменить MTU"
         echo "  showkey    Показать полный SS-ключ"
+        echo "  proto ss|vless|hy2 [SNI]  Протокол подключения master к донору"
+        echo "  link [--command]  Ссылка и команда для master (--command — только команда)"
+        echo "  host [АДРЕС|auto]  Адрес донора в ссылке (домен или IP)"
+        echo "  rebuild    Пересобрать конфиг из slave.conf"
         echo "  logs [N]   Логи службы"
         echo "  help       Показать эту справку"
         echo ""
@@ -1256,7 +1412,14 @@ while true; do
         1) switch_mode; read -r -p "Нажмите Enter..." ;;
         2) change_port; read -r -p "Нажмите Enter..." ;;
         3) change_key; read -r -p "Нажмите Enter..." ;;
-        4) load_config; echo -e "\n${CYAN}Полный ключ Shadowsocks:${NC} ${YELLOW}${SS_PASSWORD}${NC}"; read -r -p "Нажмите Enter..." ;;
+        4)
+            load_config
+            echo -e "\n${CYAN}$(proto_label):${NC} ${YELLOW}$(slave_link)${NC}"
+            echo -e "\n${CYAN}На master выполните:${NC}"
+            echo -e "  ${GREEN}$(slave_master_command)${NC}"
+            read -r -p "Нажмите Enter..."
+            ;;
+        p|P) change_proto; read -r -p "Нажмите Enter..." ;;
         5)
             echo -e "${YELLOW}Перезапуск $SERVICE_NAME...${NC}"
             systemctl restart "$SERVICE_NAME"
