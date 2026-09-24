@@ -366,6 +366,54 @@ def upload_wg_config(filename: str, content: str) -> tuple[bool, str, str]:
     return True, f"Конфиг сохранён: {target_path}", target_path
 
 
+def switch_to_proxy(mode: str, link: str) -> tuple[bool, str]:
+    """VLESS или Hysteria2 по share-ссылке."""
+    if mode == "vless":
+        return _to_tuple(_api.set_mode_vless(link))
+    if mode == "hy2":
+        return _to_tuple(_api.set_mode_hy2(link))
+    return False, f"Неизвестный режим: {mode}"
+
+
+def switch_to_openvpn(conf_path: str, username: str = "", password: str = "") -> tuple[bool, str]:
+    return _to_tuple(_api.set_mode_openvpn(conf_path, username or None, password or None))
+
+
+def list_ovpn_configs() -> list[dict[str, str]]:
+    result = _api.list_ovpn_configs()
+    configs = result.data if result.ok and result.data else []
+    for cfg in configs:
+        cfg["name"] = os.path.basename(cfg["path"])
+    return configs
+
+
+def ovpn_needs_auth(conf_path: str) -> bool:
+    try:
+        with open(conf_path, encoding="utf-8", errors="replace") as f:
+            return any(line.strip().lower().startswith("auth-user-pass") for line in f)
+    except OSError:
+        return False
+
+
+def upload_ovpn_config(filename: str, content: str) -> tuple[bool, str, str]:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(filename))
+    if not safe_name.endswith(".ovpn"):
+        safe_name += ".ovpn"
+
+    if not re.search(r"^\s*remote\s", content, re.M):
+        return False, "Файл не похож на OpenVPN-конфиг (нет директивы remote)", ""
+
+    target_path = os.path.join("/root/warper", safe_name)
+    try:
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(target_path, 0o600)
+    except OSError as e:
+        return False, f"Ошибка сохранения: {e}", ""
+
+    return True, f"Конфиг сохранён: {target_path}", target_path
+
+
 # =====================================================================
 #  Трафик
 # =====================================================================

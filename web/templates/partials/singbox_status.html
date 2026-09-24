@@ -82,7 +82,7 @@
             </div>
             <div class="flex justify-between border-b border-emerald-900/30 pb-2">
                 <span class="text-emerald-400/70">Режим</span>
-                <span class="text-emerald-100">{{ status.outbound_mode|upper }}</span>
+                <span class="text-emerald-100">{{ status.outbound_label or status.outbound_mode|upper }}</span>
             </div>
             <div class="flex justify-between border-b border-emerald-900/30 pb-2">
                 <span class="text-emerald-400/70">Fake-подсеть</span>

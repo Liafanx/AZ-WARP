@@ -47,12 +47,13 @@ def set_mode_warp(key_source: str = "") -> WarperResult:
     return run_warper(*args, timeout=timeout)
 
 
-def set_mode_slave(server: str, port: str | int, password: str) -> WarperResult:
+def set_mode_slave(server: str, port: str | int = "", password: str = "") -> WarperResult:
     """
     Переключить на режим Slave (донор-сервер через Shadowsocks).
 
     Args:
-        server: IP или домен донор-сервера.
+        server: IP или домен донор-сервера, либо ссылка ss:// —
+            тогда port и password не нужны.
         port: Порт Shadowsocks (1-65535).
         password: Ключ Shadowsocks.
 
@@ -66,6 +67,10 @@ def set_mode_slave(server: str, port: str | int, password: str) -> WarperResult:
     server = str(server).strip()
     port = str(port).strip()
     password = str(password).strip()
+
+    # Ссылка ss:// из `warperslave link` — порт и ключ уже внутри
+    if server.startswith("ss://"):
+        return run_warper("mode", "slave", server, timeout=120)
 
     if not server:
         return WarperResult(ok=False, message="Адрес сервера не может быть пустым")
@@ -381,3 +386,93 @@ def config_set(key: str, value: str, timeout: int = 300) -> WarperResult:
         timeout: Таймаут (смена подсети занимает до нескольких минут).
     """
     return run_warper("config", "set", key, value, timeout=timeout)
+
+
+def set_mode_vless(link: str) -> WarperResult:
+    """
+    Переключить на VLESS / VLESS+Reality по share-ссылке.
+
+    Args:
+        link: Ссылка vless://… (свой донор выдаёт её командой
+            `warperslave link`).
+
+    Returns:
+        WarperResult. При ошибке режим и конфиг остаются прежними.
+    """
+    link = str(link).strip()
+    if not link.startswith("vless://"):
+        return WarperResult(ok=False, message="Ожидается ссылка vless://")
+    return run_warper("mode", "vless", link, timeout=120)
+
+
+def set_mode_hy2(link: str) -> WarperResult:
+    """
+    Переключить на Hysteria2 по share-ссылке.
+
+    Args:
+        link: Ссылка hy2://… или hysteria2://…
+
+    Returns:
+        WarperResult. При ошибке режим и конфиг остаются прежними.
+    """
+    link = str(link).strip()
+    if not link.startswith(("hy2://", "hysteria2://")):
+        return WarperResult(ok=False, message="Ожидается ссылка hy2:// или hysteria2://")
+    return run_warper("mode", "hy2", link, timeout=120)
+
+
+def set_mode_openvpn(conf_path: str, username: str | None = None,
+                     password: str | None = None) -> WarperResult:
+    """
+    Переключить на OpenVPN по файлу .ovpn на сервере.
+
+    Args:
+        conf_path: Путь к .ovpn.
+        username: Логин, если в конфиге есть auth-user-pass.
+        password: Пароль к нему.
+
+    Returns:
+        WarperResult. При ошибке режим и конфиг остаются прежними.
+    """
+    args = ["mode", "openvpn", str(conf_path).strip()]
+    if username:
+        args += [username, password or ""]
+    return run_warper(*args, timeout=120)
+
+
+def list_ovpn_configs() -> WarperResult:
+    """
+    Файлы .ovpn в /root/ и /root/warper/.
+
+    Returns:
+        WarperResult с data=list[dict]: path, server.
+    """
+    result = run_warper("ovpnconfig", "list", timeout=10)
+    if not result.ok:
+        return result
+    configs = []
+    for line in result.raw_stdout.splitlines():
+        path, _, server = line.strip().partition("|")
+        if path:
+            configs.append({"path": path, "server": server})
+    result.data = configs
+    return result
+
+
+def get_outbound() -> WarperResult:
+    """
+    Текущий режим и сервер без секретов.
+
+    Returns:
+        WarperResult с data=dict: mode, label, а для vless/hy2/openvpn —
+        protocol, server, port, ports, name, transport.
+    """
+    result = run_warper("outbound", timeout=10)
+    if result.ok:
+        data = {}
+        for line in result.raw_stdout.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                data[key.strip()] = value.strip()
+        result.data = data
+    return result

@@ -526,13 +526,14 @@ class WarperAPI:
         return settings.set_mode_warp(key_source)
 
     def set_mode_slave(
-        self, server: str, port: str | int, password: str
+        self, server: str, port: str | int = "", password: str = ""
     ) -> WarperResult:
         """
         Переключить на режим Slave.
 
         Args:
-            server: IP или домен донор-сервера.
+            server: IP или домен донор-сервера, либо ссылка ss:// из
+                `warperslave link` — тогда port и password не нужны.
             port: Порт Shadowsocks.
             password: Ключ Shadowsocks.
         """
@@ -568,6 +569,27 @@ class WarperAPI:
             mtu: Значение MTU.
         """
         return settings.set_mtu(mtu)
+
+    def set_mode_vless(self, link: str) -> WarperResult:
+        """VLESS / VLESS+Reality по ссылке vless://."""
+        return settings.set_mode_vless(link)
+
+    def set_mode_hy2(self, link: str) -> WarperResult:
+        """Hysteria2 по ссылке hy2:// или hysteria2://."""
+        return settings.set_mode_hy2(link)
+
+    def set_mode_openvpn(self, conf_path: str, username: str | None = None,
+                         password: str | None = None) -> WarperResult:
+        """OpenVPN по .ovpn на сервере (логин/пароль — если auth-user-pass)."""
+        return settings.set_mode_openvpn(conf_path, username, password)
+
+    def list_ovpn_configs(self) -> WarperResult:
+        """Файлы .ovpn в /root/ и /root/warper/."""
+        return settings.list_ovpn_configs()
+
+    def get_outbound(self) -> WarperResult:
+        """Текущий режим и сервер без секретов."""
+        return settings.get_outbound()
 
     def get_subnets(self) -> WarperResult:
         """Подсети VPN-клиентов и режим маршрутизации."""

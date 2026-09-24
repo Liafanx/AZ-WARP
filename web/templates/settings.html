@@ -10,7 +10,7 @@
     <!-- ===== Режим маршрутизации ===== -->
     <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
         <h3 class="text-sm font-semibold text-emerald-200 mb-1">Режим маршрутизации</h3>
-        <p class="text-xs text-emerald-500/60 mb-4">Текущий: <span class="font-mono text-emerald-300">{{ status.outbound_mode|upper }}</span></p>
+        <p class="text-xs text-emerald-500/60 mb-4">Текущий: <span class="font-mono text-emerald-300">{{ status.outbound_label or status.outbound_mode|upper }}</span></p>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
 
@@ -36,6 +36,30 @@
                            {% if status.outbound_mode == 'wg' %}ring-2 ring-brand-500/50{% endif %}">
                 <div class="font-bold text-emerald-100 mb-1">WireGuard</div>
                 <div class="text-xs text-emerald-400/70">Свой WG-сервер</div>
+            </button>
+
+            <!-- VLESS -->
+            <button onclick="openModal('modal-mode-vless')"
+                    class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
+                           {% if status.outbound_mode == 'vless' %}ring-2 ring-brand-500/50{% endif %}">
+                <div class="font-bold text-emerald-100 mb-1">VLESS</div>
+                <div class="text-xs text-emerald-400/70">VLESS / VLESS+Reality по ссылке</div>
+            </button>
+
+            <!-- Hysteria2 -->
+            <button onclick="openModal('modal-mode-hy2')"
+                    class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
+                           {% if status.outbound_mode == 'hy2' %}ring-2 ring-brand-500/50{% endif %}">
+                <div class="font-bold text-emerald-100 mb-1">Hysteria2</div>
+                <div class="text-xs text-emerald-400/70">По ссылке hy2://</div>
+            </button>
+
+            <!-- OpenVPN -->
+            <button onclick="openModal('modal-mode-openvpn')"
+                    class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
+                           {% if status.outbound_mode == 'openvpn' %}ring-2 ring-brand-500/50{% endif %}">
+                <div class="font-bold text-emerald-100 mb-1">OpenVPN</div>
+                <div class="text-xs text-emerald-400/70">По файлу .ovpn</div>
             </button>
         </div>
     </section>
@@ -304,7 +328,19 @@
         <form hx-post="{{ url_for('htmx_mode_slave') }}"
               hx-swap="none"
               hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-slave');}"
-              class="p-6 space-y-4">
+              class="px-6 pt-6 space-y-2">
+            <label class="block text-sm text-emerald-300">Ссылка ss:// из <span class="font-mono">warperslave link</span></label>
+            <div class="flex gap-2">
+                <input type="text" name="server" required placeholder="ss://..." class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                <button type="submit" class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить</button>
+            </div>
+            <p class="text-xs text-emerald-500/60">Для связки по VLESS или Hysteria2 выберите соответствующий режим.</p>
+        </form>
+        <div class="px-6 pt-4 text-xs text-emerald-500/60">…или вручную:</div>
+        <form hx-post="{{ url_for('htmx_mode_slave') }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-slave');}"
+              class="p-6 pt-3 space-y-4">
             <div>
                 <label class="block text-sm text-emerald-300 mb-2">IP/домен донор-сервера</label>
                 <input type="text" name="server" required
@@ -408,6 +444,141 @@
 
             <div class="flex justify-end pt-2 border-t border-emerald-900/40">
                 <button onclick="closeModal('modal-mode-wg')"
+                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- VLESS -->
+<div id="modal-mode-vless" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">Режим VLESS</h3>
+            <button onclick="closeModal('modal-mode-vless')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+        </div>
+        <form hx-post="{{ url_for('htmx_mode_proxy') }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-vless');}"
+              class="p-6 space-y-4">
+            <input type="hidden" name="mode" value="vless">
+            {% if status.outbound_mode == 'vless' and status.outbound %}
+            <div class="text-xs text-emerald-400/80 p-3 bg-surface-950 rounded-lg border border-emerald-900/40">
+                Сейчас: <span class="font-mono">{{ status.outbound_label }}</span>
+            </div>
+            {% endif %}
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Ссылка vless://</label>
+                <textarea name="link" rows="4" required placeholder="vless://..."
+                          class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none"></textarea>
+                <p class="text-xs text-emerald-500/60 mt-2">Поддерживаются Reality, TLS, ws, grpc, httpupgrade. Ссылку своего донора выдаёт <span class="font-mono">warperslave link</span>.</p>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-emerald-900/40">
+                <button type="button" onclick="closeModal('modal-mode-vless')"
+                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Отмена</button>
+                <button type="submit" class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Hysteria2 -->
+<div id="modal-mode-hy2" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">Режим Hysteria2</h3>
+            <button onclick="closeModal('modal-mode-hy2')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+        </div>
+        <form hx-post="{{ url_for('htmx_mode_proxy') }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-hy2');}"
+              class="p-6 space-y-4">
+            <input type="hidden" name="mode" value="hy2">
+            {% if status.outbound_mode == 'hy2' and status.outbound %}
+            <div class="text-xs text-emerald-400/80 p-3 bg-surface-950 rounded-lg border border-emerald-900/40">
+                Сейчас: <span class="font-mono">{{ status.outbound_label }}</span>
+            </div>
+            {% endif %}
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Ссылка hy2://</label>
+                <textarea name="link" rows="4" required placeholder="hy2://..."
+                          class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none"></textarea>
+                <p class="text-xs text-emerald-500/60 mt-2">Поддерживаются obfs salamander, диапазоны портов (mport) и пиннинг сертификата.</p>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-emerald-900/40">
+                <button type="button" onclick="closeModal('modal-mode-hy2')"
+                        class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Отмена</button>
+                <button type="submit" class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- OpenVPN -->
+<div id="modal-mode-openvpn" class="hidden fixed inset-0 z-50 items-center justify-center p-4">
+    <div class="modal-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-surface-900 border border-emerald-900/40 rounded-xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-emerald-900/40 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-emerald-100">Режим OpenVPN</h3>
+            <button onclick="closeModal('modal-mode-openvpn')" class="text-emerald-500 hover:text-emerald-300 text-2xl leading-none">&times;</button>
+        </div>
+        <div class="p-6 space-y-5">
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Выбрать существующий .ovpn</label>
+                {% if ovpn_configs %}
+                <form hx-post="{{ url_for('htmx_mode_openvpn') }}"
+                      hx-swap="none"
+                      hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-openvpn');}"
+                      class="space-y-2">
+                    {% for cfg in ovpn_configs %}
+                    <label class="flex items-start gap-3 p-3 bg-surface-950 border border-emerald-900/40 rounded-lg cursor-pointer hover:bg-emerald-900/20">
+                        <input type="radio" name="conf_path" value="{{ cfg.path }}" class="mt-0.5">
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm text-emerald-100 font-mono truncate">{{ cfg.name }}</div>
+                            <div class="text-xs text-emerald-500/70 truncate">{{ cfg.path }} → {{ cfg.server }}</div>
+                        </div>
+                    </label>
+                    {% endfor %}
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="text" name="username" placeholder="Логин (если нужен)" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                        <input type="password" name="password" placeholder="Пароль" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                    </div>
+                    <button type="submit" class="w-full justify-center px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить выбранный</button>
+                </form>
+                {% else %}
+                <div class="text-sm text-emerald-500/70 p-3 bg-surface-950 rounded-lg border border-emerald-900/40">
+                    Файлы .ovpn не найдены в /root/ и /root/warper/
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="border-t border-emerald-900/40"></div>
+
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">Загрузить свой .ovpn</label>
+                <form hx-post="{{ url_for('htmx_ovpn_upload') }}"
+                      hx-swap="none"
+                      hx-encoding="multipart/form-data"
+                      hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-openvpn');}"
+                      class="space-y-3">
+                    <input type="file" name="ovpn_file" accept=".ovpn,.conf,text/plain" required
+                           class="w-full text-sm text-emerald-100 file:mr-3 file:py-2 file:px-4 file:rounded-lg
+                                  file:border-0 file:bg-brand-700 file:text-white file:cursor-pointer hover:file:bg-brand-600">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="text" name="username" placeholder="Логин (если нужен)" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                        <input type="password" name="password" placeholder="Пароль" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                    </div>
+                    <button type="submit" class="w-full justify-center px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Загрузить и применить</button>
+                </form>
+                <p class="text-xs text-emerald-500/60 mt-2">
+                    Нужен dev tun и сертификат CA. Логин и пароль — если в конфиге есть auth-user-pass.
+                </p>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-emerald-900/40">
+                <button onclick="closeModal('modal-mode-openvpn')"
                         class="px-4 py-2 text-sm text-emerald-300 hover:text-emerald-100">Закрыть</button>
             </div>
         </div>

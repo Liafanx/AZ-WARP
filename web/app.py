@@ -358,6 +358,7 @@ def settings_page():
         warp_keys=warp_keys,
         wg_configs=wg_configs,
         auto_resolve=api.get_auto_resolve(),
+        ovpn_configs=api.list_ovpn_configs(),
     )
 
 @app.route("/web-settings")
@@ -762,6 +763,56 @@ def htmx_wg_upload():
         return _result_partial(False, msg)
 
     ok2, msg2 = api.switch_to_wg(path)
+    if ok2:
+        return _result_partial(True, "%s; %s" % (msg, msg2), "refreshAll")
+    return _result_partial(False, "Загружено, но не применено: %s" % msg2)
+
+
+@app.route("/htmx/settings/mode/proxy", methods=["POST"])
+@login_required
+def htmx_mode_proxy():
+    mode = request.form.get("mode", "")
+    link = request.form.get("link", "").strip()
+    if not link:
+        return _result_partial(False, "Вставьте ссылку")
+    ok, msg = api.switch_to_proxy(mode, link)
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/mode/openvpn", methods=["POST"])
+@login_required
+def htmx_mode_openvpn():
+    conf_path = request.form.get("conf_path", "").strip()
+    if not conf_path:
+        return _result_partial(False, "Выберите файл .ovpn")
+    ok, msg = api.switch_to_openvpn(
+        conf_path,
+        request.form.get("username", "").strip(),
+        request.form.get("password", ""),
+    )
+    return _result_partial(ok, msg, "refreshAll")
+
+
+@app.route("/htmx/settings/ovpn-upload", methods=["POST"])
+@login_required
+def htmx_ovpn_upload():
+    file = request.files.get("ovpn_file")
+    if not file or not file.filename:
+        return _result_partial(False, "Файл не выбран")
+    try:
+        content = file.read().decode("utf-8")
+    except UnicodeDecodeError:
+        return _result_partial(False, "Файл не текстовый")
+
+    ok, msg, path = api.upload_ovpn_config(file.filename, content)
+    if not ok:
+        return _result_partial(False, msg)
+
+    ok2, msg2 = api.switch_to_openvpn(
+        path,
+        request.form.get("username", "").strip(),
+        request.form.get("password", ""),
+    )
     if ok2:
         return _result_partial(True, "%s; %s" % (msg, msg2), "refreshAll")
     return _result_partial(False, "Загружено, но не применено: %s" % msg2)

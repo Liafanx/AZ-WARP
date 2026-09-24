@@ -123,6 +123,9 @@
             {% if status.outbound_mode == 'warp' %}WARP (Cloudflare)
             {% elif status.outbound_mode == 'slave' %}Slave (донор)
             {% elif status.outbound_mode == 'wg' %}WireGuard
+            {% elif status.outbound_mode == 'vless' %}VLESS
+            {% elif status.outbound_mode == 'hy2' %}Hysteria2
+            {% elif status.outbound_mode == 'openvpn' %}OpenVPN
             {% else %}{{ status.outbound_mode }}{% endif %}
         </div>
         <div class="space-y-1.5 text-sm">
@@ -130,6 +133,21 @@
                 <div class="flex justify-between">
                     <span class="text-emerald-400/70">Сервер</span>
                     <span class="text-emerald-200 font-mono text-xs">{{ status.slave.server }}:{{ status.slave.port }}</span>
+                </div>
+            {% elif status.outbound_mode in ('vless', 'hy2', 'openvpn') %}
+                <div class="flex justify-between">
+                    <span class="text-emerald-400/70">Сервер</span>
+                    <span class="text-emerald-200 font-mono text-xs">{{ status.outbound.server }}{% if status.outbound.port %}:{{ status.outbound.port }}{% endif %}</span>
+                </div>
+                {% if status.outbound.name and status.outbound.name != status.outbound.server %}
+                <div class="flex justify-between">
+                    <span class="text-emerald-400/70">Имя</span>
+                    <span class="text-emerald-200 text-xs truncate ml-2">{{ status.outbound.name }}</span>
+                </div>
+                {% endif %}
+                <div class="flex justify-between">
+                    <span class="text-emerald-400/70">Протокол</span>
+                    <span class="text-emerald-200 text-xs">{{ status.outbound_label.split(' (')[0] }}{% if status.outbound.transport %} / {{ status.outbound.transport }}{% endif %}</span>
                 </div>
             {% elif status.outbound_mode == 'wg' %}
                 <div class="flex justify-between">
