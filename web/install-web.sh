@@ -16,7 +16,6 @@ NC='\033[0m'
 
 REPO_BRANCH="${WARPER_WEB_BRANCH:-main}"
 REPO_RAW="https://raw.githubusercontent.com/Liafanx/AZ-WARP/${REPO_BRANCH}"
-REPO_GIT="https://github.com/Liafanx/AZ-WARP.git"
 
 WARPER_DIR="/root/warper"
 WEB_DIR="${WARPER_DIR}/web"
@@ -304,7 +303,7 @@ echo -e "${YELLOW}=== Установка ===${NC}"
 
 echo -e "${CYAN}1. Установка зависимостей...${NC}"
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip git curl openssl >/dev/null
+apt-get install -y -qq python3 python3-venv python3-pip curl openssl >/dev/null
 if [ "$WEB_MODE" = "nginx" ]; then
     apt-get install -y -qq nginx >/dev/null
 fi
@@ -323,12 +322,31 @@ echo -e "${CYAN}2. Скачивание файлов веб-панели...${NC}
 
 mkdir -p "$WEB_DIR/static" "$WEB_DIR/templates/partials"
 
+# Скачивает файлы из web/files.txt в КАТАЛОГ по raw-ссылкам — тем же путём,
+# что и остальное обновление. git clone с github.com проходит не везде.
+#   _fetch_web_files RAW_BASE КАТАЛОГ
+_fetch_web_files() {
+    local base="$1" dest="$2" path
+    mkdir -p "$dest"
+    if ! curl -fsSL --retry 2 --connect-timeout 15 "$base/web/files.txt?t=$(date +%s)" \
+        -o "$dest/files.txt"; then
+        echo -e "${RED}Не удалось скачать список файлов панели: $base/web/files.txt${NC}" >&2
+        return 1
+    fi
+    while IFS= read -r path; do
+        [ -z "$path" ] || [[ "$path" == \#* ]] && continue
+        mkdir -p "$dest/$(dirname "$path")"
+        if ! curl -fsSL --retry 2 --connect-timeout 15 "$base/$path?t=$(date +%s)" \
+            -o "$dest/$path"; then
+            echo -e "${RED}Не удалось скачать $path${NC}" >&2
+            return 1
+        fi
+    done < "$dest/files.txt"
+}
+
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
-if ! git clone --depth 1 -b "$REPO_BRANCH" "$REPO_GIT" repo 2>/dev/null; then
-    echo -e "${RED}Не удалось скачать репозиторий ветки $REPO_BRANCH${NC}"
-    exit 1
-fi
+_fetch_web_files "$REPO_RAW" "$TMP_DIR/repo" || exit 1
 
 if [ ! -d "repo/web" ]; then
     echo -e "${RED}В ветке $REPO_BRANCH нет папки web/${NC}"
