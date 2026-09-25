@@ -189,17 +189,23 @@ for _lib in \
     "$WARPER_MENUS/main.sh"
 do
     if [ ! -f "$_lib" ]; then
-        # Пытаемся скачать недостающий модуль (тихо)
+        # Пытаемся скачать недостающий модуль
         _rel_path="${_lib#$WARPER_DIR/}"  # lib/cli.sh или menus/main.sh
         echo -e "${YELLOW}Отсутствует модуль: $_lib — пытаюсь скачать...${NC}" >&2
         mkdir -p "$(dirname "$_lib")"
-        if ! curl -fsSL --connect-timeout 10 \
-            "${REPO_URL}/${_rel_path}?t=$(date +%s)" \
-            -o "$_lib" 2>/dev/null; then
-            echo -e "${RED}Не удалось скачать $_rel_path${NC}" >&2
-            echo -e "${RED}Проверьте интернет и REPO_URL в warper.sh${NC}" >&2
+        if ! curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 15 \
+            "${REPO_URL}/${_rel_path}?t=$(date +%s)" -o "$_lib.tmp"; then
+            rm -f "$_lib.tmp"
+            echo -e "${RED}Не удалось скачать ${REPO_URL}/${_rel_path}${NC}" >&2
+            # update сам скачает полный набор модулей
+            if [ "${1:-}" = "update" ]; then
+                echo -e "${YELLOW}Продолжаю: обновление загрузит модули целиком.${NC}" >&2
+                continue
+            fi
+            echo -e "${RED}Проверьте интернет и REPO_URL в warper.sh, затем: warper update${NC}" >&2
             exit 1
         fi
+        mv -f "$_lib.tmp" "$_lib"
         chmod 644 "$_lib"
         echo -e "${GREEN}✓ $_rel_path скачан${NC}" >&2
     fi

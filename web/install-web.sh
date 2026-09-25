@@ -328,7 +328,7 @@ mkdir -p "$WEB_DIR/static" "$WEB_DIR/templates/partials"
 _fetch_web_files() {
     local base="$1" dest="$2" path
     mkdir -p "$dest"
-    if ! curl -fsSL --retry 2 --connect-timeout 15 "$base/web/files.txt?t=$(date +%s)" \
+    if ! curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 15 "$base/web/files.txt?t=$(date +%s)" \
         -o "$dest/files.txt"; then
         echo -e "${RED}Не удалось скачать список файлов панели: $base/web/files.txt${NC}" >&2
         return 1
@@ -336,7 +336,7 @@ _fetch_web_files() {
     while IFS= read -r path; do
         [ -z "$path" ] || [[ "$path" == \#* ]] && continue
         mkdir -p "$dest/$(dirname "$path")"
-        if ! curl -fsSL --retry 2 --connect-timeout 15 "$base/$path?t=$(date +%s)" \
+        if ! curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 15 "$base/$path?t=$(date +%s)" \
             -o "$dest/$path"; then
             echo -e "${RED}Не удалось скачать $path${NC}" >&2
             return 1
