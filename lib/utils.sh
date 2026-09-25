@@ -186,7 +186,9 @@ download_file_safe() {
     local url="$1" dest="$2" desc="$3"
     local tmp
     tmp=$(mktemp)
-    if ! curl -fsSL -o "$tmp" "${url}?t=$(date +%s)"; then
+    # --retry: временные сбои и 429 (лимит запросов raw.githubusercontent.com)
+    if ! curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 15 \
+        -o "$tmp" "${url}?t=$(date +%s)"; then
         echo -e "${RED}Ошибка загрузки: ${desc}${NC}"
         rm -f "$tmp"; return 1
     fi
