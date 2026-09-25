@@ -265,7 +265,7 @@ load_wg_config
 
 # ===== CLI-обработка =====
 case "${1:-}" in
-    patch)    patch_kresd >/dev/null 2>&1; exit $? ;;
+    patch)    patch_kresd "${2:-}" >/dev/null 2>&1; exit $? ;;
     resync)   cli_resync "${2:-}"; exit $? ;;
     singbox)  cli_singbox "${2:-}" "${3:-}"; exit $? ;;
     resolvesync)  cli_resolve_sync "${2:-}"; exit $? ;;

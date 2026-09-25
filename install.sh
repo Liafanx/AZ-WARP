@@ -23,7 +23,8 @@ fi
 download_file() {
     local url="$1" dest="$2" desc="$3"
     echo -e " - ${CYAN}Загрузка ${desc}...${NC}"
-    if ! curl -sfSL -o "$dest" "${url}?t=$(date +%s)"; then
+    if ! curl -sfSL --retry 4 --retry-delay 3 --connect-timeout 15 \
+        -o "$dest" "${url}?t=$(date +%s)"; then
         echo -e " - ${RED}Ошибка загрузки: ${desc}${NC}"
         echo -e " - ${RED}URL: ${url}${NC}"
         return 1
@@ -98,7 +99,7 @@ check_os() {
 }
 
 check_dependencies() {
-    local deps=("curl" "wget" "awk" "iptables" "nano" "grep" "sed" "jq")
+    local deps=("curl" "wget" "awk" "iptables" "nano" "grep" "sed" "jq" "python3")
     local missing=()
     for cmd in "${deps[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -120,18 +121,6 @@ check_antizapret() {
         exit 1
     fi
     echo -e " - ${GREEN}AntiZapret найден.${NC}"
-}
-
-check_antizapret_warp() {
-    local setup_file="/root/antizapret/setup"
-    if [ -f "$setup_file" ]; then
-        local az_warp
-        az_warp=$(grep -E '^ANTIZAPRET_WARP=' "$setup_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"'\''[:space:]')
-        if [ "$az_warp" = "y" ]; then
-            return 0  # ANTIZAPRET_WARP включён
-        fi
-    fi
-    return 1  # ANTIZAPRET_WARP выключен или не найден
 }
 
 has_list_block() {
@@ -273,31 +262,6 @@ echo -e " - ${GREEN}Архитектура: ${SYSTEM_ARCH}${NC}"
 check_dependencies
 check_antizapret
 
-# Проверка ANTIZAPRET_WARP
-ANTIZAPRET_WARP_ENABLED=false
-if check_antizapret_warp; then
-    ANTIZAPRET_WARP_ENABLED=true
-    echo -e "\n${RED}================================================${NC}"
-    echo -e "${RED}⚠️  ВНИМАНИЕ: ANTIZAPRET_WARP=y включён!${NC}"
-    echo -e "${RED}================================================${NC}"
-    echo -e "${YELLOW}При включённом ANTIZAPRET_WARP=y WARPER не может работать,${NC}"
-    echo -e "${YELLOW}так как встроенный WARP AntiZapret конфликтует с WARPER.${NC}"
-    echo -e ""
-    echo -e "${CYAN}Установка будет продолжена, но:${NC}"
-    echo -e " - Службы sing-box и warper-autopatch НЕ будут запущены"
-    echo -e " - Патч kresd.conf НЕ будет применён"
-    echo -e ""
-    echo -e "${YELLOW}Чтобы использовать WARPER, отключите ANTIZAPRET_WARP в /root/antizapret/setup${NC}"
-    echo -e "${YELLOW}и выполните: /root/antizapret/down.sh && /root/antizapret/up.sh${NC}"
-    echo -e "${RED}================================================${NC}"
-    echo ""
-    read -r -p "Продолжить установку? (y/N): " continue_install < /dev/tty
-    if [[ ! "$continue_install" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Установка отменена.${NC}"
-        exit 0
-    fi
-fi
-
 WARPER_DIR="/root/warper"
 DOWNLOAD_DIR="$WARPER_DIR/download"
 WGCF_DIR="$WARPER_DIR/wgcf"
@@ -369,7 +333,7 @@ while true; do
         break
     elif [[ "$prompt_subnet" =~ ^[Nn]$ ]]; then
         while true; do
-            read -r -p "Введите новую подсеть (например 10.10.10.0/24): " custom_subnet < /dev/tty
+            read -r -p "Введите новую подсеть (например 10.10.0.0/16): " custom_subnet < /dev/tty
             if validate_subnet "$custom_subnet"; then
                 if subnet_conflicts "$custom_subnet"; then
                     echo -e "${YELLOW}Предупреждение: подсеть $custom_subnet уже может использоваться локально или Docker.${NC}"
@@ -455,6 +419,22 @@ echo -e "${GREEN}✔ Выбран MTU $CHOSEN_MTU.${NC}"
 
 # ===== Выбор режима работы =====
 
+# Разборщик ссылок и .ovpn нужен режимам Slave (ссылка), VLESS, Hysteria2, OpenVPN
+mkdir -p "$WARPER_DIR/lib"
+download_file "$REPO_URL/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" \
+    "разборщик ссылок" || exit 1
+chmod 755 "$WARPER_DIR/lib/outbound-parse.py"
+
+# Разбирает ссылку или .ovpn; предупреждения печатает, JSON — в stdout
+parse_outbound() {
+    local out
+    out=$(python3 "$WARPER_DIR/lib/outbound-parse.py" "$@") || return 1
+    jq -r '.warnings[]?' <<< "$out" | while IFS= read -r w; do
+        [ -n "$w" ] && echo -e "${YELLOW}Предупреждение: $w${NC}" >&2
+    done
+    printf '%s\n' "$out"
+}
+
 MODE_CONFIGURED=false
 while [ "$MODE_CONFIGURED" = false ]; do
 
@@ -479,15 +459,15 @@ echo -e ""
 echo -e " ${GREEN}1.${NC} WARP  — трафик доменов через Cloudflare WARP"
 echo -e "    ${CYAN}(стандартный режим, требуются WARP-ключи)${NC}"
 echo -e ""
-echo -e " ${GREEN}2.${NC} Slave — трафик через внешний донор-сервер (Shadowsocks)"
-echo -e "    ${CYAN}(нужен второй сервер с warperslave)${NC}"
+echo -e " ${GREEN}2.${NC} Slave — трафик через свой донор-сервер (warperslave)"
+echo -e "    ${CYAN}(ссылка ss:// / vless:// / hy2:// из команды warperslave link)${NC}"
 echo -e ""
 echo -e " ${GREEN}3.${NC} WG    — трафик через WireGuard-соединение"
 echo -e "    ${CYAN}(нужен .conf файл от WireGuard-сервера, в папке /root/)${NC}"
 echo -e ""
 echo -e " ${GREEN}4.${NC} VLESS — VLESS / VLESS+Reality по ссылке vless://"
 echo -e " ${GREEN}5.${NC} Hysteria2 — по ссылке hy2://"
-echo -e "    ${CYAN}(ссылку своего донора выдаёт команда warperslave link)${NC}"
+echo -e "    ${CYAN}(сторонний сервер; для своего донора выберите 2)${NC}"
 echo -e ""
 echo -e " ${GREEN}6.${NC} OpenVPN — по файлу .ovpn"
 
@@ -516,37 +496,54 @@ while true; do
     fi
 done
 
+# Донор отдаёт ссылку командой warperslave link. VLESS и Hysteria2 дальше
+# настраиваются как режимы 4/5, Shadowsocks — как Slave.
+proxy_link=""
+slave_input=""
 if [ "$INSTALL_MODE" = "slave" ]; then
-    echo -e "\n${CYAN}Настройка подключения к донор-серверу${NC}"
-    echo -e "${YELLOW}На донор-сервере должен быть установлен warperslave.${NC}"
+    echo -e "\n${CYAN}Подключение к донор-серверу${NC}"
+    echo -e "На доноре выполните ${GREEN}warperslave link${NC} и вставьте ссылку."
+    echo -e "${CYAN}Для старого донора без ссылки введите его IP или домен.${NC}"
+    read -r -p "Ссылка или адрес донора (Enter — назад): " slave_input < /dev/tty
+    # Можно вставить и всю строку «warper mode … '<ссылка>'»
+    url_re="((ss|vless|hy2|hysteria2)://[^\"' ]+)"
+    if [[ "$slave_input" =~ $url_re ]]; then
+        slave_input="${BASH_REMATCH[1]}"
+    else
+        slave_input="${slave_input//[$'\t\r\n ']/}"
+    fi
+    case "$slave_input" in
+        "")                    continue ;;
+        vless://*)             INSTALL_MODE="vless"; proxy_link="$slave_input" ;;
+        hy2://*|hysteria2://*) INSTALL_MODE="hy2";   proxy_link="$slave_input" ;;
+    esac
+fi
 
-    while true; do
-        printf "IP или домен slave-сервера: "
-        IFS= read -r SLAVE_SERVER_INSTALL < /dev/tty
-        SLAVE_SERVER_INSTALL=$(echo "$SLAVE_SERVER_INSTALL" | tr -d '\r\n' | xargs)
-        if [ -z "$SLAVE_SERVER_INSTALL" ]; then
-            echo -e "${RED}Адрес не может быть пустым!${NC}"
+if [ "$INSTALL_MODE" = "slave" ]; then
+    if [[ "$slave_input" == ss://* ]]; then
+        if ! parsed=$(parse_outbound ss "$slave_input"); then
+            echo -e "${RED}Не удалось разобрать ссылку, попробуйте ещё раз.${NC}"
             continue
         fi
-        if [[ "$SLAVE_SERVER_INSTALL" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
-            break
+        SLAVE_SERVER_INSTALL=$(jq -r '.server' <<< "$parsed")
+        SLAVE_PORT_INSTALL=$(jq -r '.port' <<< "$parsed")
+        SLAVE_PASSWORD_INSTALL=$(jq -r '.password' <<< "$parsed")
+    else
+        if [[ ! "$slave_input" =~ ^[0-9a-zA-Z._:-]+$ ]]; then
+            echo -e "${RED}Ожидается ссылка ss:// / vless:// / hy2:// или IP/домен донора.${NC}"
+            continue
         fi
-        echo -e "${RED}Некорректный адрес!${NC}"
-    done
-
-    read -r -p "Порт [по умолчанию 8444]: " SLAVE_PORT_INSTALL < /dev/tty
-    [ -z "$SLAVE_PORT_INSTALL" ] && SLAVE_PORT_INSTALL="8444"
-
-    while true; do
-        read -r -p "Ключ Shadowsocks: " SLAVE_PASSWORD_INSTALL < /dev/tty
-        if [ -z "$SLAVE_PASSWORD_INSTALL" ]; then
+        SLAVE_SERVER_INSTALL="$slave_input"
+        read -r -p "Порт [по умолчанию 8444]: " SLAVE_PORT_INSTALL < /dev/tty
+        [ -z "$SLAVE_PORT_INSTALL" ] && SLAVE_PORT_INSTALL="8444"
+        while true; do
+            read -r -p "Ключ Shadowsocks (на доноре: warperslave showkey): " SLAVE_PASSWORD_INSTALL < /dev/tty
+            [ -n "$SLAVE_PASSWORD_INSTALL" ] && break
             echo -e "${RED}Ключ не может быть пустым!${NC}"
-            continue
-        fi
-        break
-    done
+        done
+    fi
 
-    echo -e " - ${GREEN}Режим: Slave ($SLAVE_SERVER_INSTALL:$SLAVE_PORT_INSTALL)${NC}"
+    echo -e " - ${GREEN}Режим: Slave, Shadowsocks ($SLAVE_SERVER_INSTALL:$SLAVE_PORT_INSTALL)${NC}"
     MODE_CONFIGURED=true
 
 elif [ "$INSTALL_MODE" = "wg" ]; then
@@ -761,13 +758,31 @@ elif [ "$INSTALL_MODE" = "wg" ]; then
     MODE_CONFIGURED=true
 
 elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
-    mkdir -p "$WARPER_DIR/lib"
-    download_file "$REPO_URL/lib/outbound-parse.py" "$WARPER_DIR/lib/outbound-parse.py" \
-        "разборщик ссылок" || exit 1
-
     parse_args=()
+    ovpn_user=""
+    ovpn_pass=""
     if [ "$INSTALL_MODE" = "openvpn" ]; then
-        read -r -p "Путь к .ovpn: " ovpn_path < /dev/tty
+        ovpn_files=()
+        while IFS= read -r f; do
+            grep -qiE '^[[:space:]]*remote[[:space:]]' "$f" 2>/dev/null && ovpn_files+=("$f")
+        done < <(find /root /root/warper -maxdepth 1 -type f -name '*.ovpn' 2>/dev/null | sort)
+        if [ ${#ovpn_files[@]} -gt 0 ]; then
+            echo -e "\n${CYAN}Найденные .ovpn:${NC}"
+            for i in "${!ovpn_files[@]}"; do
+                echo -e " ${GREEN}$((i + 1)).${NC} ${ovpn_files[$i]}"
+            done
+        else
+            echo -e "${YELLOW}Файлы .ovpn в /root и /root/warper не найдены.${NC}"
+        fi
+        read -r -p "Номер или путь к .ovpn (Enter — назад): " ovpn_path < /dev/tty
+        [ -z "$ovpn_path" ] && continue
+        if [[ "$ovpn_path" =~ ^[0-9]+$ ]] && (( ovpn_path >= 1 && ovpn_path <= ${#ovpn_files[@]} )); then
+            ovpn_path="${ovpn_files[$((ovpn_path - 1))]}"
+        fi
+        if [ ! -f "$ovpn_path" ]; then
+            echo -e "${RED}Файл не найден: $ovpn_path${NC}"
+            continue
+        fi
         parse_args=(ovpn "$ovpn_path")
         if grep -qiE '^[[:space:]]*auth-user-pass' "$ovpn_path" 2>/dev/null; then
             echo -e "${YELLOW}Конфиг требует логин и пароль (auth-user-pass).${NC}"
@@ -776,14 +791,15 @@ elif [[ "$INSTALL_MODE" =~ ^(vless|hy2|openvpn)$ ]]; then
             parse_args+=(--user "$ovpn_user" --pass "$ovpn_pass")
         fi
     else
-        read -r -p "Ссылка: " proxy_link < /dev/tty
+        [ -z "$proxy_link" ] && read -r -p "Ссылка (Enter — назад): " proxy_link < /dev/tty
+        [ -z "$proxy_link" ] && continue
         parse_args=("$([ "$INSTALL_MODE" = "vless" ] && echo vless || echo hy2)" "$proxy_link")
     fi
 
-    if parsed=$(python3 "$WARPER_DIR/lib/outbound-parse.py" "${parse_args[@]}"); then
+    if parsed=$(parse_outbound "${parse_args[@]}"); then
         printf '%s\n' "$parsed" > "$WARPER_DIR/outbound.json"
         chmod 600 "$WARPER_DIR/outbound.json"
-        if [ -n "${ovpn_user:-}" ]; then
+        if [ -n "$ovpn_user" ]; then
             jq -n --arg f "$(realpath -m "$ovpn_path")" --arg u "$ovpn_user" --arg p "$ovpn_pass" \
                 '{($f): {username: $u, password: $p}}' > "$WARPER_DIR/ovpn-auth.json"
             chmod 600 "$WARPER_DIR/ovpn-auth.json"
@@ -814,6 +830,12 @@ if command -v sing-box >/dev/null 2>&1; then
 else
     echo -e " - ${CYAN}Скачивание и установка пакета sing-box $SB_VERSION...${NC}"
     curl -fsSL https://sing-box.app/install.sh | bash -s -- --version "$SB_VERSION" >/dev/null 2>&1
+fi
+CURRENT_SB=$(sing-box version 2>/dev/null | head -n 1 | awk '{print $3}')
+if [ "$CURRENT_SB" != "$SB_VERSION" ]; then
+    echo -e "${RED}Не удалось установить sing-box $SB_VERSION (сейчас: ${CURRENT_SB:-не установлен}).${NC}"
+    echo -e "${YELLOW}Проверьте доступ к sing-box.app и github.com и запустите установку снова.${NC}"
+    exit 1
 fi
 
 echo -e "\n${YELLOW}[2/8] Получение ключей Cloudflare WARP...${NC}"
@@ -1123,26 +1145,21 @@ download_file "$REPO_URL/templates/warper-resolve.service" "/etc/systemd/system/
 download_file "$REPO_URL/templates/warper-resolve.timer" "/etc/systemd/system/warper-resolve.timer" "таймер warper-resolve.timer" || exit 1
 systemctl daemon-reload
 
-if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
-    echo -e " - ${YELLOW}ANTIZAPRET_WARP=y — службы НЕ будут запущены.${NC}"
-else
-    echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
-    systemctl enable sing-box > /dev/null 2>&1
-    systemctl restart sing-box
-    if ! ensure_singbox_running; then
-        exit 1
-    fi
-
-    systemctl enable warper-autopatch > /dev/null 2>&1
-
-    # Таймер периодических snapshot'ов трафика
-    systemctl enable warper-traffic-snapshot.timer > /dev/null 2>&1
-    systemctl start warper-traffic-snapshot.timer > /dev/null 2>&1 || true
-    systemctl enable warper-resync.timer > /dev/null 2>&1
-    systemctl start warper-resync.timer > /dev/null 2>&1 || true
-
-    sleep 2
+echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
+systemctl enable sing-box > /dev/null 2>&1
+systemctl restart sing-box
+sleep 2
+if ! ensure_singbox_running; then
+    exit 1
 fi
+
+systemctl enable warper-autopatch > /dev/null 2>&1
+
+# Таймер периодических snapshot'ов трафика
+systemctl enable warper-traffic-snapshot.timer > /dev/null 2>&1
+systemctl start warper-traffic-snapshot.timer > /dev/null 2>&1 || true
+systemctl enable warper-resync.timer > /dev/null 2>&1
+systemctl start warper-resync.timer > /dev/null 2>&1 || true
 
 echo -e "\n${YELLOW}[5/8] Интеграция с маршрутами AntiZapret...${NC}"
 AZ_INC="/root/antizapret/config/include-ips.txt"
@@ -1275,20 +1292,15 @@ ln -sf "$WARPER_DIR/warper.sh" /usr/local/bin/warper
 
 echo -e "\n${YELLOW}[8/8] Применение правил DNS и Firewall...${NC}"
 
-if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
-    echo -e " - ${YELLOW}ANTIZAPRET_WARP=y — патч kresd.conf НЕ будет применён.${NC}"
-    echo -e " - ${YELLOW}Правила iptables НЕ будут применены.${NC}"
-else
-    echo -e " - ${CYAN}Патчинг конфигурации DNS-сервера (kresd)...${NC}"
-    if ! /usr/local/bin/warper patch >/dev/null 2>&1; then
-        echo -e " - ${RED}Ошибка применения патча WARPER к kresd.${NC}"
-        exit 1
-    fi
-
-    echo -e " - ${CYAN}Применение разрешающих правил iptables для туннеля...${NC}"
-    ensure_iptables_rule FORWARD -o singbox-tun
-    ensure_iptables_rule FORWARD -i singbox-tun
+echo -e " - ${CYAN}Патчинг конфигурации DNS-сервера (kresd)...${NC}"
+if ! /usr/local/bin/warper patch --force >/dev/null 2>&1; then
+    echo -e " - ${RED}Ошибка применения патча WARPER к kresd.${NC}"
+    exit 1
 fi
+
+echo -e " - ${CYAN}Применение разрешающих правил iptables для туннеля...${NC}"
+ensure_iptables_rule FORWARD -o singbox-tun
+ensure_iptables_rule FORWARD -i singbox-tun
 
 echo -e "\n${GREEN}================================================${NC}"
 echo -e " 🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!"
@@ -1298,17 +1310,7 @@ echo -e "${YELLOW}После установки клиентам нужно пе
 echo -e "${YELLOW}Если вы используете AWG/WG — обновите конфиг с учётом новой fake-подсети.${NC}"
 echo -e "${YELLOW}Аналогично для роутеров, где маршруты прописываются вручную.${NC}"
 
-if [ "$ANTIZAPRET_WARP_ENABLED" = true ]; then
-    echo -e "${RED}⚠️  WARPER установлен, но НЕ АКТИВЕН из-за ANTIZAPRET_WARP=y${NC}"
-    echo -e "${YELLOW}Для активации:${NC}"
-    echo -e "1. Установите ANTIZAPRET_WARP=n в /root/antizapret/setup"
-    echo -e "2. Выполните: /root/antizapret/down.sh"
-    echo -e "3. Выполните: /root/antizapret/up.sh"
-    echo -e "4. Выполните: warper"
-    echo -e "   и выберите пункт 8 для включения WARPER"
-else
-    echo -e "Для управления доменами введите команду: ${CYAN}warper${NC}"
-fi
+echo -e "Для управления доменами введите команду: ${CYAN}warper${NC}"
 
 echo -e "Для диагностики используйте: ${CYAN}warper doctor${NC}"
 echo -e "Для краткого статуса используйте: ${CYAN}warper status${NC}"
@@ -1347,7 +1349,7 @@ if [ "$INSTALL_WEB" = "y" ]; then
     fi
     if curl -sfSL "$REPO_URL/web/install-web.sh?t=$(date +%s)" -o /tmp/warper-install-web.sh; then
         chmod +x /tmp/warper-install-web.sh
-        bash /tmp/warper-install-web.sh
+        WARPER_WEB_BRANCH="$(basename "$REPO_URL")" bash /tmp/warper-install-web.sh
         rm -f /tmp/warper-install-web.sh
     else
         echo -e "${RED}Не удалось скачать установщик веб-панели.${NC}"
