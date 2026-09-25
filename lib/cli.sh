@@ -1168,6 +1168,28 @@ PYEOF
 # Обновляет: Python-код (app.py, auth.py, warper_api.py),
 # шаблоны (templates/), статику (static/).
 # При необходимости перезапускает сервис.
+# Скачивает файлы из web/files.txt в КАТАЛОГ по raw-ссылкам — тем же путём,
+# что и остальное обновление. git clone с github.com проходит не везде.
+#   _fetch_web_files RAW_BASE КАТАЛОГ
+_fetch_web_files() {
+    local base="$1" dest="$2" path
+    mkdir -p "$dest"
+    if ! curl -fsSL --retry 2 --connect-timeout 15 "$base/web/files.txt?t=$(date +%s)" \
+        -o "$dest/files.txt"; then
+        echo -e "${RED}Не удалось скачать список файлов панели: $base/web/files.txt${NC}" >&2
+        return 1
+    fi
+    while IFS= read -r path; do
+        [ -z "$path" ] || [[ "$path" == \#* ]] && continue
+        mkdir -p "$dest/$(dirname "$path")"
+        if ! curl -fsSL --retry 2 --connect-timeout 15 "$base/$path?t=$(date +%s)" \
+            -o "$dest/$path"; then
+            echo -e "${RED}Не удалось скачать $path${NC}" >&2
+            return 1
+        fi
+    done < "$dest/files.txt"
+}
+
 cli_web_update() {
     local web_dir="/root/warper/web"
 
@@ -1182,15 +1204,9 @@ cli_web_update() {
     tmp_dir=$(mktemp -d /tmp/warper-web-update.XXXXXX)
     cd "$tmp_dir" || return 1
 
-    # Скачиваем актуальную ветку
     echo -e "${CYAN}Скачивание с GitHub (ветка $(basename "$REPO_URL"))...${NC}"
-    local repo_branch
-    repo_branch=$(basename "$REPO_URL")
-
-    if ! git clone --depth 1 -b "$repo_branch" \
-        "https://github.com/Liafanx/AZ-WARP.git" repo 2>/dev/null; then
-        echo -e "${RED}Не удалось скачать репозиторий ветки $repo_branch${NC}" >&2
-        rm -rf "$tmp_dir"
+    if ! _fetch_web_files "$REPO_URL" "$tmp_dir/repo"; then
+        cd / && rm -rf "$tmp_dir"
         return 1
     fi
 

@@ -151,6 +151,9 @@ master пиннит его вместо проверки CA.
 | templates/config-proxy.json.template | WARPER в режимах VLESS / Hysteria2 / OpenVPN |
 | templates/config-slave-direct/warp.json.template | Не используются; нужны обновлятору warperslave 1.0.x |
 
+Файлы веб-панели установщик и `warper webupdate` скачивают по списку
+`web/files.txt` — новый файл в `web/` или `py/warper_api/` нужно дописать туда.
+
 Шаблоны WARPER должны оставаться валидными для sing-box 1.13: их собирает
 и обновлятор 1.4.x. Поля новых версий (`dns_mode`) добавляются при сборке.
 
