@@ -106,7 +106,7 @@ from warper_api import WarperAPI
 w = WarperAPI()
 
 # Версия и статус
-print(w.version)          # "1.5.0"
+print(w.version)          # "1.5.1"
 print(w.is_active())      # True
 
 # Полный статус (JSON)
@@ -408,7 +408,7 @@ Python API использует CLI `warper` как backend. Это означа
 
 ```python
 import warper_api
-print(warper_api.__version__)  # "1.5.0"
+print(warper_api.__version__)  # "1.5.1"
 ```
 
 
