@@ -49,9 +49,9 @@ echo ""
 _port_in_use() {
     local port="$1"
     if command -v ss >/dev/null 2>&1; then
-        ss -tlnH "sport = :$port" 2>/dev/null | grep -q .
+        grep -q . <<< "$(ss -tlnH "sport = :$port" 2>/dev/null)"
     elif command -v netstat >/dev/null 2>&1; then
-        netstat -tlnp 2>/dev/null | grep -qE ":${port}\s"
+        grep -qE ":${port}\s" <<< "$(netstat -tlnp 2>/dev/null)"
     else
         return 1
     fi
@@ -97,7 +97,7 @@ _acme_webroot() {
     # Чужой nginx: путь к конфигу есть только у мастера, порт слушает воркер
     local cmdline
     cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-    if ! echo "$cmdline" | grep -q -- '-c '; then
+    if ! grep -q -- '-c ' <<< "$cmdline"; then
         local ppid
         ppid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)
         [ -n "$ppid" ] && cmdline=$(tr '\0' ' ' < "/proc/$ppid/cmdline" 2>/dev/null)
@@ -345,7 +345,7 @@ _fetch_web_files() {
 }
 
 TMP_DIR=$(mktemp -d)
-cd "$TMP_DIR"
+cd "$TMP_DIR" || exit 1
 _fetch_web_files "$REPO_RAW" "$TMP_DIR/repo" || exit 1
 
 if [ ! -d "repo/web" ]; then
@@ -372,7 +372,7 @@ rm -rf "$TMP_DIR"
 # ===== Python venv =====
 
 echo -e "${CYAN}3. Создание venv и установка пакетов...${NC}"
-cd "$WEB_DIR"
+cd "$WEB_DIR" || exit 1
 python3 -m venv venv
 source venv/bin/activate
 pip install --quiet --upgrade pip
@@ -462,8 +462,8 @@ if [ -L "$_default_link" ] || [ -f "$_default_link" ]; then
     # занимает ~91 строку, почти целиком из комментариев. По этой же причине
     # комментарии отбрасываем: в стоковом файле fastcgi_pass закомментирован.
     _default_active=$(sed 's/#.*//' "$_default_target" 2>/dev/null)
-    if ! echo "$_default_active" | grep -qE 'proxy_pass|fastcgi_pass|uwsgi_pass'; then
-        if echo "$_default_active" | grep -qE 'index\.nginx-debian\.html|/var/www/html'; then
+    if ! grep -qE 'proxy_pass|fastcgi_pass|uwsgi_pass' <<< "$_default_active"; then
+        if grep -qE 'index\.nginx-debian\.html|/var/www/html' <<< "$_default_active"; then
             _is_placeholder="y"
         fi
     fi
@@ -744,7 +744,7 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ] && [ "$WEB_MODE" = "nginx" ]; t
             echo -e "${YELLOW}Возможно nginx не смог занять порт 80. Проверяем дальше...${NC}"
         elif _pid_in_nginx_unit "$(_port_pid 80)" && [ "$_az_openvpn_backup" != "y" ]; then
             echo -e "${GREEN}✓ Порт 80 слушает наш nginx — отлично${NC}"
-        elif echo "$_port80_proc" | grep -qiE "openvpn" || [ "$_az_openvpn_backup" = "y" ]; then
+        elif grep -qiE "openvpn" <<< "$_port80_proc" || [ "$_az_openvpn_backup" = "y" ]; then
             echo -e "${YELLOW}⚠ Порт 80 связан с OpenVPN (backup-подключения AntiZapret)${NC}"
             if [ "$_az_openvpn_backup" = "y" ]; then
                 echo -e "${YELLOW}  В /root/antizapret/setup: OPENVPN_BACKUP_TCP=y${NC}"
@@ -891,7 +891,7 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ] && [ "$WEB_MODE" = "nginx" ]; t
                 # Проверяем характерные ошибки в логе certbot
                 _certbot_log="/var/log/letsencrypt/letsencrypt.log"
                 if [ -f "$_certbot_log" ]; then
-                    if tail -50 "$_certbot_log" | grep -qE "SERVFAIL.*CAA|CAA.*SERVFAIL"; then
+                    if grep -qE "SERVFAIL.*CAA|CAA.*SERVFAIL" <<< "$(tail -50 "$_certbot_log")"; then
                         echo -e ""
                         echo -e "${YELLOW}═══ Похоже на временную проблему DNS-провайдера ═══${NC}"
                         echo -e "${YELLOW}Let's Encrypt не смог проверить CAA-запись для домена.${NC}"
@@ -904,9 +904,9 @@ if [ "$ENABLE_HTTPS" = "y" ] && [ -n "$DOMAIN" ] && [ "$WEB_MODE" = "nginx" ]; t
                         echo -e "     ${CYAN}dig CAA $(echo $DOMAIN | rev | cut -d. -f1-2 | rev) @1.1.1.1${NC}"
                         echo -e "  3. Если проблема не уходит — рассмотреть смену DNS-провайдера"
                         echo -e ""
-                    elif tail -50 "$_certbot_log" | grep -qE "Connection refused|Connection reset"; then
+                    elif grep -qE "Connection refused|Connection reset" <<< "$(tail -50 "$_certbot_log")"; then
                         echo -e "${YELLOW}Похоже на сетевую проблему — порт 80 может быть заблокирован${NC}"
-                    elif tail -50 "$_certbot_log" | grep -qE "rate limit|too many"; then
+                    elif grep -qE "rate limit|too many" <<< "$(tail -50 "$_certbot_log")"; then
                         echo -e "${YELLOW}Превышен лимит запросов Let's Encrypt для этого домена${NC}"
                         echo -e "${YELLOW}Попробуйте через час${NC}"
                     fi

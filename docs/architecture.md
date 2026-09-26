@@ -6,7 +6,8 @@
 AntiZapret-клиенты → kresd@1 → WARPER-домены → sing-box → WARP / WG / Slave / VLESS / Hysteria2 / OpenVPN
                              → остальное → обычная маршрутизация
 
-FullVPN-клиенты → kresd@2 → всё → встроенный WARP автора (при VPN_WARP=y)
+FullVPN-клиенты → kresd@2 → всё → встроенный WARP AntiZapret (при VPN_WARP=2–4)
+               → WARPER-домены → sing-box (при warper fullvpn on)
 ```
 
 ## Компоненты

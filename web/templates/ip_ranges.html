@@ -95,7 +95,7 @@
     <form hx-post="{{ url_for('htmx_ip_ranges_file_save') }}"
           hx-swap="none"
           class="p-5">
-        <textarea id="ip-ranges-textarea"
+        <textarea id="ip-ranges-textarea" wrap="off"
                   name="content"
                   rows="20"
                   spellcheck="false"

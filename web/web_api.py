@@ -22,8 +22,7 @@ if _PY_PATH not in sys.path:
     sys.path.insert(0, _PY_PATH)
 
 from warper_api import WarperAPI
-from warper_api._runner import run_warper, WARPER_BIN
-from warper_api._result import _strip_ansi
+from warper_api._runner import run_warper
 
 _api = WarperAPI()
 
@@ -807,9 +806,17 @@ def rotate_session_secret() -> tuple[bool, str]:
 
 
 def get_recent_logins(limit: int = 20) -> list[dict]:
+    """Успешные входы за последние 24 часа, по одной строке на IP."""
+    from datetime import datetime as _dt
     data = get_auth_log(limit=500, level_filter="success")
+    cutoff = _time.time() - 86400
     seen: dict[str, dict] = {}
     for e in data.get("events", []):
+        try:
+            if _dt.strptime(e.get("timestamp", ""), "%Y-%m-%d %H:%M:%S").timestamp() < cutoff:
+                continue
+        except ValueError:
+            continue
         ip = e.get("ip", "?")
         if ip not in seen:
             seen[ip] = {"ip": ip, "user": e.get("user", "?"),

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import web_api as api
 from auth import (
     AdminUser, init_auth, update_credentials, verify_credentials,
-    get_or_create_secret_key, is_ip_blocked,
+    get_or_create_secret_key, load_security_settings,
 )
 
 
@@ -364,7 +364,7 @@ def settings_page():
 @app.route("/web-settings")
 @login_required
 def web_settings_page():
-    return render_template("web_settings.html")
+    return render_template("web_settings.html", security=load_security_settings())
 
 @app.route("/traffic")
 @login_required
@@ -730,7 +730,12 @@ def htmx_mode_warp():
 @app.route("/htmx/settings/mode/slave", methods=["POST"])
 @login_required
 def htmx_mode_slave():
-    server = request.form.get("server", "")
+    server = request.form.get("server", "").strip()
+    # Ссылка донора на VLESS/Hysteria2 — это режимы vless/hy2
+    for prefix, mode in (("vless://", "vless"), ("hy2://", "hy2"), ("hysteria2://", "hy2")):
+        if server.startswith(prefix):
+            ok, msg = api.switch_to_proxy(mode, server)
+            return _result_partial(ok, msg, "refreshAll")
     port = request.form.get("port", "")
     password = request.form.get("password", "")
     ok, msg = api.switch_to_slave(server, port, password)
@@ -1131,7 +1136,6 @@ def htmx_web_change_port():
     ok, msg = api.change_external_port(new_port)
     if ok:
         # Редирект на новый порт через 2 секунды
-        import json as _j
         host = request.host.split(":")[0]
         scheme = "https" if request.is_secure else "http"
         new_url = f"{scheme}://{host}:{new_port}/web-settings"

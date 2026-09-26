@@ -43,7 +43,7 @@ rollback_warper_update() {
 
     # Откатываем модули
     if [ -d "$backupdir/lib" ]; then
-        rm -rf "$WARPER_DIR/lib"
+        rm -rf "${WARPER_DIR:?}/lib"
         cp -a "$backupdir/lib" "$WARPER_DIR/lib"
     fi
     if [ -d "$backupdir/py" ]; then

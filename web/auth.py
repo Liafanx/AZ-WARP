@@ -12,7 +12,6 @@ auth.py
 - Аудит-лог в web/data/auth.log с автоматической ротацией (макс 1MB, 3 файла)
 """
 
-import hmac
 import json
 import logging
 import logging.handlers

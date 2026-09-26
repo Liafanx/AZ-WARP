@@ -190,7 +190,7 @@ for _lib in \
 do
     if [ ! -f "$_lib" ]; then
         # Пытаемся скачать недостающий модуль
-        _rel_path="${_lib#$WARPER_DIR/}"  # lib/cli.sh или menus/main.sh
+        _rel_path="${_lib#"$WARPER_DIR"/}"  # lib/cli.sh или menus/main.sh
         echo -e "${YELLOW}Отсутствует модуль: $_lib — пытаюсь скачать...${NC}" >&2
         mkdir -p "$(dirname "$_lib")"
         if ! curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 15 \
@@ -290,7 +290,7 @@ case "${1:-}" in
             sync_domains
             echo -e "${GREEN}Домены синхронизированы.${NC}"
         fi
-        exit $?
+        exit 0
         ;;
     add)      [ -n "${2:-}" ] || { echo "Использование: warper add DOMAIN"; exit 1; }
               cli_add_domain "$2"; exit $? ;;
@@ -399,7 +399,7 @@ case "${1:-}" in
                 if is_warper_active; then patch_kresd >/dev/null 2>&1 || true
                 else sync_domains; fi
                 echo "Domains updated"
-                exit $?
+                exit 0
                 ;;
             *) echo "Использование: warper domains list|save|edit" >&2; exit 1 ;;
         esac

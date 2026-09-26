@@ -216,7 +216,8 @@
             <span>Активные блокировки IP</span>
         </h2>
         <p class="text-xs text-emerald-500/60 mb-4">
-            После 10 неудачных попыток входа за 10 минут IP блокируется на 15 минут.
+            После {{ security.max_attempts }} неудачных попыток входа за {{ security.attempt_window_minutes }} мин.
+            IP блокируется на {{ security.block_duration_minutes }} мин.
         </p>
 
         <div id="web-blocks-list"

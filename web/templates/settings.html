@@ -27,7 +27,7 @@
                     class="text-left p-4 bg-surface-950 hover:bg-emerald-900/20 border border-emerald-900/40 rounded-lg transition
                            {% if status.outbound_mode == 'slave' %}ring-2 ring-brand-500/50{% endif %}">
                 <div class="font-bold text-emerald-100 mb-1">Slave</div>
-                <div class="text-xs text-emerald-400/70">Через донор-сервер (Shadowsocks)</div>
+                <div class="text-xs text-emerald-400/70">Свой донор: ссылка из warperslave link</div>
             </button>
 
             <!-- WG -->
@@ -329,12 +329,12 @@
               hx-swap="none"
               hx-on::after-request="if(event.detail.successful){closeModal('modal-mode-slave');}"
               class="px-6 pt-6 space-y-2">
-            <label class="block text-sm text-emerald-300">Ссылка ss:// из <span class="font-mono">warperslave link</span></label>
+            <label class="block text-sm text-emerald-300">Ссылка из <span class="font-mono">warperslave link</span></label>
             <div class="flex gap-2">
-                <input type="text" name="server" required placeholder="ss://..." class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                <input type="text" name="server" required placeholder="ss:// vless:// hy2://" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                 <button type="submit" class="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить</button>
             </div>
-            <p class="text-xs text-emerald-500/60">Для связки по VLESS или Hysteria2 выберите соответствующий режим.</p>
+            <p class="text-xs text-emerald-500/60">Протокол определяется по ссылке: vless:// и hy2:// включат режимы VLESS и Hysteria2.</p>
         </form>
         <div class="px-6 pt-4 text-xs text-emerald-500/60">…или вручную:</div>
         <form hx-post="{{ url_for('htmx_mode_slave') }}"
@@ -547,10 +547,11 @@
                     </label>
                     {% endfor %}
                     <div class="grid grid-cols-2 gap-2">
-                        <input type="text" name="username" placeholder="Логин (пусто — сохранённый)" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                        <input type="text" name="username" placeholder="Логин" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                         <input type="password" name="password" placeholder="Пароль" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                     </div>
                     <button type="submit" class="w-full justify-center px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Применить выбранный</button>
+                    <p class="text-xs text-emerald-500/60">Пустой логин — будут использованы сохранённые для этого файла.</p>
                 </form>
                 {% else %}
                 <div class="text-sm text-emerald-500/70 p-3 bg-surface-950 rounded-lg border border-emerald-900/40">
@@ -572,7 +573,7 @@
                            class="w-full text-sm text-emerald-100 file:mr-3 file:py-2 file:px-4 file:rounded-lg
                                   file:border-0 file:bg-brand-700 file:text-white file:cursor-pointer hover:file:bg-brand-600">
                     <div class="grid grid-cols-2 gap-2">
-                        <input type="text" name="username" placeholder="Логин (если нужен)" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
+                        <input type="text" name="username" placeholder="Логин" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                         <input type="password" name="password" placeholder="Пароль" class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg text-emerald-100 text-sm font-mono focus:border-brand-500 focus:outline-none">
                     </div>
                     <button type="submit" class="w-full justify-center px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2"><span class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>Загрузить и применить</button>

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from ._runner import run_warper, run_warper_json
+from ._runner import run_warper
 from ._result import WarperResult
 
 

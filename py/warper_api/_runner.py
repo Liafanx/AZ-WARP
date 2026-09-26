@@ -8,9 +8,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Any
 
-from ._result import WarperResult, _make_result, _strip_ansi
+from ._result import WarperResult, _make_result
 
 WARPER_BIN = os.environ.get("WARPER_BIN", "/usr/local/bin/warper")
 
