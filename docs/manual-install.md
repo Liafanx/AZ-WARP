@@ -15,11 +15,13 @@ curl -fsSL https://sing-box.app/install.sh | bash -s -- --version 1.14.1
 
 ## Шаг 3. Получение ключей WARP
 
-Если есть `/etc/wireguard/warp.conf` (от VPN_WARP=y):
+Если включён встроенный WARP AntiZapret, ключи лежат в
+`/etc/wireguard/warp-vpn.conf` или `warp-antizapret.conf` (в старых версиях — `warp.conf`):
 
 ```bash
-WARP_PRIVATE_KEY=$(grep '^PrivateKey' /etc/wireguard/warp.conf | awk -F'= ' '{print $2}')
-WARP_ADDRESS=$(grep '^Address' /etc/wireguard/warp.conf | awk -F'= ' '{print $2}')
+WARP_CONF=$(ls /etc/wireguard/warp-vpn.conf /etc/wireguard/warp-antizapret.conf /etc/wireguard/warp.conf 2>/dev/null | head -1)
+WARP_PRIVATE_KEY=$(grep '^PrivateKey' "$WARP_CONF" | awk -F'= ' '{print $2}')
+WARP_ADDRESS=$(grep '^Address' "$WARP_CONF" | awk -F'= ' '{print $2}')
 ```
 
 Или сгенерировать новые:

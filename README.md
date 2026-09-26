@@ -167,9 +167,9 @@ WARPER умеет применять патч для `kresd@2` (FullVPN-клие
   `warper fullvpn on|off`.
 - Статус отображается в главном меню, `warper status` и `warper doctor`.
 
-### Совместимость ANTIZAPRET_WARP=y/n + VPN_WARP=y/n c IPv4-подсетями (CIDR)
+### Совместимость IPv4-подсетей (CIDR) со встроенным WARP AntiZapret
 
-Доступна работа в любом режиме, полная совместимость.
+Маршрутизация подсетей работает при любых значениях `ANTIZAPRET_WARP` и `VPN_WARP`.
 
 ---
 
@@ -683,7 +683,7 @@ WARPER — менеджер доменной маршрутизации. Ког�
 </details>
 
 <details>
-<summary><b>Можно ли использовать WARPER вместе с VPN_WARP=y?</b></summary>
+<summary><b>Можно ли использовать WARPER вместе со встроенным WARP AntiZapret (VPN_WARP)?</b></summary>
 
 Да, с любым значением `VPN_WARP`. По умолчанию WARPER патчит только
 `kresd@1` (AntiZapret-клиенты), а FullVPN-клиенты идут через встроенный WARP.
@@ -765,7 +765,7 @@ AntiZapret — это split-tunnel VPN. Клиент отправляет на �
 <details>
 <summary><b>Как включить маршрутизацию доменов для FullVPN?</b></summary>
 
-В меню `warper` выберите `Настройки → FullVPN WARP-резолвинг`. Опция работает только при `VPN_WARP=n`. При включении WARPER пропатчит `kresd@2` аналогично `kresd@1`, и домены из списка будут идти через WARP/Slave/WG. При `VPN_WARP=y` опция недоступна и будет автоматически выключена.
+В меню `warper` выберите `Настройки → FullVPN WARP-резолвинг` или выполните `warper fullvpn on`. WARPER пропатчит `kresd@2` аналогично `kresd@1`, и домены из списка пойдут через выбранный режим (WARP, Slave, WG, VLESS, Hysteria2, OpenVPN). Работает при любом значении `VPN_WARP`.
 </details>
 
 <details>

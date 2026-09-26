@@ -357,7 +357,7 @@ show_logs() {
 # Установленная версия sing-box (пусто, если бинарник не найден).
 get_singbox_version() {
     command -v sing-box >/dev/null 2>&1 || return 1
-    sing-box version 2>/dev/null | head -1 | awk '{print $3}'
+    sing-box version 2>/dev/null | awk 'NR == 1 {print $3}'
 }
 
 # CLI: warper singbox version|upgrade [VERSION]

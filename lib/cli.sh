@@ -838,7 +838,8 @@ IPEOF
 
     while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         raw_line="${raw_line%$'\r'}"
-        stripped=$(echo "$raw_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        stripped="${raw_line#"${raw_line%%[![:space:]]*}"}"
+        stripped="${stripped%"${stripped##*[![:space:]]}"}"
 
         # Пустая строка - сохраняем
         if [ -z "$stripped" ]; then
@@ -858,7 +859,7 @@ IPEOF
         if [ "$cidr" != "$stripped" ]; then
             note=" #${stripped#*#}"
         fi
-        cidr=$(echo "$cidr" | tr -d '[:space:]')
+        cidr="${cidr//[[:space:]]/}"
         if [[ "$cidr" != */* ]]; then
             cidr="${cidr}/32"
         fi

@@ -20,6 +20,5 @@ jobs:
 
       - name: Run ShellCheck
         run: |
-          shellcheck install.sh
-          shellcheck warper.sh
-          shellcheck uninstaller.sh
+          # SC2034/SC2120: переменные и функции общие для модулей, подключаемых через source
+          shellcheck -S warning -e SC2034,SC2120 *.sh lib/*.sh menus/*.sh web/*.sh

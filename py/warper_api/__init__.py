@@ -22,7 +22,6 @@ WARPER API — Python-интерфейс для управления WARPER (AZ-
 
 from __future__ import annotations
 
-from typing import Any
 
 from ._result import WarperResult
 from ._runner import read_version

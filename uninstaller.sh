@@ -166,7 +166,7 @@ if [ -d "$WEB_DIR" ] || [ -f "/etc/systemd/system/${WEB_SERVICE}.service" ]; the
     rm -f /etc/nginx/ssl/warper-web.key
 
     if systemctl is-active --quiet nginx 2>/dev/null; then
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+        if nginx -t >/dev/null 2>&1; then systemctl reload nginx 2>/dev/null || true; fi
     fi
 
     # Удаляем hooks автопродления сертификата если создавались
@@ -272,10 +272,10 @@ if [ -f "/root/warper/ip-ranges.applied" ]; then
     rm -f "/root/warper/ip-ranges.applied"
 fi
 for prefix in 10 172; do
-    while ip rule show 2>/dev/null | grep -q "from ${prefix}.29.0.0/16 lookup 100"; do
+    while grep -q "from ${prefix}.29.0.0/16 lookup 100" <<< "$(ip rule show 2>/dev/null)"; do
         ip rule del from "${prefix}.29.0.0/16" lookup 100 priority 500 2>/dev/null || break
     done
-    while ip rule show 2>/dev/null | grep -q "from ${prefix}.28.0.0/15 lookup 100"; do
+    while grep -q "from ${prefix}.28.0.0/15 lookup 100" <<< "$(ip rule show 2>/dev/null)"; do
         ip rule del from "${prefix}.28.0.0/15" lookup 100 priority 500 2>/dev/null || break
     done
 done

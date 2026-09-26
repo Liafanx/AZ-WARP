@@ -310,12 +310,16 @@ rm -f /root/warper/traffic.json
 
 **Симптом:** sing-box использует старые ключи, сервисы не работают.
 
-**Решение:** Перезагрузите сервер или выполните:
+**Решение:** если WARPER использует ключи AntiZapret (`WARP_KEY_SOURCE=system`),
+перезагрузите сервер или выполните:
 ```bash
 warper warpkeysync
 ```
 
-Команда автоматически проверит `/etc/wireguard/warp.conf` и если ключи изменились — пересоберёт конфиг и перезапустит sing-box.
+Команда сверит ключи с системным конфигом AntiZapret (`/etc/wireguard/warp-vpn.conf`,
+`warp-antizapret.conf` или `warp.conf`) и при расхождении пересоберёт конфиг и
+перезапустит sing-box. При собственных ключах (`local`) синхронизация не нужна;
+выбрать ключи AntiZapret: `warper mode warp system`.
 
 ---
 

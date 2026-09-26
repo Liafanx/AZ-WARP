@@ -152,15 +152,17 @@ subnet_conflicts() {
     while IFS= read -r line; do
         route_net=$(echo "$line" | awk '{print $1}')
         [ "$route_net" = "$subnet" ] || continue
-        echo "$line" | grep -q "dev singbox-tun" && continue
+        grep -q "dev singbox-tun" <<< "$line" && continue
         return 0
     done < <(ip route 2>/dev/null)
 
     if command -v docker >/dev/null 2>&1; then
-        local ids
-        ids=$(docker network ls -q 2>/dev/null || true)
-        if [ -n "$ids" ]; then
-            docker network inspect $ids 2>/dev/null | grep -qF "\"Subnet\": \"$subnet\"" && return 0
+        local -a ids
+        local nets
+        mapfile -t ids < <(docker network ls -q 2>/dev/null)
+        if [ ${#ids[@]} -gt 0 ]; then
+            nets=$(docker network inspect "${ids[@]}" 2>/dev/null || true)
+            grep -qF "\"Subnet\": \"$subnet\"" <<< "$nets" && return 0
         fi
     fi
 

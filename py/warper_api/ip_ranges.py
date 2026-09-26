@@ -224,7 +224,6 @@ def save_ip_ranges_text(text: str) -> WarperResult:
         'Сохранено 3 подсетей'
     """
     import subprocess
-    import re
 
     # Валидация только CIDR (комментарии и пустые пропускаем)
     invalid: list[str] = []

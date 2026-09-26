@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import json as _json
-import subprocess
 
 from ._runner import run_warper, run_warper_json
 from ._result import WarperResult, _strip_ansi
