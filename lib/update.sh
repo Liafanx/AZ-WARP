@@ -11,6 +11,19 @@ warper-traffic-snapshot.service warper-traffic-snapshot.timer \
 warper-resync.service warper-resync.timer \
 warper-resolve.service warper-resolve.timer"
 
+# Обновлятор прошлой версии ставит новые файлы своими средствами и может
+# пропустить то, о чём не знает: sing-box, новые модули, юниты. Проверяем
+# само состояние, а не метку — метку старый обновлятор тоже не пишет.
+update_incomplete() {
+    local ver
+    ver=$(get_singbox_version) || return 0
+    [ "$(printf '%s\n%s\n' "$SB_VERSION" "$ver" | sort -V | head -n1)" = "$SB_VERSION" ] || return 0
+    [ -f "$WARPER_DIR/lib/outbound-parse.py" ] || return 0
+    [ -f "$WARPER_DIR/py/warper_api/web.py" ] || return 0
+    [ -f /etc/systemd/system/warper-resync.timer ] || return 0
+    return 1
+}
+
 rollback_warper_update() {
     local backupdir="$1"
 
@@ -504,7 +517,6 @@ update_warper() {
 
     rm -rf "$tmpdir" "$backupdir"
 
-    cat "$WARPER_DIR/version" > "$UPDATE_MARKER" 2>/dev/null || true
     echo -e "${GREEN}Утилита и списки успешно обновлены!${NC}"
 
     # ===== Обновление веб-панели если она установлена =====

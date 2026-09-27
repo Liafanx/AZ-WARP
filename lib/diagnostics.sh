@@ -357,7 +357,7 @@ doctor() {
         fi
     }
 
-    if [ "$(cat "$UPDATE_MARKER" 2>/dev/null)" != "$LOCAL_VER" ]; then
+    if update_incomplete; then
         echo -e " ${RED}✘${NC} Обновление до $LOCAL_VER не завершено — выполните: warper update"
         failed=1
     fi

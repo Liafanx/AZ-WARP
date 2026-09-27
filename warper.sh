@@ -33,8 +33,6 @@ WG_MODE_FILE="$WARPER_DIR/wg_mode.conf"
 # slave_mode.conf, который save_slave_config перезаписывает целиком.
 OUTBOUND_JSON="$WARPER_DIR/outbound.json"
 OVPN_AUTH_JSON="$WARPER_DIR/ovpn-auth.json"
-# Версия, для которой обновление прошло целиком (пишет update_warper и install.sh)
-UPDATE_MARKER="$WARPER_DIR/.update-complete"
 PROXY_TEMPLATE="$WARPER_DIR/config-proxy.json.template"
 IP_RANGES_FILE="$WARPER_DIR/ip-ranges.txt"
 AZ_WARPER_INCLUDE_IPS="/root/antizapret/config/warper-include-ips.txt"
@@ -458,7 +456,7 @@ esac
 # Python и панели — после него старое меню делает exec warper, и новая
 # версия доделывает обновление своим обновлятором.
 if [ -z "${1:-}" ] && is_interactive && \
-   [ "$(cat "$UPDATE_MARKER" 2>/dev/null)" != "$LOCAL_VER" ]; then
+   update_incomplete; then
     echo -e "${CYAN}Завершение обновления до ${LOCAL_VER}...${NC}"
     update_warper
     echo -e "${YELLOW}Обновление не завершено. Повторить: warper update${NC}"
