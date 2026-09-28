@@ -517,6 +517,7 @@ update_warper() {
 
     rm -rf "$tmpdir" "$backupdir"
 
+    update_incomplete || cat "$WARPER_DIR/version" > "$WARPER_DIR/.update-complete" 2>/dev/null
     echo -e "${GREEN}Утилита и списки успешно обновлены!${NC}"
 
     # ===== Обновление веб-панели если она установлена =====
