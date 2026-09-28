@@ -1228,6 +1228,7 @@ echo -e " - ${CYAN}Скачивание исполняемых файлов ут
 download_file "$REPO_URL/warper.sh" "$WARPER_DIR/warper.sh" "утилита warper.sh" || exit 1
 download_file "$REPO_URL/uninstaller.sh" "$WARPER_DIR/uninstaller.sh" "деинсталлятор uninstaller.sh" || exit 1
 download_file "$REPO_URL/version" "$WARPER_DIR/version" "файл версии" || exit 1
+cat "$WARPER_DIR/version" > "$WARPER_DIR/.update-complete"
 download_file "$REPO_URL/templates/config-slave-master.json.template" "$WARPER_DIR/config-slave-master.json.template" "шаблон slave-master" || exit 1
 download_file "$REPO_URL/templates/config.json.template" "$SINGBOX_TEMPLATE" "шаблон config.json (WARP)" || exit 1
 download_file "$REPO_URL/templates/config-wg.json.template" "$WARPER_DIR/config-wg.json.template" "шаблон WG" || exit 1

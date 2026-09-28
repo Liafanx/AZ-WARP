@@ -261,6 +261,14 @@ load_config
 load_slave_config
 load_wg_config
 
+# Метку читают сторонние панели (AdminPanelAZ) как признак завершённого
+# обновления. Сам warper проверяет состояние, а метку поддерживает по нему —
+# так она появляется и после обновления кодом 1.5.0, который её не пишет.
+UPDATE_MARKER="$WARPER_DIR/.update-complete"
+if [ "$(cat "$UPDATE_MARKER" 2>/dev/null)" != "$LOCAL_VER" ] && ! update_incomplete; then
+    echo "$LOCAL_VER" > "$UPDATE_MARKER" 2>/dev/null || true
+fi
+
 # ===== CLI-обработка =====
 case "${1:-}" in
     patch)    patch_kresd "${2:-}" >/dev/null 2>&1; exit $? ;;
