@@ -1699,6 +1699,12 @@ cli_resync() {
     ensure_subnet_in_include_ips
 
     # Маршруты и ipset: up.sh пересоздаёт antizapret-forward с нуля
+    local table routes
+    for table in $AZ_WARP_TABLES; do
+        az_table_active "$table" || continue
+        routes=$(ip route show table "$table" 2>/dev/null || true)
+        grep -qF "$SUBNET" <<< "$routes" || fixed=1
+    done
     resync_ip_routes_if_needed
 
     if [ "$verbose" = "-v" ]; then

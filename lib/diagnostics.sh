@@ -370,16 +370,27 @@ doctor() {
 
     # При режиме "all" AntiZapret ловит весь трафик подсети правилом
     # без fwmark, поэтому fake-подсеть обязана быть в его таблице.
-    local az_routes vpn_routes
-    az_routes=$(ip route show table 13335 2>/dev/null || true)
-    vpn_routes=$(ip route show table 13336 2>/dev/null || true)
-    if [ "$az_mode" = "all" ] && ! grep -qF "$SUBNET" <<< "$az_routes"; then
-        echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table 13335 — домены уйдут в warp-antizapret"
-        failed=1
-    fi
-    if [ "$vpn_mode" = "all" ] && ! grep -qF "$SUBNET" <<< "$vpn_routes"; then
-        echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table 13336 — домены FullVPN уйдут в warp-vpn"
-        failed=1
+    # Пустая таблица (warp-* не поднят) ничего не перехватывает — трафик идёт
+    # мимо неё, и маршрут там не нужен.
+    local table iface mode label routes
+    for table in 13335 13336; do
+        if [ "$table" = 13335 ]; then
+            mode="$az_mode"; iface="warp-antizapret"; label="домены"
+        else
+            mode="$vpn_mode"; iface="warp-vpn"; label="домены FullVPN"
+        fi
+        [ "$mode" = "all" ] || continue
+        routes=$(ip route show table "$table" 2>/dev/null || true)
+        if ! grep -q "dev" <<< "$routes"; then
+            echo -e " ${YELLOW}!${NC} table $table пуста: $iface не поднят — встроенный WARP AntiZapret не работает, WARPER это не затрагивает"
+        elif ! grep -qF "$SUBNET" <<< "$routes"; then
+            echo -e " ${RED}✘${NC} Нет маршрута $SUBNET в table $table — $label уйдут в $iface. Исправить: warper resync"
+            failed=1
+        fi
+    done
+
+    if ! systemctl is-enabled --quiet warper-resync.timer 2>/dev/null; then
+        echo -e " ${YELLOW}!${NC} Таймер warper-resync выключен — после пересборки правил AntiZapret маршруты не восстановятся. Включить: systemctl enable --now warper-resync.timer"
     fi
 
     # Правила от up.sh
