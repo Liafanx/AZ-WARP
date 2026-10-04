@@ -1149,7 +1149,11 @@ systemctl daemon-reload
 
 echo -e " - ${CYAN}Добавление служб в автозагрузку и запуск...${NC}"
 systemctl enable sing-box > /dev/null 2>&1
-systemctl restart sing-box
+systemctl stop sing-box > /dev/null 2>&1
+# fake-IP кэш прошлой установки может быть от другой подсети
+rm -f /var/lib/sing-box/cache.db
+mkdir -p /var/lib/sing-box && echo "$SUBNET" > /var/lib/sing-box/warper-subnet
+systemctl start sing-box
 sleep 2
 if ! ensure_singbox_running; then
     exit 1

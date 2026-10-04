@@ -504,6 +504,10 @@ update_warper() {
     fi
 
     migrate_fakeip_pool
+    if fakeip_cache_stale && is_warper_active; then
+        reset_fakeip_cache
+        ensure_singbox_running >/dev/null 2>&1 || true
+    fi
 
     # Пересинхронизируем IP-маршруты уже новым экземпляром warper
     if is_warper_active && [ "$(count_ip_ranges)" -gt 0 ]; then

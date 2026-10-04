@@ -353,8 +353,10 @@ settings_menu() {
                             export DEBIAN_FRONTEND=noninteractive SYSTEMD_PAGER=""
                             bash /root/antizapret/doall.sh </dev/null >/dev/null 2>&1
 
-                            # Перезапускаем sing-box
-                            systemctl restart sing-box
+                            # Перезапускаем sing-box со сбросом fake-IP кэша
+                            systemctl stop sing-box
+                            reset_fakeip_cache
+                            systemctl start sing-box
                             if ! ensure_singbox_running; then sleep 2; break; fi
                             ensure_iptables_rule FORWARD -o singbox-tun
                             ensure_iptables_rule FORWARD -i singbox-tun
