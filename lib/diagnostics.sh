@@ -393,6 +393,10 @@ doctor() {
         echo -e " ${YELLOW}!${NC} Таймер warper-resync выключен — после пересборки правил AntiZapret маршруты не восстановятся. Включить: systemctl enable --now warper-resync.timer"
     fi
 
+    if fakeip_cache_stale; then
+        echo -e " ${YELLOW}!${NC} Кэш fake-IP sing-box собран не для $SUBNET — домены могут получать адреса старой подсети. Исправить: warper resync"
+    fi
+
     # Правила от up.sh
     if needs_down_sh; then
         echo -e " ${RED}✘${NC} Правила от up.sh неактивны (сейчас: активны — выполните down.sh!)"

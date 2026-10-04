@@ -386,12 +386,7 @@ cli_subnet() {
     }
 
     if systemctl is-active --quiet sing-box; then
-        # Маппинги из старого пула переживают рестарт (store_fakeip),
-        # а kresd продолжает отдавать клиентам старые адреса — без сброса
-        # обоих кэшей домены остаются на неотмаршрутизированных IP.
-        systemctl stop sing-box
-        rm -f /var/lib/sing-box/cache.db
-        systemctl start sing-box
+        reset_fakeip_cache
         if ! ensure_singbox_running; then
             echo "ERROR: sing-box failed to restart" >&2
             return 1
@@ -399,8 +394,9 @@ cli_subnet() {
         ensure_iptables_rule FORWARD -o singbox-tun
         ensure_iptables_rule FORWARD -i singbox-tun
         resync_ip_routes_if_needed
+    else
+        reset_fakeip_cache
     fi
-    flush_kresd_cache
 
     echo "Subnet changed: $old_subnet -> $new_subnet"
     return 0
@@ -1697,6 +1693,12 @@ cli_resync() {
     fi
 
     ensure_subnet_in_include_ips
+
+    if fakeip_cache_stale; then
+        reset_fakeip_cache
+        ensure_singbox_running >/dev/null 2>&1 || true
+        fixed=1
+    fi
 
     # Маршруты и ipset: up.sh пересоздаёт antizapret-forward с нуля
     local table routes

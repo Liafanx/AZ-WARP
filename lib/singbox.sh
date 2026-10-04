@@ -39,6 +39,30 @@ restart_singbox_full() {
     return 0
 }
 
+FAKEIP_CACHE="/var/lib/sing-box/cache.db"
+FAKEIP_CACHE_SUBNET="/var/lib/sing-box/warper-subnet"
+
+# store_fakeip сохраняет адреса старого пула и после смены подсети,
+# поэтому кэш помечается подсетью, для которой он собран
+fakeip_cache_stale() {
+    [ -f "$FAKEIP_CACHE" ] || return 1
+    [ "$(cat "$FAKEIP_CACHE_SUBNET" 2>/dev/null)" != "$SUBNET" ]
+}
+
+# Сбрасывает fake-IP кэш sing-box и kresd. sing-box должен быть остановлен
+# или будет перезапущен здесь же.
+reset_fakeip_cache() {
+    local was_active=false
+    systemctl is-active --quiet sing-box && was_active=true
+    [ "$was_active" = true ] && systemctl stop sing-box
+    rm -f "$FAKEIP_CACHE"
+    mkdir -p "${FAKEIP_CACHE_SUBNET%/*}"
+    echo "$SUBNET" > "$FAKEIP_CACHE_SUBNET"
+    [ "$was_active" = true ] && systemctl start sing-box
+    flush_kresd_cache
+    return 0
+}
+
 # Пересинхронизирует IP-маршруты после перезапуска sing-box,
 # если в ip-ranges.txt есть подсети (kernel routes слетают при restart)
 resync_ip_routes_if_needed() {

@@ -217,7 +217,7 @@ fi
 
 echo -e "\n${YELLOW}2. Удаление ядра sing-box и конфигов...${NC}"
 echo -e " - ${CYAN}Удаление папки с конфигурацией /etc/sing-box...${NC}"
-rm -rf /etc/sing-box
+rm -rf /etc/sing-box /var/lib/sing-box
 
 # Проверяем используется ли sing-box службой warperslave
 if systemctl is-active --quiet sing-box-slave 2>/dev/null; then

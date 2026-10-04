@@ -53,6 +53,20 @@ fake-адреса в wireguard-endpoint.
 (`warper toggle` дважды либо `warper mode warp`). В `route.rules` должно
 появиться правило `{ "inbound": "tun-in", "action": "resolve", "server": "real-dns" }`.
 
+### Домены получают адреса старой fake-подсети
+
+**Симптом:** подсеть в статусе новая (например `10.224.0.0/16`), а в логе
+sing-box `dns: exchanged` отдаёт адреса старой (`198.20.0.x`); домены не
+открываются.
+
+**Причина:** sing-box хранит выданные fake-IP в `/var/lib/sing-box/cache.db`
+(`store_fakeip`) и после смены подсети или переустановки продолжает отдавать
+известным доменам старые адреса.
+
+**Решение:** `warper update` до 1.5.3+ — кэш sing-box и kresd сбрасывается
+автоматически; позже то же делает `warper resync`. Клиентам может
+понадобиться переподключение.
+
 ### WARN "listen egress member on docker0 ... address already in use"
 
 **Симптом:** в логе sing-box после старта 2-3 раза подряд:
