@@ -89,13 +89,15 @@ WARPER позволяет **точечно направлять только н�
 ```
 Сервер 1 (WARPER)                    Сервер 2 (WARPERSLAVE)
 Клиент → AntiZapret → kresd/ip route →        → sing-box (вход) →
-  fake-ip → sing-box ───────────────→   direct / WARP → Интернет
+  fake-ip → sing-box ───────────────→   выход → Интернет
           SS 2022 / VLESS+Reality / Hysteria2
 ```
 
 Трафик идёт через второй сервер (донор). Канал master → донор — Shadowsocks 2022,
 VLESS+Reality (рекомендуется: выглядит как обычный TLS к выбранному сайту) или
-Hysteria2 (QUIC). На доноре трафик может выходить напрямую (Direct) или через WARP.
+Hysteria2 (QUIC). На доноре трафик выходит напрямую (Direct), через WARP,
+WireGuard (ProtonVPN и др.), OpenVPN или через ещё один сервер
+(VLESS / Hysteria2 / Shadowsocks).
 
 Донор выдаёт готовую команду для master: `warperslave link`. Для VLESS и
 Hysteria2 master переключается в режим `vless` / `hy2` — так же, как на
@@ -367,7 +369,8 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/AZ-WARP/main/install-slave.
 ```
 
 Установщик спросит:
-- **Режим**: Direct (трафик через IP донора) или WARP (через Cloudflare)
+- **Выход**: Direct (трафик через IP донора), WARP (через Cloudflare) или
+  другой — WireGuard, OpenVPN, VLESS, Hysteria2, Shadowsocks (выбирается в конце установки)
 - **Протокол**: Shadowsocks 2022, VLESS+Reality (рекомендуется) или Hysteria2
 - **SNI** для Reality: сайт с TLS 1.3, под который маскируется канал (по умолчанию `www.microsoft.com`)
 - **Порт**: по умолчанию 8444
@@ -399,12 +402,51 @@ warper mode vless 'vless://…@203.0.113.10:8444?security=reality&…#warperslav
 ```bash
 warperslave          # интерактивное меню
 warperslave status   # статус
-warperslave switch   # переключить Direct ↔ WARP
+warperslave exit select  # выбрать выход трафика
 warperslave proto vless  # сменить протокол: ss | vless | hy2
 warperslave link     # ссылка и команда для master
 warperslave doctor   # диагностика
 warperslave update   # обновление
 ```
+
+### Выход трафика донора
+
+```bash
+warperslave exit                                   # текущий выход
+warperslave exit direct                            # IP донора
+warperslave exit warp                              # Cloudflare WARP
+warperslave exit wg /root/proton.conf              # WireGuard
+warperslave exit openvpn /root/nl.ovpn ЛОГИН ПАРОЛЬ  # OpenVPN
+warperslave exit vless 'vless://…'                 # через другой сервер
+warperslave exit hy2 'hy2://…'
+warperslave exit ss 'ss://…'                       # любой метод SS
+```
+
+Конфиги WireGuard (`.conf`) и OpenVPN (`.ovpn`) меню ищет в `/root` и
+`/root/warperslave`. Логин OpenVPN запоминается для каждого файла, повторно
+его вводить не нужно. Ошибка в конфиге или ссылке не меняет текущий выход.
+DNS для WireGuard и OpenVPN идёт внутри туннеля.
+
+### Локальный выход для программ на сервере донора
+
+Программы на самом доноре (Xray, браузер, скрипты) могут пользоваться тем же
+выходом через SOCKS5/HTTP на `127.0.0.1`:
+
+```bash
+warperslave local on 1080   # включить (порт по умолчанию 1080)
+warperslave local off       # выключить
+```
+
+Порт слушается только на loopback и в firewall не открывается. Пример
+outbound для Xray:
+
+```json
+{"tag": "warperslave", "protocol": "socks",
+ "settings": {"servers": [{"address": "127.0.0.1", "port": 1080}]}}
+```
+
+`warperslave doctor` при включённом локальном входе проверяет выход
+реальным запросом и показывает внешний IP.
 
 ---
 
@@ -615,7 +657,10 @@ warper catalog refresh         # обновить локальный кэш ка
 ```bash
 warperslave                    # главное меню
 warperslave status             # статус
-warperslave switch             # переключить режим Direct ↔ WARP
+warperslave exit [ВЫХОД]       # выход: direct | warp | wg ФАЙЛ | openvpn ФАЙЛ [ЛОГИН ПАРОЛЬ]
+                               #        vless|hy2|ss 'ССЫЛКА' | select
+warperslave switch             # Direct → WARP, любой другой выход → Direct
+warperslave local [on [ПОРТ]|off]  # SOCKS5/HTTP на 127.0.0.1 для программ донора
 warperslave proto ss|vless|hy2 [SNI]  # протокол подключения master
 warperslave link               # ссылка и команда для master
 warperslave link --command     # только команда для master
@@ -629,7 +674,7 @@ warperslave logs 100           # логи службы
 warperslave loglevel           # показать log level
 warperslave loglevel debug     # изменить log level
 warperslave mtu                # показать MTU
-warperslave mtu 1380           # изменить MTU (только режим WARP)
+warperslave mtu 1380           # изменить MTU (выходы WARP, WireGuard, OpenVPN)
 warperslave singbox version    # версия sing-box
 warperslave singbox upgrade    # обновить sing-box
 warperslave doctor             # диагностика
@@ -874,7 +919,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.5.3"
+print(w.version)           # "1.5.4"
 print(w.is_active())       # True
 
 w.add_domain("example.com")

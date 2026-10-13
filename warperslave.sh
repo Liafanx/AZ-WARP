@@ -41,7 +41,8 @@ load_config_value() {
     grep -E "^${key}=" "$SLAVE_CONF" 2>/dev/null | tail -n1 | cut -d'=' -f2-
 }
 
-# Выход донора: direct | warp. Протокол входа: ss | vless | hy2.
+# Выход донора: direct | warp | wg | openvpn | vless | hy2 | ss.
+# Протокол входа: ss | vless | hy2.
 SLAVE_MODE=""
 SLAVE_PROTO=""
 SLAVE_PORT=""
@@ -54,6 +55,11 @@ REALITY_PUBLIC_KEY=""
 REALITY_SHORT_ID=""
 HY2_PASSWORD=""
 HY2_OBFS_PASSWORD=""
+
+LOCAL_PORT=""
+EXIT_JSON="$SLAVE_DIR/exit.json"
+EXIT_PARSER="$SLAVE_DIR/outbound-parse.py"
+OVPN_AUTH_JSON="$SLAVE_DIR/ovpn-auth.json"
 
 HY2_CERT="/etc/sing-box-slave/hy2.crt"
 HY2_KEY="/etc/sing-box-slave/hy2.key"
@@ -78,6 +84,7 @@ load_config() {
     REALITY_SHORT_ID=$(load_config_value "REALITY_SHORT_ID" | tr -d '[:space:]')
     HY2_PASSWORD=$(load_config_value "HY2_PASSWORD" | tr -d '[:space:]')
     HY2_OBFS_PASSWORD=$(load_config_value "HY2_OBFS_PASSWORD" | tr -d '[:space:]')
+    LOCAL_PORT=$(load_config_value "LOCAL_PORT" | tr -d '[:space:]')
     # Установки до 1.1.0 знали только Shadowsocks
     SLAVE_PROTO="${SLAVE_PROTO:-ss}"
     SLAVE_SNI="${SLAVE_SNI:-$DEFAULT_SNI}"
@@ -97,6 +104,7 @@ save_config() {
         echo "REALITY_SHORT_ID=$REALITY_SHORT_ID"
         echo "HY2_PASSWORD=$HY2_PASSWORD"
         echo "HY2_OBFS_PASSWORD=$HY2_OBFS_PASSWORD"
+        echo "LOCAL_PORT=$LOCAL_PORT"
     } > "$SLAVE_CONF"
     chmod 600 "$SLAVE_CONF"
 }
@@ -203,7 +211,7 @@ set_mtu() {
     local old_mtu
     old_mtu=$(get_mtu)
     if [ -z "$old_mtu" ]; then
-        echo -e "${RED}MTU недоступен (режим Direct не использует endpoints).${NC}"; return 1
+        echo -e "${RED}MTU доступен только для выходов WARP, WireGuard и OpenVPN.${NC}"; return 1
     fi
     if [ "$old_mtu" = "$new_mtu" ]; then
         echo -e "${YELLOW}MTU уже установлен: $new_mtu${NC}"; return 0
@@ -229,6 +237,15 @@ set_mtu() {
         rm -f "$backup"; return 1
     fi
     rm -f "$backup"
+    # Иначе пересборка вернёт MTU из импортированного конфига
+    if [ "$SLAVE_MODE" = "wg" ] || [ "$SLAVE_MODE" = "openvpn" ]; then
+        tmp=$(mktemp)
+        if jq --argjson mtu "$new_mtu" '.object.mtu = $mtu' "$EXIT_JSON" > "$tmp"; then
+            chmod 600 "$tmp"; mv -f "$tmp" "$EXIT_JSON"
+        else
+            rm -f "$tmp"
+        fi
+    fi
     echo -e "${GREEN}MTU изменён: ${old_mtu} → ${new_mtu}${NC}"
     return 0
 }
@@ -374,48 +391,83 @@ _slave_inbound_json() {
     esac
 }
 
+# WARP-endpoint из ключей AntiZapret или wgcf.
+_warp_exit_json() {
+    local mtu="$1" keys
+    keys=$(find_warp_keys) || {
+        echo -e "${RED}WARP-ключи не найдены!${NC}" >&2
+        echo -e "${YELLOW}Положите wgcf-profile.conf в $SLAVE_DIR/wgcf/ и попробуйте снова.${NC}" >&2
+        return 1
+    }
+    jq -n --argjson mtu "$mtu" --arg addr "$(sed -n '1p' <<< "$keys")" \
+          --arg pk "$(sed -n '2p' <<< "$keys")" '
+        {kind:"endpoint", dns:null,
+         object:{type:"wireguard", tag:"exit", name:"warp-tun", system:false, mtu:$mtu,
+                 address:[$addr], private_key:$pk,
+                 peers:[{address:"162.159.192.1", port:2408,
+                         public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+                         allowed_ips:["0.0.0.0/0"], reserved:[0,0,0]}]}}'
+}
+
+# Выход из exit.json (wg, openvpn, vless, hy2, ss).
+_custom_exit_json() {
+    if [ ! -s "$EXIT_JSON" ]; then
+        echo -e "${RED}Нет параметров выхода ($EXIT_JSON). Задайте: warperslave exit${NC}" >&2
+        return 1
+    fi
+    local protocol
+    protocol=$(jq -r '.protocol // empty' "$EXIT_JSON" 2>/dev/null)
+    if [ "$protocol" != "$SLAVE_MODE" ]; then
+        echo -e "${RED}exit.json содержит ${protocol:-неизвестно}, а выход — $SLAVE_MODE${NC}" >&2
+        return 1
+    fi
+    jq -c '{kind, dns: (.dns // null), object: (.object | .tag = "exit")}' "$EXIT_JSON"
+}
+
 # Собирает конфиг в файл OUT. Уровень логов и MTU берутся из текущего
 # конфига, чтобы пересборка не сбрасывала настройки пользователя.
+# L3-выходы (WARP, WireGuard, OpenVPN) получают домены уже разрезолвленными
+# через DNS внутри туннеля; прокси передают домен дальше как есть.
 _slave_render() {
-    local out="$1" inbound level mtu
+    local out="$1" inbound local_in="null" level mtu exit_spec="null"
     inbound=$(_slave_inbound_json) || return 1
+    if [ -n "$LOCAL_PORT" ]; then
+        local_in=$(jq -n --argjson port "$LOCAL_PORT" \
+            '{type:"mixed", tag:"local", listen:"127.0.0.1", listen_port:$port}')
+    fi
     level=$(jq -r '.log.level // "info"' "$SINGBOX_SLAVE_CONF" 2>/dev/null || echo info)
     mtu=$(jq -r '.endpoints[0].mtu // 1420' "$SINGBOX_SLAVE_CONF" 2>/dev/null || echo 1420)
 
-    if [ "$SLAVE_MODE" = "warp" ]; then
-        local keys address private_key
-        keys=$(find_warp_keys) || {
-            echo -e "${RED}WARP-ключи не найдены!${NC}" >&2
-            echo -e "${YELLOW}Положите wgcf-profile.conf в $SLAVE_DIR/wgcf/ и попробуйте снова.${NC}" >&2
-            return 1
-        }
-        address=$(sed -n '1p' <<< "$keys")
-        private_key=$(sed -n '2p' <<< "$keys")
-        jq -n --argjson in "$inbound" --arg level "$level" --argjson mtu "${mtu:-1420}" \
-              --arg addr "$address" --arg pk "$private_key" '
-            {log:{level:$level},
-             dns:{servers:[{tag:"warp-dns", type:"udp", server:"1.1.1.1", detour:"warp"},
-                           {tag:"local", type:"udp", server:"8.8.8.8"}],
-                  strategy:"ipv4_only"},
-             inbounds:[$in],
-             endpoints:[{type:"wireguard", tag:"warp", name:"warp-tun", system:false, mtu:$mtu,
-                         address:[$addr], private_key:$pk,
-                         peers:[{address:"162.159.192.1", port:2408,
-                                 public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-                                 allowed_ips:["0.0.0.0/0"], reserved:[0,0,0]}]}],
-             outbounds:[{type:"direct", tag:"direct"}],
-             route:{rules:[{inbound:"in", outbound:"warp"}],
-                    default_domain_resolver:"local", final:"direct"}}' > "$out"
-    else
-        jq -n --argjson in "$inbound" --arg level "$level" '
-            {log:{level:$level},
-             dns:{servers:[{tag:"direct-dns", type:"udp", server:"1.1.1.1"}],
-                  strategy:"ipv4_only"},
-             inbounds:[$in],
-             outbounds:[{type:"direct", tag:"direct"}],
-             route:{rules:[{inbound:"in", outbound:"direct"}],
-                    default_domain_resolver:"direct-dns", final:"direct"}}' > "$out"
-    fi
+    case "$SLAVE_MODE" in
+        direct) ;;
+        warp) exit_spec=$(_warp_exit_json "${mtu:-1420}") || return 1 ;;
+        wg|openvpn|vless|hy2|ss) exit_spec=$(_custom_exit_json) || return 1 ;;
+        *) echo -e "${RED}Неизвестный выход: $SLAVE_MODE${NC}" >&2; return 1 ;;
+    esac
+
+    jq -n --argjson in "$inbound" --argjson local "$local_in" --arg level "$level" \
+          --argjson x "$exit_spec" '
+        ([$in, $local] | map(select(. != null))) as $ins
+        | ($ins | map(.tag)) as $tags
+        | {log:{level:$level}, inbounds:$ins,
+           outbounds:[{type:"direct", tag:"direct"}],
+           route:{default_domain_resolver:"local", final:"direct"}}
+        | if $x == null then
+            .dns = {servers:[{tag:"local", type:"udp", server:"1.1.1.1"}], strategy:"ipv4_only"}
+            | .route.rules = [{inbound:$tags, outbound:"direct"}]
+          else
+            .dns = {servers:[{tag:"exit-dns", type:"udp", server:($x.dns // "1.1.1.1"), detour:"exit"},
+                             {tag:"local", type:"udp", server:"8.8.8.8"}],
+                    strategy:"ipv4_only"}
+            | if $x.kind == "endpoint" then
+                .endpoints = [$x.object]
+                | .route.rules = [{inbound:$tags, action:"resolve", server:"exit-dns", strategy:"ipv4_only"},
+                                  {inbound:$tags, outbound:"exit"}]
+              else
+                .outbounds = [$x.object] + .outbounds
+                | .route.rules = [{inbound:$tags, outbound:"exit"}]
+              end
+          end' > "$out"
 }
 
 # Собирает конфиг из slave.conf, проверяет и перезапускает службу.
@@ -470,6 +522,274 @@ snapshot_slave_conf() {
     snap=$(mktemp)
     cp -a "$SLAVE_CONF" "$snap" 2>/dev/null || true
     echo "$snap"
+}
+
+# ===== Выход трафика =====
+
+# Разборщик ссылок и конфигов общий с WARPER. Обновлятор 1.1.x его
+# не ставит, поэтому докачивается при первой надобности.
+ensure_exit_parser() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}Нужен python3: apt-get install -y python3${NC}" >&2
+        return 1
+    fi
+    [ -s "$EXIT_PARSER" ] && return 0
+    download_file_safe "$REPO_URL/lib/outbound-parse.py" "$EXIT_PARSER" "outbound-parse.py" || return 1
+    chmod 755 "$EXIT_PARSER"
+}
+
+ovpn_needs_auth() {
+    grep -qiE '^[[:space:]]*auth-user-pass' "$1" 2>/dev/null
+}
+
+# Логин и пароль OpenVPN хранятся для каждого .ovpn (ключ — полный путь).
+#   _exit_saved_auth ФАЙЛ username|password
+_exit_saved_auth() {
+    [ -s "$OVPN_AUTH_JSON" ] || return 0
+    jq -r --arg f "$(realpath -m "$1")" --arg k "$2" '.[$f][$k] // empty' \
+        "$OVPN_AUTH_JSON" 2>/dev/null
+}
+
+_exit_save_auth() {
+    local tmp
+    tmp=$(mktemp)
+    { [ -s "$OVPN_AUTH_JSON" ] && cat "$OVPN_AUTH_JSON" || echo '{}'; } \
+        | jq --arg f "$(realpath -m "$1")" --arg u "$2" --arg p "$3" \
+            '.[$f] = {username: $u, password: $p}' > "$tmp" || { rm -f "$tmp"; return 1; }
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$OVPN_AUTH_JSON"
+}
+
+# Меняет выход донора.
+#   set_exit direct|warp
+#   set_exit wg ФАЙЛ | openvpn ФАЙЛ [ЛОГИН ПАРОЛЬ] | vless|hy2|ss ССЫЛКА
+set_exit() {
+    load_config
+    local mode="${1:-}" src="${2:-}" user="${3:-}" pass="${4:-}"
+    [ "$mode" = "hysteria2" ] && mode="hy2"
+    case "$mode" in
+        direct|warp|wg|openvpn|vless|hy2|ss) ;;
+        *) echo -e "${RED}Выход: direct | warp | wg | openvpn | vless | hy2 | ss${NC}" >&2; return 1 ;;
+    esac
+
+    local parsed="" exit_backup=""
+    if [ "$mode" != "direct" ] && [ "$mode" != "warp" ]; then
+        if [ -z "$src" ]; then
+            echo -e "${RED}Укажите файл конфига или ссылку.${NC}" >&2
+            return 1
+        fi
+        ensure_exit_parser || return 1
+        local -a args
+        case "$mode" in
+            wg) args=(wg "$src") ;;
+            openvpn)
+                args=(ovpn "$src")
+                if [ -z "$user" ] && ovpn_needs_auth "$src"; then
+                    user=$(_exit_saved_auth "$src" username)
+                    pass=$(_exit_saved_auth "$src" password)
+                fi
+                [ -n "$user" ] && args+=(--user "$user")
+                [ -n "$pass" ] && args+=(--pass "$pass")
+                ;;
+            ss) args=(ss "$src" --any-method) ;;
+            *)  args=("$mode" "$src") ;;
+        esac
+        parsed=$(python3 "$EXIT_PARSER" "${args[@]}") || return 1
+        local warning
+        while IFS= read -r warning; do
+            [ -n "$warning" ] && echo -e "${YELLOW}Предупреждение: ${warning}${NC}" >&2
+        done < <(jq -r '.warnings[]?' <<< "$parsed")
+        # Без ссылки в exit.json: в ней те же секреты, что и в object
+        [ "$mode" != "openvpn" ] && [ "$mode" != "wg" ] && parsed=$(jq -c '.source = null' <<< "$parsed")
+        if [ -f "$EXIT_JSON" ]; then
+            exit_backup=$(mktemp)
+            cp -a "$EXIT_JSON" "$exit_backup"
+        fi
+        (umask 077; printf '%s\n' "$parsed" > "$EXIT_JSON")
+    fi
+
+    local snap
+    snap=$(snapshot_slave_conf)
+    SLAVE_MODE="$mode"
+    if apply_slave_config "$snap"; then
+        rm -f "$snap" "$exit_backup"
+        [ "$mode" = "openvpn" ] && [ -n "$user" ] && _exit_save_auth "$src" "$user" "$pass"
+        echo -e "${GREEN}Выход: $(exit_label)${NC}"
+        return 0
+    fi
+    rm -f "$snap"
+    if [ -n "$parsed" ]; then
+        if [ -n "$exit_backup" ]; then mv -f "$exit_backup" "$EXIT_JSON"; else rm -f "$EXIT_JSON"; fi
+    fi
+    echo -e "${RED}Не удалось сменить выход, остаётся: $(exit_label)${NC}" >&2
+    return 1
+}
+
+exit_label() {
+    case "$SLAVE_MODE" in
+        direct) echo "Direct"; return ;;
+        warp)   echo "WARP"; return ;;
+    esac
+    [ -s "$EXIT_JSON" ] || { echo "$SLAVE_MODE (не настроен)"; return; }
+    jq -r '
+        (if .protocol == "wg" then "WireGuard"
+         elif .protocol == "openvpn" then "OpenVPN"
+         elif .protocol == "vless" then
+            (if .object.tls.reality.enabled then "VLESS+Reality" else "VLESS" end)
+         elif .protocol == "hy2" then "Hysteria2"
+         elif .protocol == "ss" then "Shadowsocks"
+         else .protocol end)
+        + " (" + ((.name // "") | if . != "" then . + ", " else "" end)
+        + (.server | tostring) + ":" + (.port | tostring) + ")"' "$EXIT_JSON" 2>/dev/null \
+        || echo "$SLAVE_MODE"
+}
+
+# Конфиги для выбора: WireGuard (*.conf с [Peer], кроме Cloudflare WARP)
+# или OpenVPN (*.ovpn с remote) из /root и каталога донора.
+#   scan_exit_configs wg|openvpn
+scan_exit_configs() {
+    local kind="$1" dir file
+    for dir in /root "$SLAVE_DIR"; do
+        [ -d "$dir" ] || continue
+        if [ "$kind" = "wg" ]; then
+            while IFS= read -r file; do
+                grep -q '^\[Peer\]' "$file" 2>/dev/null || continue
+                grep -q "$CF_WARP_PUBKEY" "$file" 2>/dev/null && continue
+                echo "$file"
+            done < <(find "$dir" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | sort)
+        else
+            while IFS= read -r file; do
+                grep -qiE '^[[:space:]]*remote[[:space:]]' "$file" 2>/dev/null && echo "$file"
+            done < <(find "$dir" -maxdepth 1 -type f -name '*.ovpn' 2>/dev/null | sort)
+        fi
+    done
+}
+
+# Интерактивный выбор файла. Путь — в stdout, меню — в stderr.
+pick_exit_config() {
+    local kind="$1" ext="conf" choice i=1 f
+    [ "$kind" = "openvpn" ] && ext="ovpn"
+    local -a files
+    mapfile -t files < <(scan_exit_configs "$kind")
+    if [ ${#files[@]} -gt 0 ]; then
+        echo -e "${CYAN}Найдены конфиги:${NC}" >&2
+        for f in "${files[@]}"; do
+            echo -e " ${GREEN}${i}.${NC} $f" >&2
+            ((i++))
+        done
+    else
+        echo -e "${YELLOW}В /root и $SLAVE_DIR нет .$ext конфигов.${NC}" >&2
+    fi
+    read -r -e -p "Номер или путь к .$ext (Enter — отмена): " choice
+    [ -z "$choice" ] && return 1
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#files[@]} )); then
+        echo "${files[$((choice-1))]}"
+    elif [ -f "$choice" ]; then
+        realpath "$choice"
+    else
+        echo -e "${RED}Файл не найден: $choice${NC}" >&2
+        return 1
+    fi
+}
+
+exit_menu() {
+    load_config
+    echo -e "\n${CYAN}Текущий выход: ${YELLOW}$(exit_label)${NC}"
+    echo -e " ${GREEN}1.${NC} Direct — IP этого сервера"
+    echo -e " ${GREEN}2.${NC} WARP — Cloudflare"
+    echo -e " ${GREEN}3.${NC} WireGuard — .conf (ProtonVPN и др.)"
+    echo -e " ${GREEN}4.${NC} OpenVPN — .ovpn"
+    echo -e " ${GREEN}5.${NC} VLESS — ссылка vless://"
+    echo -e " ${GREEN}6.${NC} Hysteria2 — ссылка hy2://"
+    echo -e " ${GREEN}7.${NC} Shadowsocks — ссылка ss://"
+    echo -e " ${CYAN}0.${NC} Отмена"
+    local c f link user="" pass=""
+    read -r -p "Выбор: " c
+    case "${c:-}" in
+        1) set_exit direct ;;
+        2) set_exit warp ;;
+        3) f=$(pick_exit_config wg) && set_exit wg "$f" ;;
+        4)
+            f=$(pick_exit_config openvpn) || return 1
+            if ovpn_needs_auth "$f"; then
+                local saved
+                saved=$(_exit_saved_auth "$f" username)
+                read -r -p "Логин OpenVPN${saved:+ [$saved]}: " user
+                if [ -z "$user" ] && [ -n "$saved" ]; then
+                    user="$saved"
+                    pass=$(_exit_saved_auth "$f" password)
+                else
+                    read -r -s -p "Пароль OpenVPN: " pass; echo
+                fi
+            fi
+            set_exit openvpn "$f" "$user" "$pass"
+            ;;
+        5|6|7)
+            local -A kinds=([5]=vless [6]=hy2 [7]=ss)
+            read -r -p "Ссылка: " link
+            [ -z "$link" ] && { echo -e "${YELLOW}Отмена.${NC}"; return 0; }
+            set_exit "${kinds[$c]}" "$link"
+            ;;
+        *) echo -e "${YELLOW}Отмена.${NC}" ;;
+    esac
+}
+
+# Локальный вход SOCKS5/HTTP на 127.0.0.1 — для программ на этом же
+# сервере (Xray и т.п.). Трафик уходит в тот же выход, что и от master.
+#   local_cmd [on [ПОРТ] | off]
+local_cmd() {
+    load_config
+    local action="${1:-}" port="${2:-1080}" snap
+    case "$action" in
+        "")
+            if [ -n "$LOCAL_PORT" ]; then
+                echo "socks5://127.0.0.1:$LOCAL_PORT (HTTP-прокси на том же порту)"
+            else
+                echo "off"
+            fi
+            ;;
+        on)
+            if ! validate_port "$port" || [ "$port" = "$SLAVE_PORT" ]; then
+                echo -e "${RED}Некорректный порт: $port${NC}" >&2; return 1
+            fi
+            if [ "$port" != "$LOCAL_PORT" ] && ! check_port_available "$port"; then
+                echo -e "${RED}Порт $port уже занят!${NC}" >&2; return 1
+            fi
+            snap=$(snapshot_slave_conf)
+            LOCAL_PORT="$port"
+            apply_slave_config "$snap" || { rm -f "$snap"; return 1; }
+            rm -f "$snap"
+            echo -e "${GREEN}Локальный вход: socks5/http://127.0.0.1:$port → $(exit_label)${NC}"
+            echo -e "${CYAN}Xray outbound: {\"protocol\":\"socks\",\"settings\":{\"servers\":[{\"address\":\"127.0.0.1\",\"port\":$port}]}}${NC}"
+            ;;
+        off)
+            [ -z "$LOCAL_PORT" ] && { echo "Локальный вход уже выключен."; return 0; }
+            snap=$(snapshot_slave_conf)
+            LOCAL_PORT=""
+            apply_slave_config "$snap" || { rm -f "$snap"; return 1; }
+            rm -f "$snap"
+            echo -e "${GREEN}Локальный вход выключен.${NC}"
+            ;;
+        *) echo "Usage: warperslave local [on [ПОРТ] | off]" >&2; return 1 ;;
+    esac
+}
+
+local_menu() {
+    load_config
+    echo -e "\n${CYAN}Локальный вход: ${YELLOW}$(local_cmd)${NC}"
+    echo -e " ${GREEN}1.${NC} Включить / сменить порт"
+    echo -e " ${GREEN}2.${NC} Выключить"
+    echo -e " ${CYAN}0.${NC} Отмена"
+    local c port
+    read -r -p "Выбор: " c
+    case "${c:-}" in
+        1)
+            read -r -p "Порт [${LOCAL_PORT:-1080}]: " port
+            local_cmd on "${port:-${LOCAL_PORT:-1080}}"
+            ;;
+        2) local_cmd off ;;
+        *) echo -e "${YELLOW}Отмена.${NC}" ;;
+    esac
 }
 
 # ===== Ссылка для master =====
@@ -756,6 +1076,7 @@ rollback_warperslave_update() {
     slave_restore_if_exists "$backupdir/warperslave.sh" "$SLAVE_DIR/warperslave.sh"
     slave_restore_if_exists "$backupdir/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh"
     slave_restore_if_exists "$backupdir/versionslave" "$SLAVE_DIR/versionslave"
+    slave_restore_if_exists "$backupdir/outbound-parse.py" "$EXIT_PARSER"
 
     slave_restore_if_exists "$backupdir/sing-box-slave.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 
@@ -799,6 +1120,10 @@ update_warperslave() {
         rm -rf "$tmpdir" "$backupdir"
         return 1
     }
+    download_file_safe "$REPO_URL/lib/outbound-parse.py" "$tmpdir/outbound-parse.py" "outbound-parse.py" || {
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
 
     # ===== Проверяем синтаксис bash-скриптов =====
     syntax_check_bash_file "$tmpdir/warperslave.sh" "warperslave.sh" || {
@@ -824,6 +1149,7 @@ update_warperslave() {
     slave_backup_if_exists "$SLAVE_DIR/warperslave.sh" "$backupdir/warperslave.sh"
     slave_backup_if_exists "$SLAVE_DIR/uninstall-slave.sh" "$backupdir/uninstall-slave.sh"
     slave_backup_if_exists "$SLAVE_DIR/versionslave" "$backupdir/versionslave"
+    slave_backup_if_exists "$EXIT_PARSER" "$backupdir/outbound-parse.py"
 
     slave_backup_if_exists "/etc/systemd/system/${SERVICE_NAME}.service" "$backupdir/sing-box-slave.service"
 
@@ -848,6 +1174,13 @@ update_warperslave() {
 
     install -m 644 "$tmpdir/versionslave" "$SLAVE_DIR/versionslave" || {
         echo -e "${RED}Ошибка установки versionslave, откат.${NC}"
+        rollback_warperslave_update "$backupdir"
+        rm -rf "$tmpdir" "$backupdir"
+        return 1
+    }
+
+    install -m 755 "$tmpdir/outbound-parse.py" "$EXIT_PARSER" || {
+        echo -e "${RED}Ошибка установки outbound-parse.py, откат.${NC}"
         rollback_warperslave_update "$backupdir"
         rm -rf "$tmpdir" "$backupdir"
         return 1
@@ -908,7 +1241,7 @@ status_cmd() {
 
     echo "=== WARPERSLAVE STATUS ==="
     echo "Version:     $LOCAL_VER"
-    echo "Mode:        $SLAVE_MODE"
+    echo "Exit:        $(exit_label)"
     echo "Protocol:    $(proto_label)"
     echo "Port:        $SLAVE_PORT"
     [ "$SLAVE_PROTO" != "ss" ] && echo "SNI:         $SLAVE_SNI"
@@ -916,6 +1249,7 @@ status_cmd() {
     echo "Autostart:   $sb_en"
     [ "$SLAVE_PROTO" = "ss" ] && echo "SS key:      ${SS_PASSWORD:0:8}..."
     echo "Public IPv4: $ext_ip"
+    echo "Local in:    $(local_cmd)"
     echo "Log level:   $(get_log_level)"
     local mtu_val
     mtu_val=$(get_mtu)
@@ -925,28 +1259,15 @@ status_cmd() {
     fi
 }
 
-# Переключает выход донора: direct ↔ warp.
+# Переключает выход донора: direct → warp, любой другой → direct.
 switch_mode() {
     load_config
-    local snap
-    snap=$(snapshot_slave_conf)
     if [ "$SLAVE_MODE" = "direct" ]; then
-        SLAVE_MODE="warp"
-        echo -e "${YELLOW}Переключение на режим WARP...${NC}"
         echo -e " - ${GREEN}Источник WARP-ключей: $(get_warp_source)${NC}"
+        set_exit warp
     else
-        SLAVE_MODE="direct"
-        echo -e "${YELLOW}Переключение на режим Direct...${NC}"
+        set_exit direct
     fi
-
-    if apply_slave_config "$snap"; then
-        echo -e "${GREEN}Режим переключён: $SLAVE_MODE${NC}"
-        rm -f "$snap"
-        return 0
-    fi
-    rm -f "$snap"
-    echo -e "${RED}Не удалось переключить, режим остаётся: $SLAVE_MODE${NC}"
-    return 1
 }
 
 change_port() {
@@ -1124,13 +1445,11 @@ doctor_cmd() {
     }
 
     echo -e " ${CYAN}!${NC} Версия: $LOCAL_VER"
-    echo -e " ${CYAN}!${NC} Протокол: $(proto_label), выход: $SLAVE_MODE"
+    echo -e " ${CYAN}!${NC} Протокол: $(proto_label), выход: $(exit_label)"
     echo -e " ${CYAN}!${NC} Log level: $(get_log_level)"
-    if [ "$SLAVE_MODE" = "warp" ]; then
-        local doc_mtu
-        doc_mtu=$(get_mtu)
-        echo -e " ${CYAN}!${NC} MTU: ${doc_mtu:-n/a}"
-    fi
+    local doc_mtu
+    doc_mtu=$(get_mtu)
+    [ -n "$doc_mtu" ] && echo -e " ${CYAN}!${NC} MTU: $doc_mtu"
 
     check_item "Конфигурация slave существует" "[ -f '$SLAVE_CONF' ]"
     check_item "Конфиг sing-box-slave существует" "[ -f '$SINGBOX_SLAVE_CONF' ]"
@@ -1174,6 +1493,31 @@ doctor_cmd() {
         fi
     fi
 
+    case "$SLAVE_MODE" in
+        wg|openvpn|vless|hy2|ss)
+            check_item "Параметры выхода ($EXIT_JSON)" \
+                "[ \"\$(jq -r .protocol '$EXIT_JSON' 2>/dev/null)\" = '$SLAVE_MODE' ]"
+            ;;
+    esac
+
+    if [ -n "$LOCAL_PORT" ]; then
+        local trace
+        if grep -q "127.0.0.1:${LOCAL_PORT} " <<< "$(ss -tln 2>/dev/null)"; then
+            echo -e " ${GREEN}✔${NC} Локальный вход 127.0.0.1:$LOCAL_PORT слушается"
+            trace=$(curl -s --max-time 15 --socks5-hostname "127.0.0.1:$LOCAL_PORT" \
+                https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null || true)
+            if grep -q '^ip=' <<< "$trace"; then
+                echo -e " ${GREEN}✔${NC} Выход работает: IP $(sed -n 's/^ip=//p' <<< "$trace"), warp=$(sed -n 's/^warp=//p' <<< "$trace")"
+            else
+                echo -e " ${RED}✘${NC} Через выход $(exit_label) нет доступа в интернет"
+                failed=1
+            fi
+        else
+            echo -e " ${RED}✘${NC} Локальный вход 127.0.0.1:$LOCAL_PORT не слушается"
+            failed=1
+        fi
+    fi
+
     local pub_ip
     pub_ip=$(get_local_public_ipv4 || echo "")
     if [ -n "$pub_ip" ]; then
@@ -1205,11 +1549,7 @@ show_menu() {
     else
         sb_status="${RED}🔴 остановлен${NC}"
     fi
-    if [ "$SLAVE_MODE" = "warp" ]; then
-        mode_display="${CYAN}WARP${NC}"
-    else
-        mode_display="${GREEN}Direct${NC}"
-    fi
+    mode_display="${CYAN}$(exit_label)${NC}"
     pub_ip=$(get_local_public_ipv4 || echo "n/a")
 
     local VER_STR
@@ -1228,7 +1568,7 @@ show_menu() {
     echo -e ""
     echo -e " 📌 ${CYAN}Версия:${NC}   $VER_STR"
     echo -e " 📡 ${CYAN}Статус:${NC}   $sb_status"
-    echo -e " 🔀 ${CYAN}Режим:${NC}    $mode_display"
+    echo -e " 🔀 ${CYAN}Выход:${NC}    $mode_display"
     echo -e " 🔌 ${CYAN}Порт:${NC}     ${YELLOW}${SLAVE_PORT}${NC}"
     echo -e " 🔐 ${CYAN}Протокол:${NC} ${YELLOW}$(proto_label)${NC}"
     local log_level mtu_display
@@ -1237,6 +1577,7 @@ show_menu() {
     [ -z "$mtu_display" ] && mtu_display="n/a"
     echo -e " 🌐 ${CYAN}IP:${NC}       ${YELLOW}${pub_ip}${NC}"
     echo -e " ⚙️  ${CYAN}Log:${NC}      ${YELLOW}${log_level}${NC} | MTU: ${YELLOW}${mtu_display}${NC}"
+    [ -n "$LOCAL_PORT" ] && echo -e " 🏠 ${CYAN}Локально:${NC} ${YELLOW}127.0.0.1:${LOCAL_PORT}${NC} (SOCKS5/HTTP)"
     if [ "$SLAVE_MODE" = "warp" ]; then
         local warp_src
         warp_src=$(get_warp_source)
@@ -1244,15 +1585,16 @@ show_menu() {
     fi
     echo -e ""
     echo -e "${CYAN}------------------------------------------------${NC}"
-    echo -e " ${GREEN}1.${NC} 🔀 Переключить режим (Direct ↔ WARP)"
+    echo -e " ${GREEN}1.${NC} 🔀 Выход трафика (Direct, WARP, WireGuard, OpenVPN, прокси)"
     echo -e " ${CYAN}2.${NC} 🔌 Изменить порт"
     echo -e " ${CYAN}P.${NC} 🔐 Протокол подключения (сейчас: $(proto_label))"
     echo -e " ${CYAN}3.${NC} 🔑 Перевыпустить ключи"
     echo -e " ${CYAN}4.${NC} 🔗 Ссылка для master"
+    echo -e " ${CYAN}L.${NC} 🏠 Локальный вход для программ на этом сервере"
     echo -e " ${CYAN}5.${NC} 🔄 Перезапустить службу"
     echo -e " ${CYAN}6.${NC} 📄 Показать логи"
     echo -e " ${CYAN}7.${NC} ⚙️  Изменить log level"
-    if [ "$SLAVE_MODE" = "warp" ]; then
+    if [ -n "$(get_mtu)" ]; then
     echo -e " ${CYAN}8.${NC} ⚙️  Изменить MTU"
     fi
     echo -e " ${CYAN}D.${NC} 🩺 Диагностика"
@@ -1293,6 +1635,12 @@ migrate_legacy_config "${1:-}"
 case "${1:-}" in
     status) load_config; status_cmd; exit $? ;;
     switch) switch_mode; exit $? ;;
+    exit)
+        if [ -z "${2:-}" ]; then load_config; exit_label; exit 0; fi
+        [ "$2" = "select" ] && { exit_menu; exit $?; }
+        set_exit "${2}" "${3:-}" "${4:-}" "${5:-}"; exit $?
+        ;;
+    local) local_cmd "${2:-}" "${3:-}"; exit $? ;;
     port) change_port "${2:-}"; exit $? ;;
     key) change_key "${2:-}"; exit $? ;;
     proto) change_proto "${2:-}" "${3:-}"; exit $? ;;
@@ -1346,8 +1694,8 @@ case "${1:-}" in
             if [ -n "$_mtu" ]; then
                 echo "$_mtu"
             else
-                # MTU есть только у wireguard-endpoint, в режиме direct его нет
-                echo "n/a (режим $SLAVE_MODE)"
+                # MTU есть только у wireguard-endpoint
+                echo "n/a (выход $SLAVE_MODE)"
             fi
             exit 0
         fi
@@ -1373,7 +1721,11 @@ case "${1:-}" in
         echo ""
         echo "Команды:"
         echo "  status     Показать статус"
-        echo "  switch     Переключить режим (Direct ↔ WARP)"
+        echo "  exit [ВЫХОД]  Показать или сменить выход трафика:"
+        echo "             direct | warp | wg ФАЙЛ.conf | openvpn ФАЙЛ.ovpn [ЛОГИН ПАРОЛЬ]"
+        echo "             vless|hy2|ss 'ССЫЛКА' | select (интерактивный выбор)"
+        echo "  switch     Переключить выход: Direct → WARP, иначе → Direct"
+        echo "  local [on [ПОРТ] | off]  SOCKS5/HTTP на 127.0.0.1 для программ на этом сервере"
         echo "  port [ПОРТ]  Изменить порт"
         echo "  key [КЛЮЧ]   Перевыпустить учётные данные текущего протокола"
         echo "  doctor     Диагностика"
@@ -1409,7 +1761,8 @@ while true; do
     read -r -e -p "Выбор: " choice
     choice=$(echo "${choice:-}" | tr -d ' ')
     case "$choice" in
-        1) switch_mode; read -r -p "Нажмите Enter..." ;;
+        1) exit_menu; read -r -p "Нажмите Enter..." ;;
+        l|L) local_menu; read -r -p "Нажмите Enter..." ;;
         2) change_port; read -r -p "Нажмите Enter..." ;;
         3) change_key; read -r -p "Нажмите Enter..." ;;
         4)
@@ -1452,8 +1805,8 @@ while true; do
             ;;
         8)
             load_config
-            if [ "$SLAVE_MODE" != "warp" ]; then
-                echo -e "${YELLOW}MTU доступен только в режиме WARP.${NC}"
+            if [ -z "$(get_mtu)" ]; then
+                echo -e "${YELLOW}MTU доступен только для выходов WARP, WireGuard и OpenVPN.${NC}"
                 sleep 1
             else
                 current_mtu=$(get_mtu)

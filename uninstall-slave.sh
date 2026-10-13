@@ -101,6 +101,10 @@ if [ "$KEEP_CONFIG" = true ]; then
     # Удаляем всё кроме конфига, ключей и шаблонов
     find "$SLAVE_DIR" -type f \
         -not -name 'slave.conf' \
+        -not -name 'exit.json' \
+        -not -name 'ovpn-auth.json' \
+        -not -name '*.ovpn' \
+        -not -name '*.conf' \
         -not -name 'uninstall-slave.sh' \
         -not -path '*/wgcf/*' \
         -delete 2>/dev/null || true

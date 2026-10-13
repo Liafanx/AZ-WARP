@@ -130,12 +130,19 @@ kresd@1/ip route → fake-ip → singbox-tun → WireGuard endpoint → WG-се�
 |---|---|
 | warperslave.sh | /root/warperslave/ |
 | slave.conf | /root/warperslave/ |
+| exit.json | /root/warperslave/ (параметры выхода wg / openvpn / vless / hy2 / ss, 0600) |
+| ovpn-auth.json | /root/warperslave/ (логины OpenVPN по путям .ovpn, 0600) |
+| outbound-parse.py | /root/warperslave/ (разборщик ссылок и конфигов, общий с WARPER) |
 | config.json | /etc/sing-box-slave/ |
 | hy2.crt, hy2.key | /etc/sing-box-slave/ (самоподписанный сертификат Hysteria2) |
 | sing-box-slave.service | /etc/systemd/system/ |
 
 Донор настраивается по двум осям: протокол входа `SLAVE_PROTO`
-(`ss`, `vless`, `hy2`) и выход `SLAVE_MODE` (`direct`, `warp`). Конфиг
+(`ss`, `vless`, `hy2`) и выход `SLAVE_MODE` (`direct`, `warp`, `wg`,
+`openvpn`, `vless`, `hy2`, `ss`). Выходы `wg` и `openvpn` — L3-endpoint'ы:
+домены резолвятся через DNS внутри туннеля (`action: resolve`). Прокси-выходы
+передают домен дальше. Необязательный вход `mixed` на `127.0.0.1:LOCAL_PORT`
+отправляет трафик программ донора в тот же выход. Конфиг
 собирает `warperslave` через `jq` из `slave.conf` — и при установке, и при
 смене протокола или выхода. `warperslave link` печатает стандартную ссылку,
 которую master принимает той же командой, что и ссылку стороннего сервера.

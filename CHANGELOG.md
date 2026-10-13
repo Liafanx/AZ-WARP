@@ -2,6 +2,32 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.5.4] - 2026-10-13
+
+### Added
+- warperslave **1.2.0**: новые выходы трафика донора помимо Direct и WARP —
+  **WireGuard** (`.conf`, ProtonVPN и др.), **OpenVPN** (`.ovpn`) и цепочка
+  через ещё один сервер по **VLESS**, **Hysteria2** или **Shadowsocks**.
+  - `warperslave exit direct|warp|wg ФАЙЛ|openvpn ФАЙЛ [ЛОГИН ПАРОЛЬ]|vless|hy2|ss 'ССЫЛКА'`,
+    `exit select` — меню с поиском конфигов в `/root` и `/root/warperslave`.
+  - Разбор общий с WARPER (`outbound-parse.py`). Ошибка в конфиге или ссылке
+    не меняет текущий выход. DNS для WireGuard и OpenVPN идёт внутри туннеля.
+  - Логин OpenVPN запоминается для каждого `.ovpn` (`ovpn-auth.json`, 0600).
+  - MTU настраивается для WARP, WireGuard и OpenVPN и не сбрасывается при
+    пересборке.
+- warperslave: локальный вход SOCKS5/HTTP на `127.0.0.1` —
+  `warperslave local on [ПОРТ]|off`. Программы на доноре (Xray и т.п.)
+  выходят через тот же выход, что и master. `doctor` проверяет выход
+  реальным запросом и показывает внешний IP.
+- Установщик донора: пункт «Другой выход» — выбор WireGuard / OpenVPN /
+  прокси в конце установки.
+- `doctor` показывает причину падения kresd из журнала.
+
+### Changed
+- `outbound-parse.py ss --any-method` принимает любые методы Shadowsocks,
+  поддерживаемые sing-box; связка master↔донор по-прежнему требует
+  `2022-blake3-aes-128-gcm`. Добавлен разбор WireGuard-конфигов (`wg ФАЙЛ`).
+
 ## [1.5.3] - 2026-10-04
 
 ### Fixed

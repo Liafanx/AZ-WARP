@@ -87,7 +87,7 @@ check_os() {
 }
 
 check_dependencies() {
-    local deps=("curl" "wget" "jq" "iptables" "openssl")
+    local deps=("curl" "wget" "jq" "iptables" "openssl" "python3")
     local missing=()
     for cmd in "${deps[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -318,15 +318,20 @@ echo -e "    ${CYAN}(сервер работает как прокси, клие
 echo -e ""
 echo -e " ${GREEN}2.${NC} WARP   — трафик дополнительно проходит через Cloudflare WARP"
 echo -e "    ${CYAN}(клиент видит IP Cloudflare, нужны WARP-ключи)${NC}"
+echo -e ""
+echo -e " ${GREEN}3.${NC} Другой — WireGuard, OpenVPN, VLESS, Hysteria2, Shadowsocks"
+echo -e "    ${CYAN}(выбирается в конце установки, до этого — Direct)${NC}"
 echo -e "${CYAN}================================================${NC}"
 
 SLAVE_MODE=""
+CUSTOM_EXIT=false
 while true; do
-    read -r -p "Выбор [1-2]: " mode_choice < /dev/tty
+    read -r -p "Выбор [1-3]: " mode_choice < /dev/tty
     case "$mode_choice" in
         1) SLAVE_MODE="direct"; break ;;
         2) SLAVE_MODE="warp"; break ;;
-        *) echo -e "${RED}Введите 1 или 2.${NC}" ;;
+        3) SLAVE_MODE="direct"; CUSTOM_EXIT=true; break ;;
+        *) echo -e "${RED}Введите 1, 2 или 3.${NC}" ;;
     esac
 done
 echo -e " - ${GREEN}Режим: ${SLAVE_MODE}${NC}"
@@ -499,7 +504,8 @@ echo -e "\n${YELLOW}[3/6] Установка утилиты управления
 download_file "$REPO_URL/warperslave.sh" "$SLAVE_DIR/warperslave.sh" "утилита warperslave" || exit 1
 download_file "$REPO_URL/uninstall-slave.sh" "$SLAVE_DIR/uninstall-slave.sh" "деинсталлятор" || exit 1
 download_file "$REPO_URL/versionslave" "$SLAVE_DIR/versionslave" "файл версии" || exit 1
-chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh"
+download_file "$REPO_URL/lib/outbound-parse.py" "$SLAVE_DIR/outbound-parse.py" "разборщик конфигов" || exit 1
+chmod +x "$SLAVE_DIR/warperslave.sh" "$SLAVE_DIR/uninstall-slave.sh" "$SLAVE_DIR/outbound-parse.py"
 ln -sf "$SLAVE_DIR/warperslave.sh" /usr/local/bin/warperslave
 
 # ===== Конфигурация =====
@@ -570,6 +576,14 @@ if ! check_port_available "$SLAVE_PORT"; then
     echo -e " - ${GREEN}Порт $SLAVE_PORT слушается.${NC}"
 else
     echo -e " - ${YELLOW}Порт $SLAVE_PORT не обнаружен в списке слушающих.${NC}"
+fi
+
+if [ "$CUSTOM_EXIT" = true ]; then
+    echo -e "\n${YELLOW}Выход трафика${NC}"
+    if ! "$SLAVE_DIR/warperslave.sh" exit select < /dev/tty; then
+        echo -e "${YELLOW}Выход не настроен, оставлен Direct. Позже: warperslave exit select${NC}"
+    fi
+    SLAVE_MODE=$("$SLAVE_DIR/warperslave.sh" exit)
 fi
 
 # ===== Определяем публичный IPv4 локально =====
