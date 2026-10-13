@@ -4,7 +4,7 @@
 
 ```bash
 apt-get update
-apt-get install -y curl wget jq iptables openssl
+apt-get install -y curl wget jq iptables openssl python3
 ```
 
 ## Шаг 2. Установка sing-box
@@ -22,7 +22,8 @@ REPO=https://raw.githubusercontent.com/Liafanx/AZ-WARP/main
 curl -fsSLO $REPO/warperslave.sh
 curl -fsSLO $REPO/uninstall-slave.sh
 curl -fsSLO $REPO/versionslave
-chmod +x warperslave.sh uninstall-slave.sh
+curl -fsSLO $REPO/lib/outbound-parse.py
+chmod +x warperslave.sh uninstall-slave.sh outbound-parse.py
 ln -sf /root/warperslave/warperslave.sh /usr/local/bin/warperslave
 ```
 
@@ -44,6 +45,10 @@ warperslave rebuild
   `vless` (VLESS+Reality) или `hy2` (Hysteria2).
 - `SLAVE_MODE` — выход: `direct` (IP донора) или `warp` (через Cloudflare WARP).
   Для `warp` положите `wgcf-profile.conf` в `/root/warperslave/wgcf/`.
+  Выходы WireGuard, OpenVPN, VLESS, Hysteria2 и Shadowsocks задаются после
+  установки командой `warperslave exit …` — она разбирает конфиг или ссылку.
+- `LOCAL_PORT` — необязательный SOCKS5/HTTP-вход на `127.0.0.1` для программ
+  на доноре (`warperslave local on 1080`).
 - `SLAVE_SNI` — сайт для маскировки Reality, должен отвечать по TLS 1.3:
   `openssl s_client -connect www.microsoft.com:443 -tls1_3 </dev/null`.
 

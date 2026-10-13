@@ -247,6 +247,44 @@ AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 15
 ```
 
+### WARPERSLAVE: выход WireGuard / OpenVPN / прокси не работает
+
+```bash
+warperslave exit            # текущий выход
+warperslave local on 1080   # временно включить локальный вход
+warperslave doctor          # проверит выход реальным запросом
+warperslave logs 50
+```
+
+- Сразу после смены выхода OpenVPN несколько секунд поднимает туннель —
+  в логе `endpoint is not ready yet`. Повторите запрос.
+- OpenVPN с `auth-user-pass` требует логин и пароль:
+  `warperslave exit openvpn ФАЙЛ.ovpn ЛОГИН ПАРОЛЬ`.
+- WireGuard: в `.conf` должен быть ровно один `[Peer]`. Для Cloudflare WARP
+  используйте `warperslave exit warp`.
+- Внешний IP выхода видно через локальный вход:
+  `curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace`.
+
+### kresd не запускается: `'end' expected ... near 'return'`
+
+**Симптом:** `doctor` — «Службы kresd активны ✘», в журнале
+`error while loading config: /etc/knot-resolver/kresd.conf:NN: 'end' expected`.
+DNS у клиентов AntiZapret не работает.
+
+**Причина:** одно из обновлений AntiZapret правит в `parse.sh` ветку
+GeoHide через `sed`. На старых `kresd.conf` после этого в ветке оказываются
+два `return` подряд. WARPER здесь ни при чём, его блок не затрагивается.
+
+**Решение:** удалить лишнюю строку `return policy.FORWARD({...})` сразу после
+`return policy.STUB({'159.194.200.33', ...})` в ветке `-- GeoHide` и
+перезапустить kresd:
+
+```bash
+cp /etc/knot-resolver/kresd.conf /root/kresd.conf.bak
+nano /etc/knot-resolver/kresd.conf
+systemctl restart kresd@1 kresd@2
+```
+
 ### IPv6 в логах sing-box (WARPERSLAVE)
 
 **Симптом:** DNS-ответы содержат AAAA-записи.

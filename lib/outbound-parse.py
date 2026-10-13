@@ -3,8 +3,9 @@
 
     outbound-parse.py vless  LINK
     outbound-parse.py hy2    LINK
-    outbound-parse.py ss     LINK
+    outbound-parse.py ss     LINK [--any-method]
     outbound-parse.py ovpn   FILE [--user U] [--pass P]
+    outbound-parse.py wg     FILE
 
 Печатает JSON: protocol, kind (outbound|endpoint), server, port, name,
 source, warnings, object. Ошибка — текст в stderr и код 1.
@@ -294,9 +295,16 @@ def parse_hy2(link):
     return result("hy2", "outbound", server, port, name, link, ob, warnings)
 
 
-# ===== Shadowsocks (связка с warperslave) =====
+# ===== Shadowsocks =====
 
-def parse_ss(link):
+SS_METHODS = {
+    "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
+    "2022-blake3-chacha20-poly1305", "aes-128-gcm", "aes-192-gcm",
+    "aes-256-gcm", "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305",
+}
+
+
+def parse_ss(link, any_method=False):
     link = link.strip()
     parts = urlsplit(link)
     if parts.scheme != "ss":
@@ -321,10 +329,16 @@ def parse_ss(link):
     port = check_port(port_s)
     if not password:
         fail("в ссылке нет пароля")
+    if "plugin" in query(parts):
+        fail("ss-плагины (plugin=) не поддерживаются")
     # Режим slave собирается из шаблона ровно под этот метод
-    if method != "2022-blake3-aes-128-gcm":
+    if not any_method and method != "2022-blake3-aes-128-gcm":
         fail(f"метод {method} не поддерживается, связка с донором использует 2022-blake3-aes-128-gcm")
-    out = result("ss", "outbound", server, port, name or server, link, None)
+    if method not in SS_METHODS:
+        fail(f"неизвестный метод шифрования: {method}")
+    obj = {"type": "shadowsocks", "tag": TAG, "server": server,
+           "server_port": port, "method": method, "password": password}
+    out = result("ss", "outbound", server, port, name or server, link, obj)
     out["password"] = password
     out["method"] = method
     return out
@@ -572,6 +586,83 @@ def parse_ovpn(path, user=None, password=None):
                   name, os.path.abspath(path), ep, warnings)
 
 
+# ===== WireGuard =====
+
+WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
+
+
+def wg_key(value, field):
+    if not value or not WG_KEY_RE.match(value):
+        fail(f"некорректный {field}")
+    return value
+
+
+def parse_wg(path):
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            text = f.read()
+    except OSError as e:
+        fail(f"не удалось прочитать {path}: {e.strerror}")
+
+    sections, cur = {"interface": {}, "peer": {}}, None
+    peers = 0
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("["):
+            cur = line.strip("[]").strip().lower()
+            if cur == "peer":
+                peers += 1
+            continue
+        if cur in sections and "=" in line:
+            key, _, value = line.partition("=")
+            sections[cur].setdefault(key.strip().lower(), value.strip())
+    if peers != 1:
+        fail("в конфиге должен быть ровно один [Peer]")
+
+    iface, peer = sections["interface"], sections["peer"]
+    addresses = []
+    for a in iface.get("address", "").split(","):
+        a = a.strip()
+        if a:
+            addresses.append(a if "/" in a else a + ("/128" if ":" in a else "/32"))
+    if not addresses:
+        fail("нет Address в [Interface]")
+    endpoint = peer.get("endpoint", "")
+    if not endpoint:
+        fail("нет Endpoint в [Peer]")
+    host, port_s = split_host_port(endpoint)
+    port = check_port(port_s)
+    host = check_host(host)
+
+    allowed = [a.strip() for a in peer.get("allowedips", "0.0.0.0/0").split(",") if a.strip()]
+    p = {"address": host, "port": port,
+         "public_key": wg_key(peer.get("publickey"), "PublicKey"),
+         "allowed_ips": allowed}
+    if peer.get("presharedkey"):
+        p["pre_shared_key"] = wg_key(peer["presharedkey"], "PresharedKey")
+    keepalive = peer.get("persistentkeepalive", "")
+    if keepalive.isdigit() and int(keepalive) > 0:
+        p["persistent_keepalive_interval"] = int(keepalive)
+
+    mtu = 1420
+    if iface.get("mtu", "").isdigit():
+        mtu = int(iface["mtu"])
+    ep = {"type": "wireguard", "tag": TAG, "system": False, "mtu": mtu,
+          "address": addresses,
+          "private_key": wg_key(iface.get("privatekey"), "PrivateKey"),
+          "peers": [p]}
+
+    warnings = []
+    dns = [d.strip() for d in iface.get("dns", "").split(",") if d.strip()]
+    out_dns = next((d for d in dns if re.match(r"^\d+\.\d+\.\d+\.\d+$", d)), None)
+    name = os.path.splitext(os.path.basename(path))[0]
+    out = result("wg", "endpoint", host, port, name, os.path.abspath(path), ep, warnings)
+    out["dns"] = out_dns
+    return out
+
+
 def main(argv):
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
@@ -583,7 +674,9 @@ def main(argv):
         elif kind == "hy2":
             out = parse_hy2(target)
         elif kind == "ss":
-            out = parse_ss(target)
+            out = parse_ss(target, "--any-method" in argv[3:])
+        elif kind == "wg":
+            out = parse_wg(target)
         elif kind == "ovpn":
             user = password = None
             rest = argv[3:]

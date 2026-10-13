@@ -430,6 +430,12 @@ doctor() {
     check_item "Автозагрузка sing-box включена" "systemctl is-enabled --quiet sing-box"
     check_item "Службы kresd активны" \
         "systemctl is-active --quiet kresd@1 && systemctl is-active --quiet kresd@2"
+    if ! systemctl is-active --quiet kresd@1; then
+        local kresd_err
+        kresd_err=$(journalctl -u kresd@1 -n 30 --no-pager -o cat 2>/dev/null \
+            | grep -i 'error' | tail -n1 || true)
+        [ -n "$kresd_err" ] && echo -e "   ${YELLOW}kresd@1: ${kresd_err}${NC}"
+    fi
     check_item "Автопатч warper включен" "systemctl is-enabled --quiet warper-autopatch"
     check_item "kresd.conf пропатчен" "grep -q 'WARP-MOD-START' '$KRESD_CONF'"
     check_item "В kresd.conf ровно 1 WARP-блок" \
