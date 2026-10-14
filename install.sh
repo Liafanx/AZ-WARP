@@ -80,7 +80,7 @@ check_os() {
     local supported=false
     case "$ID" in
         ubuntu)
-            if [[ "$VERSION_ID" == "22.04" || "$VERSION_ID" == "24.04" ]]; then
+            if [[ "$VERSION_ID" == "22.04" || "$VERSION_ID" == "24.04" || "$VERSION_ID" == "26.04" ]]; then
                 supported=true
             fi
             ;;
@@ -92,7 +92,7 @@ check_os() {
     esac
     if [ "$supported" = false ]; then
         echo -e "${RED}Неподдерживаемая ОС: $PRETTY_NAME${NC}"
-        echo -e "${YELLOW}Поддерживаются: Ubuntu 22.04/24.04, Debian 12/13${NC}"
+        echo -e "${YELLOW}Поддерживаются: Ubuntu 22.04/24.04/26.04, Debian 12/13${NC}"
         exit 1
     fi
     echo -e " - ${GREEN}ОС: $PRETTY_NAME — поддерживается.${NC}"
