@@ -258,6 +258,8 @@ warperslave logs 50
 
 - Сразу после смены выхода OpenVPN несколько секунд поднимает туннель —
   в логе `endpoint is not ready yet`. Повторите запрос.
+- `unknown endpoint type: openvpn-client` — sing-box старее 1.14:
+  `warperslave singbox upgrade`.
 - OpenVPN с `auth-user-pass` требует логин и пароль:
   `warperslave exit openvpn ФАЙЛ.ovpn ЛОГИН ПАРОЛЬ`.
 - WireGuard: в `.conf` должен быть ровно один `[Peer]`. Для Cloudflare WARP
