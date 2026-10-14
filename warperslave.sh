@@ -256,6 +256,26 @@ get_singbox_version() {
     sing-box version 2>/dev/null | awk 'NR == 1 {print $3}'
 }
 
+# Установлен ли sing-box не старше VERSION.
+singbox_at_least() {
+    local current
+    current=$(get_singbox_version) || return 1
+    [ "$(printf '%s\n' "$1" "$current" | sort -V | head -n1)" = "$1" ]
+}
+
+# Предлагает обновить sing-box до SB_VERSION. Без терминала — только подсказка.
+offer_singbox_upgrade() {
+    local reason="$1" answer
+    echo -e "${YELLOW}${reason}: установлен sing-box $(get_singbox_version || echo '?'), нужен $SB_VERSION.${NC}" >&2
+    if ! [ -t 0 ] || ! [ -t 1 ]; then
+        echo -e "${CYAN}Обновить: warperslave singbox upgrade${NC}" >&2
+        return 1
+    fi
+    read -r -p "Обновить sing-box до $SB_VERSION? [Y/n]: " answer
+    [[ -n "$answer" && ! "$answer" =~ ^[Yy]$ ]] && return 1
+    singbox_cmd upgrade
+}
+
 # CLI: warperslave singbox version|upgrade [VERSION]
 singbox_cmd() {
     local action="${1:-}" arg="${2:-}"
@@ -571,6 +591,11 @@ set_exit() {
         direct|warp|wg|openvpn|vless|hy2|ss) ;;
         *) echo -e "${RED}Выход: direct | warp | wg | openvpn | vless | hy2 | ss${NC}" >&2; return 1 ;;
     esac
+
+    # Endpoint openvpn-client появился в sing-box 1.14
+    if [ "$mode" = "openvpn" ] && ! singbox_at_least 1.14.0; then
+        offer_singbox_upgrade "OpenVPN требует sing-box 1.14+" || return 1
+    fi
 
     local parsed="" exit_backup=""
     if [ "$mode" != "direct" ] && [ "$mode" != "warp" ]; then
@@ -1204,6 +1229,14 @@ update_warperslave() {
         return 1
     fi
 
+    # sing-box обновляется до версии из нового warperslave.sh
+    local new_sb
+    new_sb=$(grep -m1 '^SB_VERSION=' "$tmpdir/warperslave.sh" | cut -d'"' -f2)
+    if [[ "$new_sb" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && ! singbox_at_least "$new_sb"; then
+        echo -e "${CYAN}Обновление sing-box до $new_sb...${NC}"
+        singbox_cmd upgrade "$new_sb" || echo -e "${YELLOW}sing-box не обновлён. Позже: warperslave singbox upgrade${NC}"
+    fi
+
     # ===== Если служба была активна — проверяем, что она поднимется после обновления =====
     if [ "$had_service" = true ]; then
         echo -e "${CYAN}Перезапуск $SERVICE_NAME...${NC}"
@@ -1451,6 +1484,9 @@ doctor_cmd() {
     doc_mtu=$(get_mtu)
     [ -n "$doc_mtu" ] && echo -e " ${CYAN}!${NC} MTU: $doc_mtu"
 
+    if ! singbox_at_least "$SB_VERSION"; then
+        echo -e " ${YELLOW}!${NC} sing-box $(get_singbox_version || echo '?') старее $SB_VERSION — выход OpenVPN недоступен. Обновить: warperslave singbox upgrade"
+    fi
     check_item "Конфигурация slave существует" "[ -f '$SLAVE_CONF' ]"
     check_item "Конфиг sing-box-slave существует" "[ -f '$SINGBOX_SLAVE_CONF' ]"
     check_item "Конфиг sing-box-slave валиден" "validate_singbox_config"
@@ -1755,6 +1791,10 @@ case "${1:-}" in
         exit 1
         ;;
 esac
+
+if [ -t 0 ] && [ -t 1 ] && ! singbox_at_least "$SB_VERSION"; then
+    offer_singbox_upgrade "Доступно обновление sing-box" || true
+fi
 
 while true; do
     show_menu
