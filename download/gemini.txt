@@ -22,13 +22,17 @@ geller-pa.googleapis.com
 gemini.google
 gemini.google.com
 gemini.gstatic.com
+geminiweb-pa.clients6.google.com
+geminiweb-pa.clients.google.com
 generativeai.google
 generativelanguage.googleapis.com
 jules.google
 jules.google.com
 labs.google
 labs.google.com
+labstailwind.pa.googleapis.com
 makersuite.google.com
+notebook.google
 notebook.google.com
 notebooklm.google
 notebooklm.googleapis.com
