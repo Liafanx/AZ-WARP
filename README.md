@@ -919,7 +919,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.5.4"
+print(w.version)           # "1.5.5"
 print(w.is_active())       # True
 
 w.add_domain("example.com")
