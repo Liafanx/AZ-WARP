@@ -172,7 +172,7 @@ patch_kresd() {
     }
     /^if string.match\(systemd_instance, .?\^1.?\) then$/ { in_inst1=1; print; next }
     /^elseif string.match\(systemd_instance, .?\^2.?\) then$/ { in_inst1=0; print; next }
-    in_inst1 && (/Resolve blocked domains using Proxy Resolver/ || /Resolve WARP domains/) && inserted1==0 {
+    in_inst1 && (/-- Resolve WARP domains/ || /-- Resolve blocked domains/) && inserted1==0 {
         print_warp_block()
         inserted1=1
         print
@@ -276,8 +276,9 @@ patch_kresd_fullvpn() {
         print ""
     }
     /^elseif string.match\(systemd_instance, .?\^2.?\) then$/ { in_inst2=1; print; next }
-    /^end$/ { if (in_inst2) in_inst2=0; print; next }
-    in_inst2 && /Resolve blocked and full VPN domains/ && inserted2==0 {
+    /^(elseif|else|end)/ { in_inst2=0; print; next }
+    # Старый AntiZapret: "blocked and full VPN", новый: "WARP" и "full VPN"
+    in_inst2 && (/-- Resolve WARP domains/ || /-- Resolve (blocked and )?full VPN domains/) && inserted2==0 {
         print_warp_block()
         inserted2=1
     }
