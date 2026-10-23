@@ -1658,7 +1658,7 @@ ensure_subnet_in_include_ips() {
 
 # Идемпотентно переприменяет состояние WARPER, которое может затереть
 # AntiZapret: правила FORWARD, ipset antizapret-forward, ip rule,
-# маршруты (включая fake-подсеть в таблицах 13335/13336) и патч kresd.
+# маршруты (включая fake-подсеть в таблицах WARP AntiZapret) и патч kresd.
 # Ничего не трогает, если всё на месте. Рассчитан на вызов по таймеру
 # и из custom-doall.sh после ночного обновления AntiZapret.
 cli_resync() {

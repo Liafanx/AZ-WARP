@@ -262,13 +262,23 @@ remove_all_ip_rules() {
 
 # ===== Таблицы WARP AntiZapret =====
 #
-# При ANTIZAPRET_WARP/VPN_WARP AntiZapret добавляет ip rule на table 13335
-# (подсеть AntiZapret) и 13336 (подсеть FullVPN) с приоритетом 10000.
+# При ANTIZAPRET_WARP/VPN_WARP AntiZapret добавляет ip rule на таблицу
+# подсети AntiZapret и таблицу подсети FullVPN с приоритетом 10000:
+# 1000/2000 в AntiZapret с августа 2026, 13335/13336 в прежних версиях.
 # В режиме "вся подсеть" правило идёт без fwmark и перехватывает в том числе
 # трафик на fake-подсеть WARPER, поэтому наши маршруты обязаны быть в этих
 # таблицах — иначе домены уйдут в warp-* вместо singbox-tun.
 
-AZ_WARP_TABLES="13335 13336"
+# Печатает "ТАБЛИЦА_AZ ТАБЛИЦА_FULLVPN" для установленного AntiZapret
+az_warp_tables() {
+    if grep -qE "^Table = 2000|lookup 2000" /root/antizapret/up.sh 2>/dev/null; then
+        echo "1000 2000"
+    else
+        echo "13335 13336"
+    fi
+}
+
+AZ_WARP_TABLES=$(az_warp_tables)
 
 # Таблица существует и непуста?
 az_table_active() {

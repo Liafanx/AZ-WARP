@@ -60,7 +60,7 @@ FullVPN-клиенты → kresd@2 → всё → встроенный WARP Anti
 |---|---|
 | `antizapret` | `ip rule from AZ_NET lookup 100` + маршруты в `table 100` |
 | `all_vpn` | `ip rule from ALL_NET lookup 100` + маршруты в `table 100` |
-| `all` | маршруты в `main table` + `table 13335` (если есть) |
+| `all` | маршруты в `main table` + таблица WARP AntiZapret (`1000`/`2000`, в прежних версиях `13335`/`13336`) |
 
 ### Синхронизация
 
