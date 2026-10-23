@@ -113,7 +113,7 @@ restore_kresd_backup() {
     return 0
 }
 
-# ===== Патчинг =====
+# ===== Патчинг kresd.conf (AntiZapret без custom*.lua) =====
 
 # Вставляет WARP-блок в kresd.conf для kresd@1.
 # Блок читает warper-domains.txt и направляет DNS-запросы
@@ -121,8 +121,8 @@ restore_kresd_backup() {
 # Перед патчингом синхронизирует домены и создаёт/обновляет backup.
 # kresd читает список только при старте, а перезапуск занимает несколько
 # секунд — если ни список, ни kresd.conf не изменились, он пропускается.
-#   patch_kresd [--force]
-patch_kresd() {
+#   _patch_kresd_legacy [--force]
+_patch_kresd_legacy() {
     local force="${1:-}"
     if needs_down_sh; then
         echo -e "${RED}Активны правила от up.sh — сначала выполните /root/antizapret/down.sh${NC}" >&2
@@ -222,7 +222,7 @@ patch_kresd() {
 
 # Удаляет WARP-блок из kresd.conf.
 # Сначала пробует безопасное восстановление из backup/текущего clean-state.
-unpatch_kresd() {
+_unpatch_kresd_legacy() {
     if [ -f "$KRESD_BACKUP" ]; then
         restore_kresd_backup && return 0
     fi
@@ -240,7 +240,7 @@ unpatch_kresd() {
 }
 
 # Включает WARP-резолвинг для FullVPN-клиентов (kresd@2)
-patch_kresd_fullvpn() {
+_patch_kresd_fullvpn_legacy() {
     sync_domains
     if [ ! -f "$KRESD_CONF" ]; then
         echo -e "${RED}Файл $KRESD_CONF не найден.${NC}" >&2
@@ -277,8 +277,7 @@ patch_kresd_fullvpn() {
     }
     /^elseif string.match\(systemd_instance, .?\^2.?\) then$/ { in_inst2=1; print; next }
     /^(elseif|else|end)/ { in_inst2=0; print; next }
-    # Старый AntiZapret: "blocked and full VPN", новый: "WARP" и "full VPN"
-    in_inst2 && (/-- Resolve WARP domains/ || /-- Resolve (blocked and )?full VPN domains/) && inserted2==0 {
+    in_inst2 && (/-- Resolve (WARP|blocked) domains/ || /-- Resolve (blocked and )?full VPN domains/) && inserted2==0 {
         print_warp_block()
         inserted2=1
     }
@@ -314,7 +313,7 @@ patch_kresd_fullvpn() {
 }
 
 # Выключает WARP-резолвинг для FullVPN-клиентов
-unpatch_kresd_fullvpn() {
+_unpatch_kresd_fullvpn_legacy() {
     if grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
         sed -i '/-- \[FULLVPN-WARP-START\]/,/-- \[FULLVPN-WARP-END\]/d' "$KRESD_CONF"
         sed -i '/^$/N;/^\n$/d' "$KRESD_CONF"
@@ -322,6 +321,240 @@ unpatch_kresd_fullvpn() {
         systemctl restart kresd@2 || return 1
     fi
     return 0
+}
+
+# ===== custom*.lua (AntiZapret с августа 2026) =====
+#
+# kresd.conf перезаписывается при обновлении AntiZapret, а custom*.lua
+# сохраняются (и попадают в его бэкап). Свой код WARPER держит в отдельных
+# custom_az-warp.lua / custom2_az-warp.lua, в custom.lua / custom2.lua —
+# только подключение между маркерами [AZ-WARP-START]/[AZ-WARP-END].
+
+KRESD_DIR="${KRESD_DIR:-/etc/knot-resolver}"
+
+# custom.lua AntiZapret для инстанса 1|2
+_kresd_custom() {
+    if [ "$1" = 1 ]; then echo "$KRESD_DIR/custom.lua"
+    else echo "$KRESD_DIR/custom$1.lua"; fi
+}
+
+# Файл WARPER для инстанса 1|2
+_kresd_azw_lua() {
+    if [ "$1" = 1 ]; then echo "$KRESD_DIR/custom_az-warp.lua"
+    else echo "$KRESD_DIR/custom${1}_az-warp.lua"; fi
+}
+
+# kresd.conf подключает custom.lua и custom2.lua
+kresd_uses_custom() {
+    grep -qE "dofile\('[^']*/custom\.lua'\)" "$KRESD_CONF" 2>/dev/null \
+        && grep -qE "dofile\('[^']*/custom2\.lua'\)" "$KRESD_CONF" 2>/dev/null
+}
+
+_azw_lua_body() {
+    cat <<LUA
+-- AZ-WARP (WARPER): домены из warper-domains.txt резолвятся через sing-box.
+-- Файл перезаписывается WARPER, правки в нём не сохранятся.
+local warp_domains = {}
+local wfile = io.open('$ACTIVE_FILE', 'r')
+if wfile then
+	for line in wfile:lines() do
+		local clean = line:gsub('%s+', '')
+		if clean ~= '' and clean:sub(1, 1) ~= '#' then table.insert(warp_domains, clean .. '.') end
+	end
+	wfile:close()
+	if #warp_domains > 0 then
+		policy.add(policy.suffix(policy.STUB('127.0.0.1@40000'), policy.todnames(warp_domains)))
+	end
+end
+LUA
+}
+
+_azw_include() {
+    local f
+    f=$(_kresd_azw_lua "$1")
+    printf -- "-- [AZ-WARP-START]\ndo local f = io.open('%s', 'r') if f then f:close() dofile('%s') end end\n-- [AZ-WARP-END]\n" "$f" "$f"
+}
+
+# custom.lua без блока AZ-WARP в stdout
+_azw_strip_custom() {
+    [ -f "$1" ] || return 0
+    sed '/-- \[AZ-WARP-START\]/,/-- \[AZ-WARP-END\]/d' "$1"
+}
+
+# Записывает текст в файл, если он изменился, и ставит _KRESD_CHANGED=1.
+# Не вызывать в конвейере — флаг потеряется в подоболочке.
+#   _kresd_write FILE TEXT
+_kresd_write() {
+    local dst="$1" tmp
+    tmp=$(mktemp "$KRESD_DIR/.azw.XXXXXX") || return 1
+    [ -n "$2" ] && printf '%s\n' "$2" > "$tmp"
+    if [ -f "$dst" ] && cmp -s "$tmp" "$dst"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    chmod 644 "$tmp" && mv "$tmp" "$dst" || { rm -f "$tmp"; return 1; }
+    _KRESD_CHANGED=1
+}
+
+_azw_active() {
+    [ -f "$(_kresd_azw_lua "$1")" ] \
+        && grep -q '\[AZ-WARP-START\]' "$(_kresd_custom "$1")" 2>/dev/null
+}
+
+_azw_install() {
+    local custom body
+    custom=$(_kresd_custom "$1")
+    _kresd_write "$(_kresd_azw_lua "$1")" "$(_azw_lua_body)" || return 1
+    body=$(_azw_strip_custom "$custom")
+    [ -n "$body" ] && body+=$'\n\n'
+    _kresd_write "$custom" "$body$(_azw_include "$1")"
+}
+
+_azw_remove() {
+    local custom lua body
+    custom=$(_kresd_custom "$1")
+    lua=$(_kresd_azw_lua "$1")
+    if grep -q '\[AZ-WARP-START\]' "$custom" 2>/dev/null; then
+        body=$(_azw_strip_custom "$custom")
+        _kresd_write "$custom" "$body" || return 1
+    fi
+    if [ -f "$lua" ]; then
+        rm -f "$lua" || return 1
+        _KRESD_CHANGED=1
+    fi
+}
+
+# Переносит блоки из kresd.conf (WARPER до 1.5.6) в custom*.lua.
+# _KRESD_MIGRATED=1, если что-то перенесено.
+_kresd_migrate_legacy() {
+    _KRESD_MIGRATED=0
+    grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null || {
+        rm -f "$KRESD_BACKUP"
+        return 0
+    }
+    local had1=0 had2=0 tmp
+    grep -q "WARP-MOD-START" "$KRESD_CONF" && had1=1
+    grep -q "FULLVPN-WARP-START" "$KRESD_CONF" && had2=1
+    [ "$had1" = 1 ] && { _azw_install 1 || return 1; }
+    [ "$had2" = 1 ] && { _azw_install 2 || return 1; }
+    tmp=$(mktemp "$KRESD_DIR/.azw.XXXXXX") || return 1
+    strip_warper_blocks_from_kresd "$KRESD_CONF" "$tmp" \
+        && chmod 644 "$tmp" && mv "$tmp" "$KRESD_CONF" || { rm -f "$tmp"; return 1; }
+    rm -f "$KRESD_BACKUP"
+    _KRESD_CHANGED=1
+    _KRESD_MIGRATED=1
+}
+
+_kresd_fail() {
+    echo -e "${RED}Не удалось записать файлы патча DNS в $KRESD_DIR.${NC}" >&2
+    return 1
+}
+
+# ===== Публичные функции =====
+
+# WARP-блок для kresd@1 применён (в т.ч. ещё не перенесённый из kresd.conf)
+kresd_patched() {
+    { kresd_uses_custom && _azw_active 1; } \
+        || grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null
+}
+
+# WARP-блок для FullVPN (kresd@2) применён
+kresd_fullvpn_patched() {
+    { kresd_uses_custom && _azw_active 2; } \
+        || grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null
+}
+
+# В kresd.conf остались блоки, которые надо перенести в custom*.lua
+kresd_needs_migration() {
+    kresd_uses_custom \
+        && grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null
+}
+
+# Блок kresd@1 ровно один и нет остатков старой схемы
+kresd_patch_unique() {
+    if kresd_uses_custom; then
+        [ "$(grep -c '\[AZ-WARP-START\]' "$(_kresd_custom 1)" 2>/dev/null)" = 1 ] \
+            && ! grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF"
+    else
+        [ "$(grep -c 'WARP-MOD-START' "$KRESD_CONF" 2>/dev/null)" = 1 ]
+    fi
+}
+
+# Включает WARP-резолвинг для kresd@1.
+# Перед патчингом синхронизирует домены. kresd читает список только
+# при старте, а перезапуск занимает несколько секунд — если ни список,
+# ни файлы не изменились, он пропускается.
+#   patch_kresd [--force]
+patch_kresd() {
+    kresd_uses_custom || { _patch_kresd_legacy "$@"; return; }
+    local force="${1:-}"
+    if needs_down_sh; then
+        echo -e "${RED}Активны правила от up.sh — сначала выполните /root/antizapret/down.sh${NC}" >&2
+        return 1
+    fi
+
+    local domains_before
+    domains_before=$(cksum < "$ACTIVE_FILE" 2>/dev/null)
+    sync_domains
+
+    _KRESD_CHANGED=0
+    _kresd_migrate_legacy || { _kresd_fail; return 1; }
+    _azw_install 1 || { _kresd_fail; return 1; }
+
+    if [ "$force" != "--force" ] && [ "$_KRESD_CHANGED" = 0 ] \
+        && [ "$domains_before" = "$(cksum < "$ACTIVE_FILE")" ] \
+        && systemctl is-active --quiet kresd@1; then
+        KRESD_RESTART_SKIPPED=1
+        return 0
+    fi
+    KRESD_RESTART_SKIPPED=0
+
+    if ! systemctl restart kresd@1 kresd@2; then
+        echo -e "${RED}Не удалось перезапустить kresd.${NC}" >&2
+        return 1
+    fi
+}
+
+# Убирает WARP-резолвинг из kresd@1 и kresd@2
+unpatch_kresd() {
+    kresd_uses_custom || { _unpatch_kresd_legacy; return; }
+    _KRESD_CHANGED=0
+    _kresd_migrate_legacy || return 1
+    _azw_remove 1 || return 1
+    _azw_remove 2 || return 1
+    [ "$_KRESD_CHANGED" = 1 ] || return 0
+    systemctl restart kresd@1 kresd@2
+}
+
+# Включает WARP-резолвинг для FullVPN-клиентов (kresd@2)
+patch_kresd_fullvpn() {
+    kresd_uses_custom || { _patch_kresd_fullvpn_legacy; return; }
+    sync_domains
+    _KRESD_CHANGED=0
+    _kresd_migrate_legacy || { _kresd_fail; return 1; }
+    _azw_install 2 || { _kresd_fail; return 1; }
+    _kresd_restart_fullvpn
+}
+
+# Выключает WARP-резолвинг для FullVPN-клиентов
+unpatch_kresd_fullvpn() {
+    kresd_uses_custom || { _unpatch_kresd_fullvpn_legacy; return; }
+    _KRESD_CHANGED=0
+    _kresd_migrate_legacy || return 1
+    _azw_remove 2 || return 1
+    [ "$_KRESD_CHANGED" = 1 ] || return 0
+    _kresd_restart_fullvpn
+}
+
+# После переноса из kresd.conf изменился и kresd@1
+_kresd_restart_fullvpn() {
+    local units="kresd@2"
+    [ "$_KRESD_MIGRATED" = 1 ] && units="kresd@1 kresd@2"
+    # shellcheck disable=SC2086
+    systemctl restart $units || {
+        echo -e "${RED}Не удалось перезапустить kresd@2.${NC}" >&2
+        return 1
+    }
 }
 
 # Сбрасывает кэш обоих инстансов kresd.

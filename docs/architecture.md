@@ -260,8 +260,21 @@ WARPER умеет использовать внешний community-катало
 - обновлять ранее добавленные каталоги
 - не плодить дубликаты в `domains.txt`
 
-## Патчинг kresd.conf
+## Патч DNS (kresd)
 
-WARPER вставляет блок `[WARP-MOD-START]...[WARP-MOD-END]` только в секцию `kresd@1`. Блок читает `/etc/knot-resolver/warper-domains.txt` и направляет DNS-запросы для этих доменов на `127.0.0.1:40000` (sing-box DNS-in).
+Блок WARPER читает `/etc/knot-resolver/warper-domains.txt` и направляет DNS-запросы для этих доменов на `127.0.0.1:40000` (sing-box DNS-in).
+
+**AntiZapret с `custom*.lua` (с августа 2026).** `kresd.conf` не меняется. Блок лежит в отдельных файлах:
+
+| Инстанс | Файл WARPER | Подключается из |
+|---|---|---|
+| `kresd@1` (AntiZapret) | `custom_az-warp.lua` | `custom.lua` |
+| `kresd@2` (FullVPN) | `custom2_az-warp.lua` | `custom2.lua` |
+
+В `custom.lua` / `custom2.lua` добавляется только подключение между маркерами `[AZ-WARP-START]...[AZ-WARP-END]`; если файла WARPER нет, оно ничего не делает. AntiZapret сохраняет `custom*.lua` при обновлении и кладёт их в свой бэкап, поэтому патч переживает обновление AntiZapret. Блоки, вставленные прежними версиями WARPER в `kresd.conf`, переносятся в эти файлы при первом `warper patch` / `warper update`.
+
+Блок срабатывает раньше `deny.rpz` (блокировка рекламы AntiZapret) и раньше собственных WARP- и прокси-списков AntiZapret.
+
+**Старый AntiZapret без `custom*.lua`.** Блок `[WARP-MOD-START]...[WARP-MOD-END]` вставляется прямо в секцию `kresd@1` в `kresd.conf`, для FullVPN — `[FULLVPN-WARP-START]...[FULLVPN-WARP-END]` в секцию `kresd@2`; чистая копия хранится в `kresd.conf.warper.bak`.
 
 Начиная с версии 1.3.1 добавлена опциональная возможность патчить также kresd@2 для FullVPN-клиентов (см. FullVPN WARP-резолвинг).

@@ -163,6 +163,8 @@ WARPER совместим со **всеми** режимами. В режиме 
 
 WARPER умеет применять патч для `kresd@2` (FullVPN-клиенты), чтобы заданные домены также маршрутизировались через WARP/Slave/WG, как и для AntiZapret.
 
+На AntiZapret с августа 2026 `kresd.conf` не меняется: блоки WARPER лежат в `/etc/knot-resolver/custom_az-warp.lua` и `custom2_az-warp.lua` и подключаются из `custom.lua` / `custom2.lua`, поэтому переживают обновление AntiZapret (подробнее — [docs/architecture.md](docs/architecture.md)).
+
 - По умолчанию **выключен**.
 - Совместим с любым значением `VPN_WARP` (см. таблицу выше).
 - Управляется в меню: `Настройки → FullVPN WARP-резолвинг` или
@@ -919,7 +921,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.5.5"
+print(w.version)           # "1.5.6"
 print(w.is_active())       # True
 
 w.add_domain("example.com")

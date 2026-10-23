@@ -263,7 +263,7 @@ settings_menu() {
             echo -e " ${CYAN}8.${NC} Управление WARP-ключами"
         fi
         local FULLVPN_STAT
-        if grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
+        if kresd_fullvpn_patched; then
             FULLVPN_STAT="${GREEN}ВКЛ${NC}"
         else
             FULLVPN_STAT="${RED}ВЫКЛ${NC}"
@@ -408,7 +408,7 @@ settings_menu() {
 
             # ── Патч Kresd для full vpn конфигов ────────────────────────────────────────────────
             9)
-                if grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
+                if kresd_fullvpn_patched; then
                     if prompt_confirm; then
                         unpatch_kresd_fullvpn
                         FULLVPN_WARP_RESOLVE="n"

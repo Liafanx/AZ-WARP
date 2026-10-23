@@ -32,7 +32,7 @@ def get_status() -> WarperResult:
 def is_active() -> bool:
     """
     Проверяет: WARPER полностью активен
-    (sing-box запущен И kresd.conf пропатчен).
+    (sing-box запущен И патч DNS применён).
 
     Returns:
         True если WARPER активен.

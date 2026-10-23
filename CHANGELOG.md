@@ -2,6 +2,24 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.5.6] - 2026-10-23
+
+### Changed
+- Патч DNS больше не правит `kresd.conf` на AntiZapret с `custom*.lua`
+  (с августа 2026). Блоки WARPER лежат в
+  `/etc/knot-resolver/custom_az-warp.lua` (kresd@1) и
+  `custom2_az-warp.lua` (FullVPN, kresd@2), в `custom.lua` / `custom2.lua`
+  добавляется только их подключение. AntiZapret сохраняет эти файлы при
+  обновлении, и патч больше не слетает и не ломается при смене формата
+  `kresd.conf`.
+- Блоки, вставленные прежними версиями в `kresd.conf`, переносятся
+  автоматически: после `warper update` — в течение 10 минут
+  (`warper resync`), сразу — по `warper patch`. Включённый FullVPN
+  сохраняется.
+- Деинсталлятор убирает подключение из `custom*.lua` и файлы WARPER.
+- Для старого AntiZapret без `custom*.lua` остаётся вставка в `kresd.conf`;
+  FullVPN теперь работает и на нём.
+
 ## [1.5.5] - 2026-10-22
 
 ### Changed

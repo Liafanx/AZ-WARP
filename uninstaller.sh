@@ -230,21 +230,45 @@ else
     echo -e " - ${GREEN}Бинарник sing-box удалён.${NC}"
 fi
 
-echo -e "\n${YELLOW}3. Восстановление исходного kresd.conf...${NC}"
+echo -e "\n${YELLOW}3. Удаление патча DNS (kresd)...${NC}"
 KRESD_CONF="/etc/knot-resolver/kresd.conf"
 KRESD_BACKUP="/etc/knot-resolver/kresd.conf.warper.bak"
 
+KRESD_RESTART=false
+
+# AntiZapret с custom*.lua: подключение в custom.lua / custom2.lua и файлы WARPER
+for _inst in "" 2; do
+    _custom="/etc/knot-resolver/custom${_inst}.lua"
+    _azw="/etc/knot-resolver/custom${_inst}_az-warp.lua"
+    if grep -q '\[AZ-WARP-START\]' "$_custom" 2>/dev/null; then
+        sed -i '/-- \[AZ-WARP-START\]/,/-- \[AZ-WARP-END\]/d' "$_custom"
+        # Пустые строки в конце файла
+        sed -i -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' "$_custom"
+        KRESD_RESTART=true
+    fi
+    if [ -f "$_azw" ]; then
+        rm -f "$_azw"
+        KRESD_RESTART=true
+    fi
+done
+[ "$KRESD_RESTART" = true ] && echo -e " - ${GREEN}Блоки WARPER удалены из custom*.lua.${NC}"
+
+# Старая схема: блоки внутри kresd.conf
 if [ -f "$KRESD_BACKUP" ] || grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; then
     echo -e " - ${CYAN}Безопасное восстановление kresd.conf...${NC}"
     if restore_or_clean_kresd "$KRESD_CONF" "$KRESD_BACKUP"; then
-        echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
-        systemctl restart kresd@1 kresd@2 2>/dev/null || true
         rm -f "$KRESD_BACKUP"
+        KRESD_RESTART=true
     else
         echo -e " - ${YELLOW}Предупреждение: не удалось безопасно восстановить kresd.conf${NC}"
     fi
+fi
+
+if [ "$KRESD_RESTART" = true ]; then
+    echo -e " - ${CYAN}Перезапуск служб kresd...${NC}"
+    systemctl restart kresd@1 kresd@2 2>/dev/null || true
 else
-    echo -e " - ${GREEN}kresd.conf уже чист.${NC}"
+    echo -e " - ${GREEN}Патча WARPER в kresd нет.${NC}"
 fi
 
 echo -e "\n${YELLOW}4. Восстановление маршрутов и очистка...${NC}"

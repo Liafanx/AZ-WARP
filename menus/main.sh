@@ -49,7 +49,7 @@ show_main_menu() {
     fi
 
     # DNS
-    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+    if kresd_patched; then
         KR_STAT="${GREEN}✅ пропатчен${NC}"
     else
         KR_STAT="${RED}❌ не пропатчен${NC}"
@@ -207,7 +207,7 @@ show_main_menu() {
 
     # Кнопка включения / выключения WARPER
     if systemctl is-active --quiet sing-box || \
-       grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+       kresd_patched; then
         echo -e " ${RED}8.${NC} ⏹️  Отключить WARPER"
     else
         echo -e " ${GREEN}8.${NC} ▶️  Включить WARPER"

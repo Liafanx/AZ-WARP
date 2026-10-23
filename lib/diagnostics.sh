@@ -81,10 +81,10 @@ show_down_sh_warning() {
 # ===== Состояние WARPER =====
 
 # Проверяет что WARPER полностью активен:
-# sing-box запущен И kresd.conf пропатчен.
+# sing-box запущен И патч DNS применён.
 is_warper_active() {
     if systemctl is-active --quiet sing-box && \
-       grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+       kresd_patched; then
         return 0
     fi
     return 1
@@ -147,7 +147,7 @@ toggle_warper() {
 
     local action="ВКЛЮЧИТЬ"
     if systemctl is-active --quiet sing-box || \
-       grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+       kresd_patched; then
         action="ВЫКЛЮЧИТЬ"
     fi
 
@@ -250,7 +250,7 @@ status_cmd() {
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then sb_en="enabled"
     else sb_en="disabled"; fi
 
-    if grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then kr_stat="patched"
+    if kresd_patched; then kr_stat="patched"
     else kr_stat="not patched"; fi
 
     if domains_in_sync_cached; then dom_stat="synced"
@@ -437,12 +437,12 @@ doctor() {
         [ -n "$kresd_err" ] && echo -e "   ${YELLOW}kresd@1: ${kresd_err}${NC}"
     fi
     check_item "Автопатч warper включен" "systemctl is-enabled --quiet warper-autopatch"
-    check_item "kresd.conf пропатчен" "grep -q 'WARP-MOD-START' '$KRESD_CONF'"
-    check_item "В kresd.conf ровно 1 WARP-блок" \
-        "[ \"\$(grep -c 'WARP-MOD-START' '$KRESD_CONF' 2>/dev/null)\" -eq 1 ]"
+    check_item "DNS-патч WARPER применён (kresd@1)" "kresd_patched"
+    check_item "WARP-блок для kresd@1 ровно один" "kresd_patch_unique"
     check_item "Права config.json ограничены" "file_mode_is_600 '$SINGBOX_CONF'"
     check_item "Права warper.conf ограничены" "file_mode_is_600 '$CONF_FILE'"
-    check_item "Резервная копия kresd.conf существует" "[ -f '$KRESD_BACKUP' ]"
+    kresd_uses_custom \
+        || check_item "Резервная копия kresd.conf существует" "[ -f '$KRESD_BACKUP' ]"
     check_item "Домены синхронизированы" "domains_in_sync"
     check_item "Подсеть $SUBNET в include-ips.txt" "grep -qF '$SUBNET' '$AZ_INC'"
     check_item "Интерфейс singbox-tun существует" "ip link show singbox-tun"
