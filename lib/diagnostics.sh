@@ -81,7 +81,7 @@ show_down_sh_warning() {
 # ===== Состояние WARPER =====
 
 # Проверяет что WARPER полностью активен:
-# sing-box запущен И kresd.conf пропатчен.
+# sing-box запущен И патч DNS применён.
 is_warper_active() {
     if systemctl is-active --quiet sing-box && \
        kresd_patched; then

@@ -267,6 +267,15 @@ warperslave logs 50
 - Внешний IP выхода видно через локальный вход:
   `curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace`.
 
+### FullVPN: «Не удалось найти точку вставки в kresd@2»
+
+**Причина:** новый AntiZapret изменил `kresd.conf`, а WARPER до 1.5.5
+вставлял блок прямо в него.
+
+**Решение:** `warper update`. С 1.5.6 на AntiZapret с `custom*.lua` блоки
+лежат в `/etc/knot-resolver/custom_az-warp.lua` и `custom2_az-warp.lua` и
+от формата `kresd.conf` не зависят. Проверка: `warper doctor`.
+
 ### kresd не запускается: `'end' expected ... near 'return'`
 
 **Симптом:** `doctor` — «Службы kresd активны ✘», в журнале

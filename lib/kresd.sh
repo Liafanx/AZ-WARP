@@ -375,7 +375,7 @@ _azw_include() {
     printf -- "-- [AZ-WARP-START]\ndo local f = io.open('%s', 'r') if f then f:close() dofile('%s') end end\n-- [AZ-WARP-END]\n" "$f" "$f"
 }
 
-# custom.lua без блока AZ-WARP (и без пустых строк в конце) в stdout
+# custom.lua без блока AZ-WARP в stdout
 _azw_strip_custom() {
     [ -f "$1" ] || return 0
     sed '/-- \[AZ-WARP-START\]/,/-- \[AZ-WARP-END\]/d' "$1"
@@ -446,22 +446,28 @@ _kresd_migrate_legacy() {
 }
 
 _kresd_fail() {
-    echo -e "${RED}Не удалось записать ${1:-custom*.lua} в $KRESD_DIR.${NC}" >&2
+    echo -e "${RED}Не удалось записать файлы патча DNS в $KRESD_DIR.${NC}" >&2
     return 1
 }
 
 # ===== Публичные функции =====
 
-# WARP-блок для kresd@1 применён
+# WARP-блок для kresd@1 применён (в т.ч. ещё не перенесённый из kresd.conf)
 kresd_patched() {
-    if kresd_uses_custom; then _azw_active 1
-    else grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; fi
+    { kresd_uses_custom && _azw_active 1; } \
+        || grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null
 }
 
 # WARP-блок для FullVPN (kresd@2) применён
 kresd_fullvpn_patched() {
-    if kresd_uses_custom; then _azw_active 2
-    else grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null; fi
+    { kresd_uses_custom && _azw_active 2; } \
+        || grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null
+}
+
+# В kresd.conf остались блоки, которые надо перенести в custom*.lua
+kresd_needs_migration() {
+    kresd_uses_custom \
+        && grep -qE "WARP-MOD-START|FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null
 }
 
 # Блок kresd@1 ровно один и нет остатков старой схемы
@@ -492,7 +498,7 @@ patch_kresd() {
     sync_domains
 
     _KRESD_CHANGED=0
-    _kresd_migrate_legacy || { _kresd_fail "$KRESD_CONF"; return 1; }
+    _kresd_migrate_legacy || { _kresd_fail; return 1; }
     _azw_install 1 || { _kresd_fail; return 1; }
 
     if [ "$force" != "--force" ] && [ "$_KRESD_CHANGED" = 0 ] \
@@ -525,7 +531,7 @@ patch_kresd_fullvpn() {
     kresd_uses_custom || { _patch_kresd_fullvpn_legacy; return; }
     sync_domains
     _KRESD_CHANGED=0
-    _kresd_migrate_legacy || { _kresd_fail "$KRESD_CONF"; return 1; }
+    _kresd_migrate_legacy || { _kresd_fail; return 1; }
     _azw_install 2 || { _kresd_fail; return 1; }
     _kresd_restart_fullvpn
 }

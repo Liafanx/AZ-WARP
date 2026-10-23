@@ -1687,8 +1687,8 @@ cli_resync() {
         fixed=1
     fi
 
-    # AntiZapret пересобирает kresd.conf при обновлении
-    if ! kresd_patched; then
+    # Патч пропал или остался в kresd.conf от прежней версии WARPER
+    if ! kresd_patched || kresd_needs_migration; then
         patch_kresd >/dev/null 2>&1 && fixed=1
     fi
 
