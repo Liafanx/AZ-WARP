@@ -15,7 +15,7 @@ cli_toggle_warper() {
     fi
 
     if systemctl is-active --quiet sing-box || \
-       grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+       kresd_patched; then
         # Выключаем
         traffic_finalize_session 2>/dev/null || true        
         systemctl stop sing-box
@@ -612,7 +612,7 @@ cli_status_json() {
 
     systemctl is-active --quiet sing-box && sb_run="true"
     systemctl is-enabled --quiet sing-box 2>/dev/null && sb_en="true"
-    grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null && kr_patched="true"
+    kresd_patched && kr_patched="true"
     domains_in_sync_cached && dom_synced="true"
     grep -qF "$SUBNET" "$AZ_INC" 2>/dev/null && az_present="true"
     systemctl is-enabled --quiet warper-autopatch 2>/dev/null && ap_en="true"
@@ -623,7 +623,7 @@ cli_status_json() {
     az_warp_mode_v=$(az_warp_mode ANTIZAPRET_WARP)
     vpn_warp_mode_v=$(az_warp_mode VPN_WARP)
     needs_down_sh && warp_rules="true"
-    grep -q "FULLVPN-WARP-START" "$KRESD_CONF" 2>/dev/null && fullvpn_patched="true"
+    kresd_fullvpn_patched && fullvpn_patched="true"
     ip_ranges_in_sync && ip_synced="true"
 
     local log_level mtu warp_key_src
@@ -1688,7 +1688,7 @@ cli_resync() {
     fi
 
     # AntiZapret пересобирает kresd.conf при обновлении
-    if ! grep -q "WARP-MOD-START" "$KRESD_CONF" 2>/dev/null; then
+    if ! kresd_patched; then
         patch_kresd >/dev/null 2>&1 && fixed=1
     fi
 

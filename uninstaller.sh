@@ -247,6 +247,23 @@ else
     echo -e " - ${GREEN}kresd.conf уже чист.${NC}"
 fi
 
+# Подключения WARPER в custom*.lua AntiZapret и его файлы
+for _inst in "" 2; do
+    _custom="/etc/knot-resolver/custom${_inst}.lua"
+    if grep -q '\[AZ-WARP-START\]' "$_custom" 2>/dev/null; then
+        sed -i '/-- \[AZ-WARP-START\]/,/-- \[AZ-WARP-END\]/d' "$_custom"
+        _KRESD_RESTART=1
+    fi
+    if [ -f "/etc/knot-resolver/custom${_inst}_az-warp.lua" ]; then
+        rm -f "/etc/knot-resolver/custom${_inst}_az-warp.lua"
+        _KRESD_RESTART=1
+    fi
+done
+if [ "${_KRESD_RESTART:-0}" = 1 ]; then
+    echo -e " - ${CYAN}Удалены блоки WARPER из custom*.lua, перезапуск kresd...${NC}"
+    systemctl restart kresd@1 kresd@2 2>/dev/null || true
+fi
+
 echo -e "\n${YELLOW}4. Восстановление маршрутов и очистка...${NC}"
 
 NEED_DOALL=false
