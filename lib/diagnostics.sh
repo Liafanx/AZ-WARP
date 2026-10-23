@@ -372,14 +372,17 @@ doctor() {
     # без fwmark, поэтому fake-подсеть обязана быть в его таблице.
     # Пустая таблица (warp-* не поднят) ничего не перехватывает — трафик идёт
     # мимо неё, и маршрут там не нужен.
-    local table iface mode label routes
-    for table in 13335 13336; do
-        if [ "$table" = 13335 ]; then
+    local table iface mode label routes az_table
+    az_table=${AZ_WARP_TABLES%% *}
+    for table in $AZ_WARP_TABLES; do
+        if [ "$table" = "$az_table" ]; then
             mode="$az_mode"; iface="warp-antizapret"; label="домены"
         else
             mode="$vpn_mode"; iface="warp-vpn"; label="домены FullVPN"
         fi
         [ "$mode" = "all" ] || continue
+        # Без singbox-tun маршрут не нужен — это видно по проверке интерфейса
+        ip link show singbox-tun >/dev/null 2>&1 || continue
         routes=$(ip route show table "$table" 2>/dev/null || true)
         if ! grep -q "dev" <<< "$routes"; then
             echo -e " ${YELLOW}!${NC} table $table пуста: $iface не поднят — встроенный WARP AntiZapret не работает, WARPER это не затрагивает"

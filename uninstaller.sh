@@ -291,7 +291,9 @@ if [ -f "/root/warper/ip-ranges.applied" ]; then
         [ -z "$cidr" ] && continue
         ip route del "$cidr" dev singbox-tun table 100 2>/dev/null || true
         ip route del "$cidr" dev singbox-tun 2>/dev/null || true
-        ip route del "$cidr" dev singbox-tun table 13335 2>/dev/null || true
+        for table in 1000 2000 13335 13336; do
+            ip route del "$cidr" dev singbox-tun table "$table" 2>/dev/null || true
+        done
     done < "/root/warper/ip-ranges.applied"
     rm -f "/root/warper/ip-ranges.applied"
 fi

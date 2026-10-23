@@ -155,7 +155,8 @@ VLESS Encryption из Xray (`encryption=mlkem768x25519plus…`) sing-box не
 | `3`, `4` | выборочно, по `fwmark 0x2` |
 
 WARPER совместим со **всеми** режимами. В режиме `2` AntiZapret добавляет
-`ip rule ... lookup 13335` (или `13336`) без fwmark, который перехватывал бы и
+`ip rule ... lookup 1000` (или `2000`; `13335`/`13336` в версиях AntiZapret
+до августа 2026) без fwmark, который перехватывал бы и
 трафик на fake-подсеть — поэтому WARPER прописывает fake-подсеть и свои CIDR
 прямо в эти таблицы. Наличие маршрута проверяет `warper doctor`.
 
@@ -921,7 +922,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.5.6"
+print(w.version)           # "1.5.7"
 print(w.is_active())       # True
 
 w.add_domain("example.com")

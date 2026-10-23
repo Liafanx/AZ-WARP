@@ -112,11 +112,12 @@ resolvectl status singbox-tun      # DNS Servers быть не должно
 
 Начиная с 1.5.0 WARPER совместим со всеми режимами (`0`-`4`). В режиме `2`
 AntiZapret добавляет `ip rule` без fwmark, который перехватывает и трафик на
-fake-подсеть, поэтому WARPER прописывает её в таблицы 13335/13336:
+fake-подсеть, поэтому WARPER прописывает её в таблицы WARP AntiZapret:
+1000/2000 (AntiZapret с августа 2026) или 13335/13336 (прежние версии):
 
 ```bash
-ip route show table 13335 | grep 10.224
-ip route show table 13336 | grep 10.224
+ip route show table 1000 | grep 10.224     # 13335 в прежних версиях
+ip route show table 2000 | grep 10.224     # 13336 в прежних версиях
 warper resync        # если маршрута нет
 ```
 
