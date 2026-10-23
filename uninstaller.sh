@@ -241,9 +241,9 @@ for _inst in "" 2; do
     _custom="/etc/knot-resolver/custom${_inst}.lua"
     _azw="/etc/knot-resolver/custom${_inst}_az-warp.lua"
     if grep -q '\[AZ-WARP-START\]' "$_custom" 2>/dev/null; then
-        # Блок и пустые строки в конце файла
-        sed -i -e '/-- \[AZ-WARP-START\]/,/-- \[AZ-WARP-END\]/d' \
-            -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' "$_custom"
+        sed -i '/-- \[AZ-WARP-START\]/,/-- \[AZ-WARP-END\]/d' "$_custom"
+        # Пустые строки в конце файла
+        sed -i -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' "$_custom"
         KRESD_RESTART=true
     fi
     if [ -f "$_azw" ]; then
