@@ -272,7 +272,7 @@ warperslave logs 50
 **Причина:** новый AntiZapret изменил `kresd.conf`, а WARPER до 1.5.5
 вставлял блок прямо в него.
 
-**Решение:** `warper update`. С 1.5.6 на AntiZapret с `custom*.lua` блоки
+**Решение:** `warper update` до 1.5.7+. С 1.5.6 на AntiZapret с `custom*.lua` блоки
 лежат в `/etc/knot-resolver/custom_az-warp.lua` и `custom2_az-warp.lua` и
 от формата `kresd.conf` не зависят. Проверка: `warper doctor`.
 

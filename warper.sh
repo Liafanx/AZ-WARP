@@ -269,6 +269,12 @@ if [ "$(cat "$UPDATE_MARKER" 2>/dev/null)" != "$LOCAL_VER" ] && ! update_incompl
     echo "$LOCAL_VER" > "$UPDATE_MARKER" 2>/dev/null || true
 fi
 
+# Обновление кодом прежней версии оставляет блоки в kresd.conf — переносим
+# в custom*.lua при первом запуске новой
+if kresd_needs_migration && is_warper_active; then
+    patch_kresd >/dev/null 2>&1 || true
+fi
+
 # ===== CLI-обработка =====
 case "${1:-}" in
     patch)    patch_kresd "${2:-}" >/dev/null 2>&1; exit $? ;;
