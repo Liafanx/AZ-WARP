@@ -62,6 +62,8 @@ FULLVPN_WARP_RESOLVE="n"
 # Источник WARP-ключей: system | local. Только при system warper
 # следует за ключами AntiZapret и пересобирает конфиг при их смене.
 WARP_KEY_SOURCE="local"
+# DNS через туннель (real-dns): tcp | udp
+DNS_TRANSPORT="tcp"
 CURRENT_OUTBOUND_MODE="warp"
 SLAVE_SERVER=""
 SLAVE_PORT="8444"
@@ -275,6 +277,15 @@ if kresd_needs_migration && is_warper_active; then
     patch_kresd >/dev/null 2>&1 || true
 fi
 
+# Конфиг, собранный прежней версией, получает транспорт DNS из настроек.
+# flock: панель запускает несколько warper одновременно
+if dns_transport_mismatch; then
+    (
+        flock -n 9 || exit 0
+        dns_transport_mismatch && _reapply_dns_transport >/dev/null 2>&1
+    ) 9>/run/warper-dns-transport.lock || true
+fi
+
 # ===== CLI-обработка =====
 case "${1:-}" in
     patch)    patch_kresd "${2:-}" >/dev/null 2>&1; exit $? ;;
@@ -378,6 +389,7 @@ case "${1:-}" in
     subnet)      cli_subnet "${2:-}"; exit $? ;;
     loglevel)    cli_loglevel "${2:-}"; exit $? ;;
     mtu)         cli_mtu "${2:-}"; exit $? ;;
+    dns)         cli_dns "${2:-}"; exit $? ;;
     autopatch)   cli_autopatch "${2:-}"; exit $? ;;
     fullvpn)     cli_fullvpn "${2:-}"; exit $? ;;
     iproutemode) cli_iproutemode "${2:-}"; exit $? ;;

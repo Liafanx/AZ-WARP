@@ -98,6 +98,7 @@ singbox_tun_compat() {
 install_singbox_config() {
     local tmp="$1"
     singbox_tun_compat "$tmp" || { rm -f "$tmp"; return 1; }
+    apply_dns_transport "$tmp" || { rm -f "$tmp"; return 1; }
     if ! sing-box check -c "$tmp" >/dev/null 2>&1; then
         echo -e "${RED}Собранный конфиг не прошёл проверку sing-box:${NC}" >&2
         sing-box check -c "$tmp" 2>&1 | tail -n 3 >&2 || true
@@ -183,6 +184,74 @@ rebuild_config_slave() {
 
     echo -e "${GREEN}Конфигурация sing-box (slave) успешно обновлена.${NC}"
     return 0
+}
+
+# ===== DNS через туннель =====
+#
+# real-dns резолвит домены через выход (WARP/WG/OpenVPN/донор). UDP DNS
+# через туннель у части узлов теряется при живом туннеле (таймауты
+# «context deadline exceeded»), поэтому по умолчанию — TCP.
+
+# Ставит real-dns транспорт DNS_TRANSPORT в файле конфига.
+#   apply_dns_transport ФАЙЛ
+apply_dns_transport() {
+    local tmp
+    tmp=$(mktemp)
+    jq --arg t "${DNS_TRANSPORT:-tcp}" \
+        '.dns.servers |= map(if .tag == "real-dns" then .type = $t else . end)' \
+        "$1" > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$1"
+}
+
+# Транспорт real-dns в текущем config.json (пусто, если конфига нет).
+get_dns_transport() {
+    jq -r '[.dns.servers[]? | select(.tag == "real-dns") | .type][0] // empty' \
+        "$SINGBOX_CONF" 2>/dev/null || true
+}
+
+# Конфиг собран не с тем транспортом: обновлён прежней версией
+# или правился вручную.
+dns_transport_mismatch() {
+    local cur
+    cur=$(get_dns_transport)
+    [ -n "$cur" ] && [ "$cur" != "${DNS_TRANSPORT:-tcp}" ]
+}
+
+# Применяет DNS_TRANSPORT к текущему config.json и перезапускает sing-box.
+# При ошибке возвращает прежний конфиг.
+_reapply_dns_transport() {
+    local tmp
+    [ -f "$SINGBOX_CONF" ] || return 0
+    tmp=$(mktemp)
+    cp -a "$SINGBOX_CONF" "$tmp"
+    install_singbox_config "$tmp" || return 1
+    systemctl is-active --quiet sing-box || return 0
+    if ! restart_singbox_full >/dev/null 2>&1; then
+        cp -a "${SINGBOX_CONF}.bak" "$SINGBOX_CONF"
+        restart_singbox_full >/dev/null 2>&1 || true
+        return 1
+    fi
+}
+
+# Меняет транспорт DNS через туннель: tcp | udp.
+set_dns_transport() {
+    local new="$1" old="$DNS_TRANSPORT"
+    case "$new" in
+        tcp|udp) ;;
+        *) echo -e "${RED}Допустимо: tcp или udp${NC}" >&2; return 1 ;;
+    esac
+    if [ "$new" = "$old" ] && ! dns_transport_mismatch; then
+        echo -e "${YELLOW}DNS через туннель уже: ${new^^}${NC}"
+        return 0
+    fi
+    DNS_TRANSPORT="$new"
+    if ! _reapply_dns_transport; then
+        DNS_TRANSPORT="$old"
+        echo -e "${RED}Не удалось применить, оставлен ${old^^}.${NC}" >&2
+        return 1
+    fi
+    save_main_config
+    echo -e "${GREEN}DNS через туннель: ${new^^}${NC}"
 }
 
 # ===== Log level =====

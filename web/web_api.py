@@ -285,6 +285,10 @@ def set_log_level(level: str) -> tuple[bool, str]:
     return _to_tuple(_api.set_log_level(level))
 
 
+def set_dns_transport(transport: str) -> tuple[bool, str]:
+    return _to_tuple(_api.set_dns_transport(transport))
+
+
 def set_mtu(mtu: int) -> tuple[bool, str]:
     return _to_tuple(_api.set_mtu(mtu))
 

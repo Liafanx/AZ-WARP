@@ -315,6 +315,7 @@ cli_config_get() {
         OUTBOUND_NAME) jq -r '.name // empty' "$OUTBOUND_JSON" 2>/dev/null ;;
         LOG_LEVEL) get_log_level ;;
         MTU) get_mtu ;;
+        DNS_TRANSPORT) echo "$DNS_TRANSPORT" ;;
         *) echo "ERROR: unknown key: $key" >&2; return 1 ;;
     esac
 }
@@ -418,6 +419,24 @@ cli_loglevel() {
         echo "ERROR: failed to set log level" >&2
         return 1
     fi
+}
+
+# ===== DNS ЧЕРЕЗ ТУННЕЛЬ =====
+
+# warper dns [tcp|udp] — без аргумента печатает текущий транспорт.
+cli_dns() {
+    case "${1:-}" in
+        "") echo "$DNS_TRANSPORT" ;;
+        tcp|udp)
+            if set_dns_transport "$1" >/dev/null 2>&1; then
+                echo "DNS transport set to: $1"
+            else
+                echo "ERROR: failed to set DNS transport" >&2
+                return 1
+            fi
+            ;;
+        *) echo "Usage: warper dns [tcp|udp]" >&2; return 1 ;;
+    esac
 }
 
 # ===== MTU =====
@@ -666,6 +685,7 @@ cli_status_json() {
         --argjson singbox_enabled "$sb_en" \
         --arg log_level "$log_level" \
         --argjson mtu "$mtu" \
+        --arg dns_transport "$DNS_TRANSPORT" \
         --argjson kresd_patched "$kr_patched" \
         --argjson fullvpn_patched "$fullvpn_patched" \
         --arg fullvpn_warp_resolve "$FULLVPN_WARP_RESOLVE" \
@@ -708,7 +728,8 @@ cli_status_json() {
                 running: $singbox_running,
                 enabled: $singbox_enabled,
                 log_level: $log_level,
-                mtu: $mtu
+                mtu: $mtu,
+                dns_transport: $dns_transport
             },
             kresd: {
                 patched: $kresd_patched,
@@ -1988,6 +2009,7 @@ cli_config_set() {
         FULLVPN_WARP_RESOLVE)    cli_fullvpn "$value" ;;
         LOG_LEVEL)               cli_loglevel "$value" ;;
         MTU)                     cli_mtu "$value" ;;
+        DNS_TRANSPORT)           cli_dns "$value" ;;
         WARP_KEY_SOURCE)
             case "$value" in
                 system|local) WARP_KEY_SOURCE="$value"; save_main_config
@@ -1997,7 +2019,7 @@ cli_config_set() {
             ;;
         *)
             echo "ERROR: unknown or read-only key: $key" >&2
-            echo "Writable: SUBNET IP_ROUTE_MODE IP_EXPORT_TO_ANTIZAPRET FULLVPN_WARP_RESOLVE LOG_LEVEL MTU WARP_KEY_SOURCE" >&2
+            echo "Writable: SUBNET IP_ROUTE_MODE IP_EXPORT_TO_ANTIZAPRET FULLVPN_WARP_RESOLVE LOG_LEVEL MTU DNS_TRANSPORT WARP_KEY_SOURCE" >&2
             return 1
             ;;
     esac
@@ -2088,6 +2110,7 @@ IP-подсети:
   singbox upgrade [ВЕРСИЯ]     обновить бинарь
   logs [N]                     логи sing-box
   loglevel УРОВЕНЬ             debug | info | warn | error
+  dns [tcp|udp]                DNS через туннель (по умолчанию tcp)
   mtu ЗНАЧЕНИЕ                 1280-1500
 
 Веб-панель:

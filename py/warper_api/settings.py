@@ -224,6 +224,46 @@ def get_log_level() -> str:
     return "info"
 
 
+# ==================== DNS через туннель ====================
+
+def set_dns_transport(transport: str) -> WarperResult:
+    """
+    Транспорт DNS через туннель (real-dns): TCP или UDP.
+
+    По умолчанию TCP: UDP DNS через WARP/WG/OpenVPN у части узлов
+    теряется при живом туннеле. sing-box перезапускается.
+
+    Args:
+        transport: 'tcp' | 'udp'.
+
+    Returns:
+        WarperResult.
+
+    Example:
+        >>> set_dns_transport("udp")
+        WarperResult(OK, 'DNS transport set to: udp')
+    """
+    transport = str(transport).strip().lower()
+    if transport not in ("tcp", "udp"):
+        return WarperResult(
+            ok=False,
+            message=f"Недопустимый транспорт DNS: {transport}. Допустимо: tcp, udp",
+        )
+    return run_warper("dns", transport, timeout=60)
+
+
+def get_dns_transport() -> str:
+    """
+    Текущий транспорт DNS через туннель.
+
+    Returns:
+        'tcp' | 'udp'. При ошибке — 'tcp'.
+    """
+    result = run_warper("config", "get", "DNS_TRANSPORT", timeout=10)
+    value = result.raw_stdout.strip() if result.ok else ""
+    return value if value in ("tcp", "udp") else "tcp"
+
+
 # ==================== Автопатч ====================
 
 def set_autopatch(enable: bool) -> WarperResult:

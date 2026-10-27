@@ -609,7 +609,8 @@ class WarperAPI:
 
         Args:
             key: SUBNET | IP_ROUTE_MODE | IP_EXPORT_TO_ANTIZAPRET |
-                 FULLVPN_WARP_RESOLVE | LOG_LEVEL | MTU | WARP_KEY_SOURCE.
+                 FULLVPN_WARP_RESOLVE | LOG_LEVEL | MTU | DNS_TRANSPORT |
+                 WARP_KEY_SOURCE.
             value: Новое значение.
         """
         return settings.config_set(key, value)
@@ -630,6 +631,19 @@ class WarperAPI:
             level: 'debug' | 'info' | 'warn' | 'error'.
         """
         return settings.set_log_level(level)
+
+    def get_dns_transport(self) -> str:
+        """Транспорт DNS через туннель: 'tcp' | 'udp'."""
+        return settings.get_dns_transport()
+
+    def set_dns_transport(self, transport: str) -> WarperResult:
+        """
+        Транспорт DNS через туннель (по умолчанию TCP).
+
+        Args:
+            transport: 'tcp' | 'udp'.
+        """
+        return settings.set_dns_transport(transport)
 
     def set_autopatch(self, enable: bool) -> WarperResult:
         """Включить/выключить автопатч DNS при загрузке."""

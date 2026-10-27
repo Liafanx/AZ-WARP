@@ -68,7 +68,7 @@
     <section class="bg-surface-900/60 border border-emerald-900/40 rounded-xl p-5">
         <h3 class="text-sm font-semibold text-emerald-200 mb-4">Параметры sing-box</h3>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 
             <!-- Log level -->
             <div>
@@ -101,6 +101,22 @@
                     </button>
                 </form>
                 <p class="text-xs text-emerald-500/60 mt-1">Текущий: {{ status.singbox.mtu }}</p>
+            </div>
+
+            <!-- DNS через туннель -->
+            <div>
+                <label class="block text-sm text-emerald-300 mb-2">DNS через туннель</label>
+                {% set dns_tr = status.singbox.dns_transport or 'tcp' %}
+                <select name="transport"
+                        hx-post="{{ url_for('htmx_settings_dns_transport') }}"
+                        hx-trigger="change"
+                        hx-swap="none"
+                        class="w-full px-3 py-2 bg-surface-950 border border-emerald-900/50 rounded-lg
+                               text-emerald-100 text-sm focus:border-brand-500 focus:outline-none">
+                    <option value="tcp" {% if dns_tr == 'tcp' %}selected{% endif %}>TCP (рекомендуется)</option>
+                    <option value="udp" {% if dns_tr == 'udp' %}selected{% endif %}>UDP</option>
+                </select>
+                <p class="text-xs text-emerald-500/60 mt-1">UDP DNS через туннель у части узлов теряется. Смена перезапускает sing-box.</p>
             </div>
         </div>
     </section>

@@ -268,6 +268,21 @@ warperslave logs 50
 - Внешний IP выхода видно через локальный вход:
   `curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace`.
 
+### `dns: lookup failed ...: context deadline exceeded`, сайты открываются через раз
+
+Туннель жив, соединения по IP проходят, но домены не резолвятся: UDP DNS
+через выход (WARP / WG / OpenVPN, особенно бесплатный ProtonVPN) теряется.
+С 1.5.8 WARPER и с 1.2.2 WARPERSLAVE шлют DNS через туннель по TCP. Проверить:
+
+```bash
+warper dns                  # tcp | udp
+warperslave dns
+journalctl -u sing-box-slave --since "-10min" -o cat | grep -c "context deadline exceeded"
+```
+
+Если стоит `udp` — `warper dns tcp` / `warperslave dns tcp`. Единичные
+таймауты для несуществующих доменов — норма.
+
 ### FullVPN: «Не удалось найти точку вставки в kresd@2»
 
 **Причина:** новый AntiZapret изменил `kresd.conf`, а WARPER до 1.5.5

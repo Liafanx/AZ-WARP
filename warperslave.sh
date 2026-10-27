@@ -55,6 +55,8 @@ REALITY_PUBLIC_KEY=""
 REALITY_SHORT_ID=""
 HY2_PASSWORD=""
 HY2_OBFS_PASSWORD=""
+# DNS через выход-туннель (exit-dns): tcp | udp
+DNS_TRANSPORT="tcp"
 
 LOCAL_PORT=""
 EXIT_JSON="$SLAVE_DIR/exit.json"
@@ -85,6 +87,8 @@ load_config() {
     HY2_PASSWORD=$(load_config_value "HY2_PASSWORD" | tr -d '[:space:]')
     HY2_OBFS_PASSWORD=$(load_config_value "HY2_OBFS_PASSWORD" | tr -d '[:space:]')
     LOCAL_PORT=$(load_config_value "LOCAL_PORT" | tr -d '[:space:]')
+    DNS_TRANSPORT=$(load_config_value "DNS_TRANSPORT" | tr -d '[:space:]')
+    [ "$DNS_TRANSPORT" = "udp" ] || DNS_TRANSPORT="tcp"
     # Установки до 1.1.0 знали только Shadowsocks
     SLAVE_PROTO="${SLAVE_PROTO:-ss}"
     SLAVE_SNI="${SLAVE_SNI:-$DEFAULT_SNI}"
@@ -105,6 +109,7 @@ save_config() {
         echo "HY2_PASSWORD=$HY2_PASSWORD"
         echo "HY2_OBFS_PASSWORD=$HY2_OBFS_PASSWORD"
         echo "LOCAL_PORT=$LOCAL_PORT"
+        echo "DNS_TRANSPORT=$DNS_TRANSPORT"
     } > "$SLAVE_CONF"
     chmod 600 "$SLAVE_CONF"
 }
@@ -466,7 +471,7 @@ _slave_render() {
     esac
 
     jq -n --argjson in "$inbound" --argjson local "$local_in" --arg level "$level" \
-          --argjson x "$exit_spec" '
+          --argjson x "$exit_spec" --arg dt "$DNS_TRANSPORT" '
         ([$in, $local] | map(select(. != null))) as $ins
         | ($ins | map(.tag)) as $tags
         | {log:{level:$level}, inbounds:$ins,
@@ -476,7 +481,7 @@ _slave_render() {
             .dns = {servers:[{tag:"local", type:"udp", server:"1.1.1.1"}], strategy:"ipv4_only"}
             | .route.rules = [{inbound:$tags, outbound:"direct"}]
           else
-            .dns = {servers:[{tag:"exit-dns", type:"udp", server:($x.dns // "1.1.1.1"), detour:"exit"},
+            .dns = {servers:[{tag:"exit-dns", type:$dt, server:($x.dns // "1.1.1.1"), detour:"exit"},
                              {tag:"local", type:"udp", server:"8.8.8.8"}],
                     strategy:"ipv4_only"}
             | if $x.kind == "endpoint" then
@@ -1284,6 +1289,7 @@ status_cmd() {
     echo "Public IPv4: $ext_ip"
     echo "Local in:    $(local_cmd)"
     echo "Log level:   $(get_log_level)"
+    [ "$SLAVE_MODE" != "direct" ] && echo "Exit DNS:    ${DNS_TRANSPORT^^}"
     local mtu_val
     mtu_val=$(get_mtu)
     [ -n "$mtu_val" ] && echo "MTU:         $mtu_val"
@@ -1480,6 +1486,7 @@ doctor_cmd() {
     echo -e " ${CYAN}!${NC} Версия: $LOCAL_VER"
     echo -e " ${CYAN}!${NC} Протокол: $(proto_label), выход: $(exit_label)"
     echo -e " ${CYAN}!${NC} Log level: $(get_log_level)"
+    [ "$SLAVE_MODE" != "direct" ] && echo -e " ${CYAN}!${NC} DNS через выход: ${DNS_TRANSPORT^^}"
     local doc_mtu
     doc_mtu=$(get_mtu)
     [ -n "$doc_mtu" ] && echo -e " ${CYAN}!${NC} MTU: $doc_mtu"
@@ -1633,6 +1640,9 @@ show_menu() {
     if [ -n "$(get_mtu)" ]; then
     echo -e " ${CYAN}8.${NC} ⚙️  Изменить MTU"
     fi
+    if [ "$SLAVE_MODE" != "direct" ]; then
+    echo -e " ${CYAN}N.${NC} 🌐 DNS через выход (сейчас: ${DNS_TRANSPORT^^})"
+    fi
     echo -e " ${CYAN}D.${NC} 🩺 Диагностика"
     echo -e " ${CYAN}S.${NC} 📊 Статус"
     echo -e "${CYAN}------------------------------------------------${NC}"
@@ -1667,6 +1677,49 @@ migrate_legacy_config() {
     rm -f "$snap"
 }
 migrate_legacy_config "${1:-}"
+
+# Транспорт exit-dns в текущем конфиге (пусто для direct).
+get_dns_transport() {
+    jq -r '[.dns.servers[]? | select(.tag == "exit-dns") | .type][0] // empty' \
+        "$SINGBOX_SLAVE_CONF" 2>/dev/null || true
+}
+
+# Конфиг до 1.2.2 собран с UDP DNS, а обновлятор прежней версии его не
+# пересобирает — делаем это при первом запуске новой.
+migrate_dns_transport() {
+    [ -f "$SLAVE_CONF" ] || return 0
+    case "${1:-}" in help|--help|-h|version|--version|-v|uninstall|dns) return 0 ;; esac
+    load_config
+    local cur snap
+    cur=$(get_dns_transport)
+    [ -n "$cur" ] && [ "$cur" != "$DNS_TRANSPORT" ] || return 0
+    snap=$(snapshot_slave_conf)
+    if apply_slave_config "$snap"; then
+        echo -e "${CYAN}DNS через выход переведён на ${DNS_TRANSPORT^^}.${NC}" >&2
+    fi
+    rm -f "$snap"
+}
+migrate_dns_transport "${1:-}"
+
+# Меняет транспорт DNS через выход: tcp | udp.
+#   dns_cmd [tcp|udp]
+dns_cmd() {
+    load_config
+    local new="${1:-}"
+    if [ -z "$new" ]; then echo "$DNS_TRANSPORT"; return 0; fi
+    case "$new" in
+        tcp|udp) ;;
+        *) echo "Использование: warperslave dns [tcp|udp]" >&2; return 1 ;;
+    esac
+    local snap
+    snap=$(snapshot_slave_conf)
+    DNS_TRANSPORT="$new"
+    if apply_slave_config "$snap"; then
+        echo -e "${GREEN}DNS через выход: ${new^^}${NC}"
+        rm -f "$snap"; return 0
+    fi
+    rm -f "$snap"; return 1
+}
 
 case "${1:-}" in
     status) load_config; status_cmd; exit $? ;;
@@ -1718,6 +1771,7 @@ case "${1:-}" in
         echo "$SERVICE_NAME: $(systemctl is-active "$SERVICE_NAME" 2>/dev/null)"
         exit 0
         ;;
+    dns) dns_cmd "${2:-}"; exit $? ;;
     loglevel)
         load_config
         if [ -z "${2:-}" ]; then get_log_level; exit 0; fi
@@ -1771,6 +1825,7 @@ case "${1:-}" in
         echo "  restart    Перезапустить службу"
         echo "  loglevel [УРОВЕНЬ]  Показать или изменить log level"
         echo "  mtu [ЗНАЧЕНИЕ]      Показать или изменить MTU"
+        echo "  dns [tcp|udp]       DNS через выход-туннель (по умолчанию tcp)"
         echo "  showkey    Показать полный SS-ключ"
         echo "  proto ss|vless|hy2 [SNI]  Протокол подключения master к донору"
         echo "  link [--command]  Ссылка и команда для master (--command — только команда)"
@@ -1813,6 +1868,15 @@ while true; do
             read -r -p "Нажмите Enter..."
             ;;
         p|P) change_proto; read -r -p "Нажмите Enter..." ;;
+        n|N)
+            load_config
+            _dns_new=tcp
+            [ "$DNS_TRANSPORT" = "tcp" ] && _dns_new=udp
+            echo -e "\n${CYAN}TCP надёжнее: UDP DNS через туннель выхода у части узлов теряется.${NC}"
+            read -r -e -p "Переключить на ${_dns_new^^}? [y/N]: " _ans
+            [[ "$_ans" =~ ^[Yy]$ ]] && dns_cmd "$_dns_new"
+            read -r -p "Нажмите Enter..."
+            ;;
         5)
             echo -e "${YELLOW}Перезапуск $SERVICE_NAME...${NC}"
             systemctl restart "$SERVICE_NAME"

@@ -273,10 +273,11 @@ settings_menu() {
         if [ "$(cli_resolve status)" = "enabled" ]; then AR_STAT="${GREEN}ВКЛ${NC}"
         else AR_STAT="${RED}ВЫКЛ${NC}"; fi
         echo -e " ${CYAN}A.${NC} Авто-резолв доменов в IP:      [$AR_STAT]"
+        echo -e " ${CYAN}B.${NC} DNS через туннель:             [${DNS_TRANSPORT^^}]"
         echo -e " ${CYAN}0.${NC} Назад в главное меню"
         echo -e "${CYAN}==========================================${NC}"
 
-        read -r -e -p "Выбор [0-9, A]: " set_choice
+        read -r -e -p "Выбор [0-9, A, B]: " set_choice
         case "${set_choice:-}" in
 
             # ── Автопатч ──────────────────────────────────────────────────
@@ -429,6 +430,16 @@ settings_menu() {
 
             # ── Авто-резолв ───────────────────────────────────────────────
             a|A) auto_resolve_menu ;;
+
+            # ── DNS через туннель ─────────────────────────────────────────
+            b|B)
+                local dns_new=tcp
+                [ "$DNS_TRANSPORT" = "tcp" ] && dns_new=udp
+                echo -e "\n${CYAN}TCP надёжнее: UDP DNS через туннель у части узлов теряется.${NC}"
+                echo -e "Переключить DNS через туннель на ${YELLOW}${dns_new^^}${NC}? sing-box перезапустится."
+                prompt_confirm && set_dns_transport "$dns_new"
+                sleep 2
+                ;;
 
             # ── Назад ─────────────────────────────────────────────────────
             0) return ;;

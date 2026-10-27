@@ -700,6 +700,13 @@ def htmx_settings_log_level():
     return _result_partial(ok, msg, "refreshAll")
 
 
+@app.route("/htmx/settings/dns-transport", methods=["POST"])
+@login_required
+def htmx_settings_dns_transport():
+    ok, msg = api.set_dns_transport(request.form.get("transport", ""))
+    return _result_partial(ok, msg, "refreshAll")
+
+
 @app.route("/htmx/settings/mtu", methods=["POST"])
 @login_required
 def htmx_settings_mtu():
