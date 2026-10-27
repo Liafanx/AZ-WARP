@@ -149,6 +149,13 @@ kresd@1/ip route → fake-ip → singbox-tun → WireGuard endpoint → WG-се�
 Для Hysteria2 в ссылке передаётся `spki` — хэш публичного ключа сертификата,
 master пиннит его вместо проверки CA.
 
+DNS через выход (`exit-dns` донора, `real-dns` master) по умолчанию идёт по
+TCP: UDP DNS через туннель у части узлов теряется. Транспорт задаётся
+`DNS_TRANSPORT=tcp|udp` в `warper.conf` и `slave.conf` (`warper dns`,
+`warperslave dns`). На master его подставляет `install_singbox_config`
+при любой сборке конфига. Конфиг, собранный прежней версией, обе программы
+пересобирают при первом запуске.
+
 ## Шаблоны конфигураций
 
 | Шаблон | Назначение |

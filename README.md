@@ -245,7 +245,7 @@ WARPER включает опциональную **веб-панель** — б�
 - Переключение режимов WARP / Slave / WG / VLESS / Hysteria2 / OpenVPN прямо из браузера
 - Загрузка WG- и OpenVPN-конфигов через drag & drop, вставка ссылок vless:// hy2:// ss://
 - Управление WARP-ключами (выбор источника, генерация)
-- Все настройки: log level, MTU, fake-подсеть, FullVPN-резолвинг, режим IP-маршрутов
+- Все настройки: log level, MTU, DNS через туннель, fake-подсеть, FullVPN-резолвинг, режим IP-маршрутов
 - Просмотр логов sing-box в реальном времени с фильтром
 - Запуск `warper doctor` (диагностика) одной кнопкой
 - Проверка обновлений и установка одной кнопкой (с прогрессом в реальном времени)
@@ -524,6 +524,7 @@ warper config get SUBNET        # прочитать параметр
 warper config set MTU 1380      # изменить параметр
 warper subnet 10.224.0.0/16     # сменить fake-подсеть
 warper loglevel debug           # уровень логов sing-box
+warper dns udp                  # DNS через туннель: tcp (по умолчанию) | udp
 warper mtu 1420                 # MTU
 warper autopatch on|off         # автопатч DNS при загрузке
 warper fullvpn on|off           # WARP-резолвинг для FullVPN-клиентов
@@ -676,6 +677,7 @@ warperslave restart            # перезапустить службу
 warperslave logs 100           # логи службы
 warperslave loglevel           # показать log level
 warperslave loglevel debug     # изменить log level
+warperslave dns udp            # DNS через выход-туннель: tcp (по умолчанию) | udp
 warperslave mtu                # показать MTU
 warperslave mtu 1380           # изменить MTU (выходы WARP, WireGuard, OpenVPN)
 warperslave singbox version    # версия sing-box
@@ -780,6 +782,18 @@ WARPER — менеджер доменной маршрутизации. Ког�
 <summary><b>Как изменить MTU / log level?</b></summary>
 
 `warper` → `Настройки (9)` → `Изменить MTU (6)` или `Изменить log level (5)`.
+</details>
+
+<details>
+<summary><b>DNS через туннель: TCP или UDP?</b></summary>
+
+Домены, которые WARPER ведёт через WARP / WG / OpenVPN / донор, резолвятся
+через этот же выход (`1.1.1.1`). С 1.5.8 запросы идут по **TCP**: UDP DNS
+через туннель у части узлов (например, бесплатный ProtonVPN) теряется при
+живом туннеле — в логах `dns: lookup failed ...: context deadline exceeded`,
+сайты открываются через раз. Вернуть UDP: `warper` → `Настройки (9)` →
+`DNS через туннель (B)`, панель или `warper dns udp`. На доноре —
+`warperslave dns udp` или пункт `N` в меню.
 </details>
 
 <details>
@@ -922,7 +936,7 @@ pip install git+https://github.com/Liafanx/AZ-WARP.git#subdirectory=py
 from warper_api import WarperAPI
 
 w = WarperAPI()
-print(w.version)           # "1.5.7"
+print(w.version)           # "1.5.8"
 print(w.is_active())       # True
 
 w.add_domain("example.com")

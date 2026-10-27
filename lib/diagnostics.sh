@@ -298,6 +298,7 @@ status_cmd() {
     echo "sing-box autostart: $sb_en"
     echo "sing-box log level: $log_level"
     echo "sing-box MTU: $mtu"
+    echo "DNS через туннель: ${DNS_TRANSPORT^^}"
     echo "kresd patch: $kr_stat"
     local fullvpn_resolve_status
     if [ "$FULLVPN_WARP_RESOLVE" = "y" ]; then

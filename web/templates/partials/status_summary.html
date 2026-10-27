@@ -113,6 +113,10 @@
                 <span class="text-emerald-400/70">MTU</span>
                 <span class="text-emerald-200 font-mono">{{ sb.mtu }}</span>
             </div>
+            <div class="flex justify-between">
+                <span class="text-emerald-400/70">DNS через туннель</span>
+                <span class="text-emerald-200 font-mono">{{ (sb.dns_transport or 'tcp')|upper }}</span>
+            </div>
         </div>
     </div>
 

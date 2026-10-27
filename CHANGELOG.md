@@ -2,6 +2,24 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## [1.5.8] - 2026-10-27
+
+### Changed
+- DNS через туннель (WARP / WG / OpenVPN / донор) по умолчанию идёт по TCP,
+  а не по UDP. На части узлов, например на бесплатном ProtonVPN, UDP DNS
+  через живой туннель терялся: `context deadline exceeded`, сайты
+  открывались через раз. Действует и для WARPERSLAVE 1.2.2.
+- Конфиг, собранный прежней версией, переводится на TCP при первом запуске
+  после обновления.
+
+### Added
+- Переключатель DNS через туннель TCP / UDP: пункт `B` в настройках
+  WARPER, панель, `warper dns tcp|udp`, `warper config get|set DNS_TRANSPORT`.
+  На доноре — пункт `N` в меню и `warperslave dns tcp|udp`.
+- Python API: `get_dns_transport()`, `set_dns_transport(transport)`, поле
+  `singbox.dns_transport` в `get_status()`. Прежние методы и поля
+  не изменились.
+
 ## [1.5.7] - 2026-10-23
 
 ### Fixed

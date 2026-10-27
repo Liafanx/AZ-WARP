@@ -110,7 +110,7 @@ from warper_api import WarperAPI
 w = WarperAPI()
 
 # Версия и статус
-print(w.version)          # "1.5.7"
+print(w.version)          # "1.5.8"
 print(w.is_active())      # True
 
 # Полный статус (JSON)
@@ -176,7 +176,7 @@ class WarperResult:
 |---|---|
 | `version` (свойство), `get_version()` | `str` |
 | `is_active()` | `bool` |
-| `get_mode()`, `get_log_level()`, `get_traffic_today()` | `str` |
+| `get_mode()`, `get_log_level()`, `get_dns_transport()`, `get_traffic_today()` | `str` |
 | `get_mtu()` | `int` |
 
 ### Поля `get_status().data`
@@ -190,7 +190,7 @@ class WarperResult:
 | `outbound` | dict | `protocol`, `server`, `port`, `ports`, `name`, `transport` (для vless/hy2/openvpn) |
 | `slave` | dict | `server`, `port`, `password` |
 | `wg` | dict | `endpoint_host`, `endpoint_port`, `address`, `conf_file` |
-| `singbox` | dict | `running`, `enabled`, `log_level`, `mtu` |
+| `singbox` | dict | `running`, `enabled`, `log_level`, `mtu`, `dns_transport` (`tcp` / `udp`, с 1.5.8) |
 | `kresd` | dict | `patched`, `fullvpn_patched` |
 | `domains` | dict | `synced` |
 | `subnet` | dict | `fake`, `in_antizapret`, `conflict` |
@@ -327,6 +327,8 @@ AntiZapret отдают чистые CIDR.
 | `get_mtu()` | Текущий MTU |
 | `set_log_level(level)` | Log level (`debug` / `info` / `warn` / `error`) |
 | `get_log_level()` | Текущий log level |
+| `set_dns_transport(transport)` | DNS через туннель: `tcp` (по умолчанию) / `udp`, перезапускает sing-box. С 1.5.8 |
+| `get_dns_transport()` | Текущий транспорт DNS через туннель |
 | `set_autopatch(enable)` | Автопатч DNS при загрузке |
 | `set_fullvpn(enable)` | FullVPN WARP-резолвинг |
 | `list_warp_keys()` | Доступные WARP-ключи |
@@ -412,7 +414,7 @@ Python API использует CLI `warper` как backend. Это означа
 
 ```python
 import warper_api
-print(warper_api.__version__)  # "1.5.7"
+print(warper_api.__version__)  # "1.5.8"
 ```
 
 
