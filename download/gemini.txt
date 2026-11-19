@@ -11,6 +11,9 @@ antigravity.google
 antigravity.googleapis.com
 antigravity-pa.googleapis.com
 antigravity-unleash.goog
+appsgenaiserver-pa.clients6.google.com
+appsgenaiserver-pa.clients.google.com
+appsgenaiserver-pa.googleapis.com
 bard.google.com
 cloudaicompanion.googleapis.com
 cloudcode-pa.googleapis.com
@@ -18,6 +21,7 @@ daily-cloudcode-pa.googleapis.com
 deepmind.com
 deepmind.google
 flow.google
+flow.google.com
 geller-pa.googleapis.com
 gemini.google
 gemini.google.com
@@ -44,6 +48,3 @@ proactivebackend-pa.googleapis.com
 robinfrontend-pa.googleapis.com
 stitch.withgoogle.com
 webchannel-alkalimakersuite-pa.clients6.google.com
-apis.google.com
-people-pa.clients6.google.com
-waa-pa.clients6.google.com
