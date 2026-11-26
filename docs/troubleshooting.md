@@ -110,15 +110,18 @@ resolvectl status singbox-tun      # DNS Servers быть не должно
 
 ### Встроенный WARP AntiZapret (ANTIZAPRET_WARP / VPN_WARP)
 
-Начиная с 1.5.0 WARPER совместим со всеми режимами (`0`-`4`). В режиме `2`
-AntiZapret добавляет `ip rule` без fwmark, который перехватывает и трафик на
-fake-подсеть, поэтому WARPER прописывает её в таблицы WARP AntiZapret:
-1000/2000 (AntiZapret с августа 2026) или 13335/13336 (прежние версии):
+С WARPER 1.5.9 правила для клиентских CIDR должны указывать на таблицу
+`100` с приоритетом `50`. В актуальном AntiZapret встроенный WARP использует
+таблицы `1`/`2` и приоритеты `100`/`200`. В старых версиях AntiZapret
+проверяйте таблицы `1000`/`2000` или `13335`/`13336`.
+Маршрут fake-подсети должен быть в каждой активной таблице WARP.
 
 ```bash
-ip route show table 1000 | grep 10.224     # 13335 в прежних версиях
-ip route show table 2000 | grep 10.224     # 13336 в прежних версиях
-warper resync        # если маршрута нет
+ip -4 rule show
+ip route show table 1
+ip route show table 2
+warper doctor
+warper resync        # повторно применить маршруты и перенести старое правило 500
 ```
 
 ### Веб-панель недоступна, nginx не стартует

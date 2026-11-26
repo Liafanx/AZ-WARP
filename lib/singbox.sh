@@ -63,15 +63,10 @@ reset_fakeip_cache() {
     return 0
 }
 
-# Пересинхронизирует IP-маршруты после перезапуска sing-box,
-# если в ip-ranges.txt есть подсети (kernel routes слетают при restart)
+# Восстанавливает маршруты после перезапуска sing-box.
 resync_ip_routes_if_needed() {
-    # Маршрут fake-подсети в таблицах AntiZapret отвечает за домены,
-    # поэтому нужен и при пустом списке ip-ranges.
-    sync_az_table_routes
-    if [ "$(count_ip_ranges)" -gt 0 ]; then
-        sync_ip_ranges >/dev/null 2>&1 || true
-    fi
+    # Синхронизация нужна и с пустым списком: fake-подсеть и старые ip rule.
+    sync_ip_ranges >/dev/null 2>&1 || true
 }
 
 # ===== Пересборка конфигурации =====

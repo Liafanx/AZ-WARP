@@ -215,28 +215,30 @@ get_rule_source_net() {
     esac
 }
 
-# Добавляет ip rule если он ещё не существует.
-# Связывает source-подсеть с таблицей маршрутизации WARPER.
-ensure_ip_rule() {
-    local source_net="$1"
-    [ -z "$source_net" ] && return 0
-    local rules
-    rules=$(ip rule show 2>/dev/null || true)
-    if ! grep -q "from ${source_net} lookup ${IP_ROUTE_TABLE}" <<< "$rules"; then
-        ip rule add from "$source_net" lookup "$IP_ROUTE_TABLE" \
-            priority "$IP_ROUTE_PRIO" 2>/dev/null || true
-    fi
+# Проверяем точное правило, включая приоритет и отсутствие иных селекторов.
+ip_rule_present() {
+    local source_net="$1" priority="$2"
+    ip -4 rule show 2>/dev/null | awk -v net="$source_net" -v table="$IP_ROUTE_TABLE" -v prio="$priority:" '
+        NF == 5 && $1 == prio && $2 == "from" && $3 == net && $4 == "lookup" && $5 == table { found = 1 }
+        END { exit !found }
+    '
 }
 
-# Удаляет ip rule для указанной source-подсети.
-remove_ip_rule() {
+ensure_ip_rule() {
     local source_net="$1"
-    [ -z "$source_net" ] && return 0
-    local rules
-    while rules=$(ip rule show 2>/dev/null || true); \
-          grep -q "from ${source_net} lookup ${IP_ROUTE_TABLE}" <<< "$rules"; do
-        ip rule del from "$source_net" lookup "$IP_ROUTE_TABLE" \
-            priority "$IP_ROUTE_PRIO" 2>/dev/null || break
+    if ! ip_rule_present "$source_net" "$IP_ROUTE_PRIO"; then
+        ip -4 rule add from "$source_net" lookup "$IP_ROUTE_TABLE" \
+            priority "$IP_ROUTE_PRIO" || return 1
+    fi
+    # Старое правило снимаем только после установки нового.
+    remove_ip_rule "$source_net" "$IP_ROUTE_LEGACY_PRIO"
+}
+
+remove_ip_rule() {
+    local source_net="$1" priority="$2"
+    while ip_rule_present "$source_net" "$priority"; do
+        ip -4 rule del from "$source_net" lookup "$IP_ROUTE_TABLE" \
+            priority "$priority" 2>/dev/null || return 1
     done
 }
 
@@ -244,14 +246,16 @@ remove_ip_rule() {
 # Снимать и тут же возвращать своё правило нельзя: ресинк идёт каждые
 # 10 минут, и каждый раз возникало бы окно без маршрутизации.
 remove_stale_ip_rules() {
-    local keep="${1:-}" net
+    local keep="${1:-}" net failed=0
     detect_client_subnets
     for net in "$AZ_CLIENT_NET" "$ALL_CLIENT_NET" \
                10.29.0.0/16 10.28.0.0/15 172.29.0.0/16 172.28.0.0/15; do
         [ -z "$net" ] && continue
         [ "$net" = "$keep" ] && continue
-        remove_ip_rule "$net"
+        remove_ip_rule "$net" "$IP_ROUTE_PRIO" || failed=1
+        remove_ip_rule "$net" "$IP_ROUTE_LEGACY_PRIO" || failed=1
     done
+    return "$failed"
 }
 
 # Удаляет все ip rule созданные WARPER для всех возможных source-подсетей.
@@ -262,16 +266,16 @@ remove_all_ip_rules() {
 
 # ===== Таблицы WARP AntiZapret =====
 #
-# При ANTIZAPRET_WARP/VPN_WARP AntiZapret добавляет ip rule на таблицу
-# подсети AntiZapret и таблицу подсети FullVPN с приоритетом 10000:
-# 1000/2000 в AntiZapret с августа 2026, 13335/13336 в прежних версиях.
-# В режиме "вся подсеть" правило идёт без fwmark и перехватывает в том числе
-# трафик на fake-подсеть WARPER, поэтому наши маршруты обязаны быть в этих
-# таблицах — иначе домены уйдут в warp-* вместо singbox-tun.
+# Новые AntiZapret направляют маркированный трафик в таблицы 1/2.
+# Таблица 3 предназначена для DNS_WARP и не участвует в маршрутизации WARPER.
+# Старые пары таблиц нужны для совместимости и очистки после обновления.
+AZ_WARP_CLEANUP_TABLES="1 2 1000 2000 13335 13336"
 
-# Печатает "ТАБЛИЦА_AZ ТАБЛИЦА_FULLVPN" для установленного AntiZapret
 az_warp_tables() {
-    if grep -qE "^Table = 2000|lookup 2000" /root/antizapret/up.sh 2>/dev/null; then
+    local up_script="${1:-/root/antizapret/up.sh}"
+    if grep -qE '^Table = 2([[:space:]]|$)' "$up_script" 2>/dev/null; then
+        echo "1 2"
+    elif grep -qE '^Table = 2000([[:space:]]|$)|lookup 2000([[:space:]]|$)' "$up_script" 2>/dev/null; then
         echo "1000 2000"
     else
         echo "13335 13336"
@@ -319,7 +323,7 @@ _ip_batch() {
 # Удаляет один CIDR из всех таблиц AntiZapret.
 remove_from_az_tables() {
     local cidr="$1" table
-    for table in $AZ_WARP_TABLES; do
+    for table in $AZ_WARP_CLEANUP_TABLES; do
         ip route del "$cidr" dev singbox-tun table "$table" 2>/dev/null || true
     done
 }
@@ -430,14 +434,26 @@ sync_ip_ranges() {
     total=$(wc -l < "$desired_tmp" | tr -d ' ')
 
     if [ "$total" -gt 0 ] && [ -n "$source_net" ]; then
-        ensure_ip_rule "$source_net"
-        remove_stale_ip_rules "$source_net"
-    elif [ "$total" -eq 0 ]; then
-        remove_all_ip_rules
+        if ensure_ip_rule "$source_net"; then
+            remove_stale_ip_rules "$source_net" || ((errors+=1))
+        else
+            ((errors+=1))
+        fi
+    else
+        remove_all_ip_rules || ((errors+=1))
     fi
 
-    # Маршруты в таблицы WARP AntiZapret (если они подняты)
-    sync_az_table_routes "$desired_tmp"
+    if [ -z "$source_net" ]; then
+        sync_az_table_routes "$desired_tmp"
+    else
+        # CIDR в чужих WARP-таблицах обходят ограничение по source.
+        # Убираем зеркала, оставленные предыдущими версиями и режимом all.
+        local table
+        for table in $AZ_WARP_CLEANUP_TABLES; do
+            _ip_batch "route del %s dev singbox-tun table $table" < "$desired_tmp"
+        done
+        sync_az_table_routes
+    fi
 
     # ipset: добавляем ВСЕ желаемые CIDR (не только новые).
     # Важно при перезагрузке ipset через doall.sh / up.sh.

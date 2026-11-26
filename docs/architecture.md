@@ -58,9 +58,14 @@ FullVPN-клиенты → kresd@2 → всё → встроенный WARP Anti
 
 | Режим | Механизм |
 |---|---|
-| `antizapret` | `ip rule from AZ_NET lookup 100` + маршруты в `table 100` |
-| `all_vpn` | `ip rule from ALL_NET lookup 100` + маршруты в `table 100` |
-| `all` | маршруты в `main table` + таблица WARP AntiZapret (`1000`/`2000`, в прежних версиях `13335`/`13336`) |
+| `antizapret` | `ip rule from AZ_NET lookup 100 priority 50` + маршруты в `table 100` |
+| `all_vpn` | `ip rule from ALL_NET lookup 100 priority 50` + маршруты в `table 100` |
+| `all` | маршруты в `main table` и активных таблицах WARP AntiZapret (`1`/`2`, ранее `1000`/`2000` или `13335`/`13336`) |
+
+При синхронизации WARPER устанавливает правило с приоритетом `50` перед
+правилами WARP AntiZapret (`100`/`200`) и снимает прежнее правило `500`.
+В клиентских режимах CIDR остаются в таблице `100`, а в таблицах WARP
+сохраняется маршрут fake-подсети для доменного трафика.
 
 ### Синхронизация
 
@@ -188,7 +193,7 @@ TCP: UDP DNS через туннель у части узлов теряется
 | Компонент | Расположение | Назначение |
 |---|---|---|
 | traffic.json | /root/warper/ | История трафика (hourly + сессии) |
-| warper-traffic-snapshot.timer | /etc/systemd/system/ | Таймер snapshot'ов (каждые 5 мин) |
+| warper-traffic-snapshot.timer | /etc/systemd/system/ | Таймер snapshot'ов (каждые 10 мин) |
 | warper-traffic-snapshot.service | /etc/systemd/system/ | Oneshot-сервис для snapshot |
 
 ### Источник данных
@@ -216,10 +221,10 @@ traffic.json
 
 ```
 Загрузка системы → warper-autopatch → первый snapshot → hourly[текущий_час] += delta
-Каждые 5 минут  → warper-traffic-snapshot.timer → snapshot → hourly += delta
-Остановка sing-box → traffic_finalize_session → sessions[] += текущая
+Каждые 10 минут  → warper-traffic-snapshot.timer → snapshot → hourly += delta
+Остановка sing-box через WARPER → traffic_finalize_session → sessions[] += текущая
 Ребут/shutdown → ExecStop warper-autopatch → trafficfinalize → sessions[] += текущая
-Crash sing-box → теряется <= 5 минут (между snapshot'ами)
+Crash sing-box → теряется <= 10 минут (между snapshot'ами)
 ```
 
 ### Автосинхронизация WARP-ключей

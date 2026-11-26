@@ -4,7 +4,7 @@
 
 ```bash
 apt-get update
-apt-get install -y curl wget jq iptables nano
+apt-get install -y curl wget jq iptables nano python3
 ```
 
 ## Шаг 2. Установка sing-box
@@ -110,14 +110,16 @@ ln -sf /root/warper/warper.sh /usr/local/bin/warper
 Создайте warper-autopatch.service:
 
 ```bash
-cp templates/warper-autopatch.service /etc/systemd/system/
+cp templates/warper-autopatch.service templates/warper-{traffic-snapshot,resync,resolve}.{service,timer} /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable warper-autopatch
+systemctl enable --now warper-resync.timer
 ```
 
 ## Шаг 8. Проверка
 
 ```bash
+warper resync
 warper doctor
 warper status
 ```

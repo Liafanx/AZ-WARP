@@ -39,7 +39,9 @@ AZ_WARPER_INCLUDE_IPS="/root/antizapret/config/warper-include-ips.txt"
 WEB_DIR="$WARPER_DIR/web"
 WEB_SERVICE="warper-web"
 IP_ROUTE_TABLE=100
-IP_ROUTE_PRIO=500
+# После локальных правил AntiZapret (30), до WARP (100/200).
+IP_ROUTE_PRIO=50
+IP_ROUTE_LEGACY_PRIO=500
 
 # ===== Цвета =====
 RED='\033[0;31m'

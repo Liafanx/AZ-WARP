@@ -291,18 +291,25 @@ if [ -f "/root/warper/ip-ranges.applied" ]; then
         [ -z "$cidr" ] && continue
         ip route del "$cidr" dev singbox-tun table 100 2>/dev/null || true
         ip route del "$cidr" dev singbox-tun 2>/dev/null || true
-        for table in 1000 2000 13335 13336; do
+        for table in 1 2 1000 2000 13335 13336; do
             ip route del "$cidr" dev singbox-tun table "$table" 2>/dev/null || true
         done
     done < "/root/warper/ip-ranges.applied"
     rm -f "/root/warper/ip-ranges.applied"
 fi
+for table in 1 2 1000 2000 13335 13336; do
+    ip route del "$SUBNET" dev singbox-tun table "$table" 2>/dev/null || true
+done
 for prefix in 10 172; do
-    while grep -q "from ${prefix}.29.0.0/16 lookup 100" <<< "$(ip rule show 2>/dev/null)"; do
-        ip rule del from "${prefix}.29.0.0/16" lookup 100 priority 500 2>/dev/null || break
-    done
-    while grep -q "from ${prefix}.28.0.0/15 lookup 100" <<< "$(ip rule show 2>/dev/null)"; do
-        ip rule del from "${prefix}.28.0.0/15" lookup 100 priority 500 2>/dev/null || break
+    for net in "${prefix}.29.0.0/16" "${prefix}.28.0.0/15"; do
+        for priority in 50 500; do
+            while ip -4 rule show 2>/dev/null | awk -v net="$net" -v prio="$priority:" '
+                NF == 5 && $1 == prio && $2 == "from" && $3 == net && $4 == "lookup" && $5 == 100 { found = 1 }
+                END { exit !found }
+            '; do
+                ip -4 rule del from "$net" lookup 100 priority "$priority" 2>/dev/null || break
+            done
+        done
     done
 done
 echo -e " - ${GREEN}IP-маршруты и правила маршрутизации удалены.${NC}"

@@ -1308,6 +1308,10 @@ echo -e " - ${CYAN}Применение разрешающих правил ipta
 ensure_iptables_rule FORWARD -o singbox-tun
 ensure_iptables_rule FORWARD -i singbox-tun
 
+if ! /usr/local/bin/warper ipsync >/dev/null 2>&1; then
+    echo -e "${YELLOW}Не удалось применить маршруты WARPER. Проверьте warper doctor.${NC}"
+fi
+
 echo -e "\n${GREEN}================================================${NC}"
 echo -e " 🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!"
 echo -e "${GREEN}================================================${NC}"

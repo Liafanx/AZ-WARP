@@ -510,9 +510,10 @@ update_warper() {
     fi
 
     # Пересинхронизируем IP-маршруты уже новым экземпляром warper
-    if is_warper_active && [ "$(count_ip_ranges)" -gt 0 ]; then
+    if is_warper_active; then
         echo -e "${CYAN}Синхронизация IP-маршрутов...${NC}"
-        /usr/local/bin/warper ipsync >/dev/null 2>&1 || true
+        /usr/local/bin/warper ipsync >/dev/null 2>&1 || \
+            echo -e "${YELLOW}Предупреждение: синхронизация маршрутов не завершилась.${NC}"
     fi
 
     # Таймер resync и хук в custom-doall.sh появились в 1.5.0

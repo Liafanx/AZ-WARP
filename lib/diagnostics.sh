@@ -16,7 +16,7 @@ az_setup_value() {
 
 # Режим WARP в AntiZapret: off | all | selective.
 # Раньше параметр был y/n, в актуальных версиях это число 0-4:
-# 2 — вся подсеть через WARP, 3/4 — выборочно по fwmark 0x2.
+# 2 — вся подсеть через WARP, 3/4 — выборочная маркировка трафика.
 az_warp_mode() {
     local value
     value=$(az_setup_value "$1") || { echo "off"; return 0; }
@@ -369,8 +369,8 @@ doctor() {
     vpn_mode=$(az_warp_mode VPN_WARP)
     echo -e " ${GREEN}✔${NC} ANTIZAPRET_WARP: ${az_mode}, VPN_WARP: ${vpn_mode}"
 
-    # При режиме "all" AntiZapret ловит весь трафик подсети правилом
-    # без fwmark, поэтому fake-подсеть обязана быть в его таблице.
+    # В режиме all AntiZapret отправляет в WARP и трафик к fake-подсети.
+    # Маршрут в его таблице возвращает этот трафик в singbox-tun.
     # Пустая таблица (warp-* не поднят) ничего не перехватывает — трафик идёт
     # мимо неё, и маршрут там не нужен.
     local table iface mode label routes az_table
@@ -489,10 +489,10 @@ doctor() {
         local rule_net
         rule_net=$(get_rule_source_net)
         if [ -n "$rule_net" ]; then
-            if output_has "from ${rule_net} lookup ${IP_ROUTE_TABLE}" ip rule show; then
-                echo -e " ${GREEN}✔${NC} ip rule для ${rule_net} → table ${IP_ROUTE_TABLE} активно"
+            if ip_rule_present "$rule_net" "$IP_ROUTE_PRIO"; then
+                echo -e " ${GREEN}✔${NC} ip rule для ${rule_net} → table ${IP_ROUTE_TABLE}, priority ${IP_ROUTE_PRIO} активно"
             else
-                echo -e " ${RED}✘${NC} ip rule для ${rule_net} → table ${IP_ROUTE_TABLE} отсутствует"
+                echo -e " ${RED}✘${NC} ip rule для ${rule_net} → table ${IP_ROUTE_TABLE}, priority ${IP_ROUTE_PRIO} отсутствует"
                 failed=1
             fi
         else
